@@ -20,6 +20,10 @@ pnpm add -D @danendz/vite-dev-tools
 
 ## Setup
 
+### Standard Vite app (with `index.html`)
+
+Add the plugin to your Vite config — scripts are injected automatically:
+
 ```ts
 // vite.config.ts
 import { defineConfig } from 'vite'
@@ -31,16 +35,53 @@ export default defineConfig({
 })
 ```
 
+### Proxy setup (WordPress, custom SSR, micro-frontends)
+
+For projects where Vite doesn't serve `index.html`, use the `<DevToolsPanel />` component instead. The Vite plugin is still required for source transforms.
+
+```ts
+// vite.config.ts
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import { devtools } from '@danendz/vite-dev-tools/react'
+
+export default defineConfig({
+  plugins: [react(), devtools()],
+})
+```
+
+```tsx
+// App.tsx (or your entry component)
+import { DevToolsPanel } from '@danendz/vite-dev-tools/react/devtools'
+
+function App() {
+  return (
+    <>
+      <YourApp />
+      <DevToolsPanel />
+    </>
+  )
+}
+```
+
+Works like React Query DevTools — just render the component in your app tree. It handles hook injection, runtime loading, and overlay mounting automatically.
+
 The plugin only runs in `serve` mode — it's automatically excluded from production builds.
 
 ## Configuration
 
+Pass options to the Vite plugin or the component:
+
 ```ts
+// Plugin config
 devtools({
-  open: false,           // panel open by default
-  shortcut: 'ctrl+shift+d', // keyboard shortcut to toggle
-  accentColor: '#58c4dc',   // UI accent color (default: React cyan)
+  open: false,
+  shortcut: 'ctrl+shift+d',
+  accentColor: '#58c4dc',
 })
+
+// Or component props (overrides plugin config)
+<DevToolsPanel open={true} />
 ```
 
 | Option | Type | Default | Description |
