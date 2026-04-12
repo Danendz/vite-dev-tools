@@ -9,6 +9,13 @@ export default defineConfig([
     clean: true,
     external: ['vite', 'launch-editor'],
   },
+  // React component (browser, imported in app code)
+  {
+    entry: { devtools: 'src/adapters/react/devtools-entry.ts' },
+    format: ['esm'],
+    dts: true,
+    external: ['react'],
+  },
   // Client overlay (browser, served by Vite dev server)
   {
     entry: {

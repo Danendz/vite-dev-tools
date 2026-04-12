@@ -66,6 +66,18 @@ export function createReactDevToolsPlugin(config?: DevToolsConfig): Plugin {
     name: '@danendz/devtools-react',
     apply: 'serve',
 
+    config() {
+      const overlayPath = path.resolve(DIR, 'overlay.mjs').replace(/\\/g, '/')
+      const runtimePath = path.resolve(DIR, 'react-runtime.mjs').replace(/\\/g, '/')
+      return {
+        define: {
+          __DEVTOOLS_OVERLAY_URL__: JSON.stringify(`/@fs/${overlayPath}`),
+          __DEVTOOLS_RUNTIME_URL__: JSON.stringify(`/@fs/${runtimePath}`),
+          __DEVTOOLS_CONFIG__: JSON.stringify(mergedConfig),
+        },
+      }
+    },
+
     configResolved(resolvedConfig) {
       projectRoot = resolvedConfig.root
       reactMajor = detectReactMajorVersion(projectRoot)
@@ -122,6 +134,57 @@ export function createReactDevToolsPlugin(config?: DevToolsConfig): Plugin {
 
         next()
       })
+
+      // Inject devtools scripts into HTML responses from proxied backends
+      // (e.g., WordPress). For standard Vite apps with index.html,
+      // transformIndexHtml handles injection — this is a fallback.
+      const MARKER = '<!-- @danendz/devtools -->'
+      const headScripts = [
+        MARKER,
+        `<script>${HOOK_SCRIPT}</script>`,
+        `<script type="module" src="${VIRTUAL_RUNTIME}"></script>`,
+      ].join('\n')
+      const bodyScripts = `<script type="module" src="${VIRTUAL_CLIENT}"></script>`
+
+      // Return function to run AFTER other middleware (including proxies)
+      return () => {
+        server.middlewares.use((req, res, next) => {
+          const originalEnd = res.end
+          const originalWriteHead = res.writeHead
+          let isHtml = false
+
+          // Intercept writeHead to detect HTML responses (proxies call writeHead directly)
+          res.writeHead = function (statusCode: number, ...args: any[]) {
+            const headers = args.find((a) => typeof a === 'object') as Record<string, any> | undefined
+            const ct = headers?.['content-type'] || res.getHeader('content-type')
+            if (ct && String(ct).includes('text/html')) {
+              isHtml = true
+              // Remove content-length since we'll modify the body
+              if (headers) delete headers['content-length']
+              res.removeHeader('content-length')
+            }
+            return originalWriteHead.apply(res, [statusCode, ...args] as any)
+          }
+
+          res.end = function (chunk?: any, ...args: any[]) {
+            if (isHtml && chunk) {
+              let html = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString()
+
+              // Don't double-inject if transformIndexHtml already ran
+              if (!html.includes(MARKER) && !html.includes('danendz-devtools')) {
+                html = html.replace(/<head([^>]*)>/i, `<head$1>\n${headScripts}`)
+                html = html.replace(/<\/body>/i, `${bodyScripts}\n</body>`)
+              }
+
+              return originalEnd.call(res, html, ...args as any)
+            }
+
+            return originalEnd.apply(res, [chunk, ...args] as any)
+          }
+
+          next()
+        })
+      }
     },
 
     transformIndexHtml() {
