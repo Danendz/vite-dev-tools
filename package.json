@@ -1,0 +1,47 @@
+{
+  "name": "@danendz/vite-dev-tools",
+  "version": "0.0.1",
+  "description": "Vite dev tools with smart component tree, auto-collapsing, and IDE integration",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch"
+  },
+  "peerDependencies": {
+    "vite": "^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0"
+  },
+  "dependencies": {
+    "launch-editor": "^2.9.1",
+    "preact": "^10.25.4"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.8"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/danendz/vite-dev-tools"
+  },
+  "keywords": [
+    "vite",
+    "vite-plugin",
+    "devtools",
+    "react",
+    "component-tree",
+    "developer-tools"
+  ]
+}
