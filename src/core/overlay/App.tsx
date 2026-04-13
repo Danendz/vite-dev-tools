@@ -90,8 +90,6 @@ export function App({ config }: AppProps) {
   })
   const [searchQuery, setSearchQuery] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [collapseTarget, setCollapseTarget] = useState<'all' | 'none' | null>(null)
-  const [collapseVersion, setCollapseVersion] = useState(0)
   const [isPickerActive, setIsPickerActive] = useState(false)
   const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string> | null>(null)
   const [tree, setTree] = useState<NormalizedNode[]>([])
@@ -104,6 +102,8 @@ export function App({ config }: AppProps) {
     y: number
     node: NormalizedNode
   } | null>(null)
+  const [editedProps, setEditedProps] = useState<Map<string, Set<string>>>(new Map())
+  const [expandedPropsSet, setExpandedPropsSet] = useState<Set<string>>(new Set())
 
   // Listen for tree updates from the React runtime
   useEffect(() => {
@@ -327,16 +327,6 @@ export function App({ config }: AppProps) {
     setSearchQuery(query)
   }, [])
 
-  const handleCollapseAll = useCallback(() => {
-    setCollapseTarget('all')
-    setCollapseVersion((v) => v + 1)
-  }, [])
-
-  const handleExpandAll = useCallback(() => {
-    setCollapseTarget('none')
-    setCollapseVersion((v) => v + 1)
-  }, [])
-
   const handleEditorChange = useCallback((value: string) => {
     setEditor(value)
     if (value) {
@@ -384,9 +374,46 @@ export function App({ config }: AppProps) {
     setConsoleFilters(filters)
   }, [])
 
+  const handlePropEdit = useCallback((nodeId: string, propKey: string) => {
+    setEditedProps((prev) => {
+      const next = new Map(prev)
+      const keys = new Set(next.get(nodeId) ?? [])
+      keys.add(propKey)
+      next.set(nodeId, keys)
+      return next
+    })
+  }, [])
+
+  const handlePropPersisted = useCallback((nodeId: string, propKey: string) => {
+    setEditedProps((prev) => {
+      const next = new Map(prev)
+      const prevKeys = next.get(nodeId)
+      if (prevKeys) {
+        const newKeys = new Set(prevKeys)
+        newKeys.delete(propKey)
+        if (newKeys.size === 0) next.delete(nodeId)
+        else next.set(nodeId, newKeys)
+      }
+      return next
+    })
+  }, [])
+
+  const handleExpandProps = useCallback((nodeId: string) => {
+    setExpandedPropsSet((prev) => {
+      const next = new Set(prev)
+      if (next.has(nodeId)) {
+        next.delete(nodeId)
+      } else {
+        next.add(nodeId)
+      }
+      return next
+    })
+  }, [])
+
   const handleSelect = useCallback((node: NormalizedNode) => {
     setSelectedNode(node)
     setContextMenu(null)
+    setExpandedPropsSet(new Set())
   }, [])
 
   const handleHover = useCallback((node: NormalizedNode | null) => {
@@ -439,8 +466,6 @@ export function App({ config }: AppProps) {
           searchQuery={searchQuery}
           matchingNodeIds={matchingNodeIds}
           searchAncestorIds={searchAncestorIds}
-          collapseTarget={collapseTarget}
-          collapseVersion={collapseVersion}
           consoleEntries={consoleEntries}
           consoleFilters={consoleFilters}
           errorCount={errorCount}
@@ -452,8 +477,6 @@ export function App({ config }: AppProps) {
           editor={editor}
           fontSize={fontSize}
           onSearchChange={handleSearchChange}
-          onCollapseAll={handleCollapseAll}
-          onExpandAll={handleExpandAll}
           onPickerToggle={handlePickerToggle}
           onSettingsToggle={handleSettingsToggle}
           onHideLibraryToggle={handleHideLibraryToggle}
@@ -465,6 +488,11 @@ export function App({ config }: AppProps) {
           onTabChange={handleTabChange}
           onFilterChange={handleFilterChange}
           onClearConsole={handleClearConsole}
+          editedProps={editedProps}
+          expandedPropsSet={expandedPropsSet}
+          onPropEdit={handlePropEdit}
+          onPropPersisted={handlePropPersisted}
+          onExpandProps={handleExpandProps}
           onSelect={handleSelect}
           onHover={handleHover}
           onContextMenu={handleContextMenu}

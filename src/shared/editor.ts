@@ -44,7 +44,7 @@ export function createEditorMiddleware(projectRoot: string) {
     launchEditor(
       `${absolutePath}:${line}:${column}`,
       editor,
-      (_fileName: string, errorMessage: string) => {
+      (_fileName: string, errorMessage: string | null) => {
         console.error(`[devtools] Failed to open editor: ${errorMessage}`)
       },
     )

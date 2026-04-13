@@ -267,6 +267,7 @@ export const STYLES = /* css */ `
 
   .detail-row {
     display: flex;
+    align-items: center;
     gap: 8px;
     padding: 2px 0;
   }
@@ -513,6 +514,58 @@ export const STYLES = /* css */ `
   .tree-node-prop-overflow {
     color: #71717a;
     font-size: 0.9em;
+  }
+
+  .tree-node-prop-overflow.clickable {
+    cursor: pointer;
+  }
+
+  .tree-node-prop-overflow.clickable:hover {
+    color: #a1a1aa;
+    text-decoration: underline;
+  }
+
+  .tree-node-prop-value-edited {
+    color: var(--accent) !important;
+  }
+
+  .tree-node-prop-clickable {
+    cursor: pointer;
+  }
+
+  .tree-node-prop-clickable:hover {
+    text-decoration: underline;
+    text-decoration-style: dotted;
+  }
+
+  .tree-node-prop-edit-input {
+    background: #18181b;
+    color: #fbbf24;
+    border: 1px solid var(--accent);
+    border-radius: 2px;
+    font-family: inherit;
+    font-size: inherit;
+    padding: 0 3px;
+    margin: 0;
+    outline: none;
+    width: auto;
+    min-width: 30px;
+    max-width: 200px;
+  }
+
+  .tree-node-prop-tooltip {
+    position: absolute;
+    top: -24px;
+    left: 0;
+    background: #27272a;
+    color: #a1a1aa;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 10;
+    border: 1px solid #3f3f46;
   }
 
   .tree-node-collapsed-count {
@@ -943,7 +996,181 @@ export const STYLES = /* css */ `
     color: var(--accent);
   }
 
-  /* ── Scrollbar ── */
+  /* ── Tree focus ── */
+
+  .tree-scroll-container:focus-visible {
+    box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.3);
+  }
+
+  /* ── Editable values ── */
+
+  .editable-value-wrapper {
+    display: inline;
+  }
+
+  .editable-value-wrapper.editable {
+    cursor: pointer;
+    border-bottom: 1px dashed transparent;
+    transition: border-color 0.15s;
+  }
+
+  .editable-value-wrapper.editable:hover {
+    border-bottom-color: rgba(var(--accent-rgb), 0.4);
+  }
+
+  .editable-value-wrapper.editable:hover::after {
+    content: ' ✎';
+    font-size: 9px;
+    color: rgba(var(--accent-rgb), 0.5);
+  }
+
+  .edit-boolean-toggle:hover {
+    background: rgba(var(--accent-rgb), 0.15);
+    border-radius: 2px;
+  }
+
+  .edit-boolean-toggle:hover::after {
+    content: ' ↔';
+  }
+
+  .edit-inline {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .edit-input {
+    background: #18181b;
+    border: 1px solid rgba(var(--accent-rgb), 0.4);
+    color: #d4d4d8;
+    font-size: inherit;
+    font-family: inherit;
+    padding: 1px 4px;
+    border-radius: 3px;
+    outline: none;
+    min-width: 60px;
+    max-width: 200px;
+  }
+
+  .edit-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.2);
+  }
+
+  .edit-textarea {
+    background: #18181b;
+    border: 1px solid rgba(var(--accent-rgb), 0.4);
+    color: #d4d4d8;
+    font-size: inherit;
+    font-family: inherit;
+    padding: 4px 6px;
+    border-radius: 3px;
+    outline: none;
+    min-width: 150px;
+    min-height: 60px;
+    max-height: 200px;
+    resize: vertical;
+    width: 100%;
+  }
+
+  .edit-textarea:focus {
+    border-color: var(--accent);
+  }
+
+  .edit-controls {
+    display: inline-flex;
+    gap: 2px;
+    margin-left: 2px;
+  }
+
+  .edit-btn {
+    background: none;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #a1a1aa;
+    cursor: pointer;
+    font-size: 10px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    line-height: 1;
+    transition: all 0.15s;
+  }
+
+  .edit-btn:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #d4d4d8;
+  }
+
+  .edit-btn.confirm {
+    color: #86efac;
+    border-color: rgba(134, 239, 172, 0.2);
+  }
+
+  .edit-btn.confirm:hover {
+    background: rgba(134, 239, 172, 0.1);
+  }
+
+  .edit-error {
+    color: #ef4444;
+    font-size: 10px;
+    width: 100%;
+  }
+
+  .persist-btn {
+    background: none;
+    border: 1px solid rgba(var(--accent-rgb), 0.2);
+    color: rgba(var(--accent-rgb), 0.7);
+    cursor: pointer;
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-left: 4px;
+    transition: all 0.15s;
+  }
+
+  .persist-btn:hover {
+    background: rgba(var(--accent-rgb), 0.1);
+    color: var(--accent);
+    border-color: rgba(var(--accent-rgb), 0.4);
+  }
+
+  .prop-edited .detail-value {
+    color: var(--accent) !important;
+  }
+
+  .persist-row {
+    display: block;
+    margin-left: 0;
+  }
+
+  .persist-btn-lg {
+    background: rgba(var(--accent-rgb), 0.08);
+    border: 1px solid rgba(var(--accent-rgb), 0.3);
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 11px;
+    font-family: inherit;
+    padding: 3px 10px;
+    border-radius: 4px;
+    transition: all 0.15s;
+  }
+
+  .persist-btn-lg:hover {
+    background: rgba(var(--accent-rgb), 0.15);
+    border-color: rgba(var(--accent-rgb), 0.5);
+  }
+
+  .persist-btn-lg:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .edit-error-input {
+    border-color: #ef4444 !important;
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.2) !important;
+  }
+
+  /* ─�� Scrollbar ── */
 
   ::-webkit-scrollbar {
     width: 5px;

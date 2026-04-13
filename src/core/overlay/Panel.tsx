@@ -20,8 +20,6 @@ interface PanelProps {
   searchQuery: string
   matchingNodeIds: Set<string> | null
   searchAncestorIds: Set<string> | null
-  collapseTarget: 'all' | 'none' | null
-  collapseVersion: number
   consoleEntries: ConsoleEntry[]
   consoleFilters: { errors: boolean; warnings: boolean }
   errorCount: number
@@ -33,8 +31,6 @@ interface PanelProps {
   editor: string
   fontSize: number
   onSearchChange: (query: string) => void
-  onCollapseAll: () => void
-  onExpandAll: () => void
   onPickerToggle: () => void
   onSettingsToggle: () => void
   onHideLibraryToggle: () => void
@@ -46,6 +42,11 @@ interface PanelProps {
   onTabChange: (tab: ActiveTab) => void
   onFilterChange: (filters: { errors: boolean; warnings: boolean }) => void
   onClearConsole: () => void
+  editedProps: Map<string, Set<string>>
+  expandedPropsSet: Set<string>
+  onPropEdit: (nodeId: string, propKey: string) => void
+  onPropPersisted: (nodeId: string, propKey: string) => void
+  onExpandProps: (nodeId: string) => void
   onSelect: (node: NormalizedNode) => void
   onHover: (node: NormalizedNode | null) => void
   onContextMenu: (e: MouseEvent, node: NormalizedNode) => void
@@ -61,8 +62,6 @@ export function Panel({
   searchQuery,
   matchingNodeIds,
   searchAncestorIds,
-  collapseTarget,
-  collapseVersion,
   consoleEntries,
   consoleFilters,
   errorCount,
@@ -74,8 +73,6 @@ export function Panel({
   editor,
   fontSize,
   onSearchChange,
-  onCollapseAll,
-  onExpandAll,
   onPickerToggle,
   onSettingsToggle,
   onHideLibraryToggle,
@@ -87,6 +84,11 @@ export function Panel({
   onTabChange,
   onFilterChange,
   onClearConsole,
+  editedProps,
+  expandedPropsSet,
+  onPropEdit,
+  onPropPersisted,
+  onExpandProps,
   onSelect,
   onHover,
   onContextMenu,
@@ -292,11 +294,11 @@ export function Panel({
                 searchQuery={searchQuery}
                 matchingNodeIds={matchingNodeIds}
                 searchAncestorIds={searchAncestorIds}
-                collapseTarget={collapseTarget}
-                collapseVersion={collapseVersion}
+                editedProps={editedProps}
+                expandedPropsSet={expandedPropsSet}
                 onSearchChange={onSearchChange}
-                onCollapseAll={onCollapseAll}
-                onExpandAll={onExpandAll}
+                onPropEdit={onPropEdit}
+                onExpandProps={onExpandProps}
                 onSelect={onSelect}
                 onHover={onHover}
                 onContextMenu={onContextMenu}
@@ -316,7 +318,7 @@ export function Panel({
                 onPointerMove={handleDetailPointerMove}
                 onPointerUp={handleDetailPointerUp}
               />
-              <DetailPanel node={selectedNode} />
+              <DetailPanel node={selectedNode} editedProps={editedProps} onPropEdit={onPropEdit} onPropPersisted={onPropPersisted} />
             </div>
           </div>
         ) : (

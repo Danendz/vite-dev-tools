@@ -19,6 +19,9 @@ const COMPONENT_TAGS = new Set([
 
 let nodeIdCounter = 0
 
+/** Maps node IDs to live fiber references — rebuilt on every tree walk */
+export const fiberRefMap = new Map<string, any>()
+
 function getComponentName(fiber: any): string {
   const type = fiber.type
   if (!type) return 'Unknown'
@@ -78,10 +81,12 @@ function getSourceLocations(fiber: any): { source: ReturnType<typeof getReactSou
   return { source: reactSource, usageSource: null }
 }
 
-// Cache parsed stack results to avoid re-parsing the same stack
-const stackCache = new WeakMap<object, ReturnType<typeof parseDebugStack>>()
+type ParsedStack = { fileName: string; lineNumber: number; columnNumber: number } | null
 
-function parseDebugStack(stack: Error | string) {
+// Cache parsed stack results to avoid re-parsing the same stack
+const stackCache = new WeakMap<object, ParsedStack>()
+
+function parseDebugStack(stack: Error | string): ParsedStack {
   const stackObj = typeof stack === 'string' ? null : stack
   if (stackObj && stackCache.has(stackObj)) {
     return stackCache.get(stackObj)!
@@ -199,11 +204,17 @@ function getHooks(fiber: any): HookInfo[] {
       varName = entry
     }
 
+    const editable =
+      (inferred.name === 'useState' && typeof inferred.value !== 'function' && typeof hook.queue?.dispatch === 'function') ||
+      inferred.name === 'useRef'
+
     hooks.push({
       name: inferred.name,
       value: inferred.value,
       varName,
       lineNumber,
+      hookIndex,
+      editable,
     })
     hookIndex++
     hook = hook.next
@@ -296,6 +307,7 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: bool
           isFromNodeModules: isFromNodeModules(child),
           _domElements: findDOMElements(child),
         }
+        fiberRefMap.set(node.id, child)
         nodes.push(node)
       }
     } else {
@@ -310,6 +322,7 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: bool
 
 export function walkFiberTree(rootFiber: any, hideLibrary = false, hideProviders = false): NormalizedNode[] {
   nodeIdCounter = 0
+  fiberRefMap.clear()
   return walkFiberChildren(rootFiber, hideLibrary, hideProviders)
 }
 

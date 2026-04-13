@@ -24,6 +24,8 @@ export interface HookInfo {
   value: unknown
   varName?: string
   lineNumber?: number
+  hookIndex: number
+  editable: boolean
 }
 
 export type DockPosition = 'bottom' | 'left' | 'right'

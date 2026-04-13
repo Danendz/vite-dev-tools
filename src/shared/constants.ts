@@ -9,6 +9,8 @@ export const EVENTS = {
   TREE_UPDATE: 'devtools:tree-update',
   OPEN_EDITOR: 'devtools:open-editor',
   REWALK: 'devtools:rewalk',
+  HOOK_EDIT: 'devtools:hook-edit',
+  PROP_EDIT: 'devtools:prop-edit',
 } as const
 
 // localStorage keys
@@ -25,6 +27,8 @@ export const STORAGE_KEYS = {
 // Server endpoints
 export const ENDPOINTS = {
   OPEN_EDITOR: '/__devtools/open-editor',
+  PERSIST_HOOK: '/__devtools/persist-hook',
+  PERSIST_PROP: '/__devtools/persist-prop',
 } as const
 
 // Default config
