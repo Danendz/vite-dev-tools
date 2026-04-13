@@ -1,5 +1,4 @@
 import type { NormalizedNode, HookInfo } from '../../core/types'
-import { getOverrides } from '../../core/collapse'
 
 // React fiber tag constants
 const FunctionComponent = 0
@@ -280,7 +279,7 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: bool
       } else if (hideLibrary && isFromNodeModules(child)) {
         // Hide library components — re-parent their children to this level
         nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders))
-      } else if (hideProviders && name.endsWith('Provider') && !getOverrides().alwaysShow.includes(name)) {
+      } else if (hideProviders && name.endsWith('Provider')) {
         // Hide provider wrappers — re-parent their children
         nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders))
       } else {

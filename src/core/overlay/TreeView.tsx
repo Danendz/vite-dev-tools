@@ -60,7 +60,7 @@ export function TreeView({
           </svg>
         </button>
       </div>
-      <div style={{ flex: 1, overflow: 'auto', padding: '4px 0' }}>
+      <div style={{ flex: 1, overflow: 'auto', overscrollBehavior: 'contain', padding: '4px 0' }}>
         {tree.length === 0 ? (
           <div style={{ padding: '20px', color: '#666', fontStyle: 'italic', textAlign: 'center' }}>
             {searchQuery ? 'No matching components' : 'No React components detected'}

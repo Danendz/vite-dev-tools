@@ -13,7 +13,6 @@ export const EVENTS = {
 
 // localStorage keys
 export const STORAGE_KEYS = {
-  COLLAPSE_OVERRIDES: 'danendz-devtools:collapse-overrides',
   PANEL_OPEN: 'danendz-devtools:panel-open',
   DOCK_POSITION: 'danendz-devtools:dock-position',
   PANEL_SIZE: 'danendz-devtools:panel-size',

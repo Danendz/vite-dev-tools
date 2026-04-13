@@ -37,11 +37,6 @@ export interface DevToolsConfig {
   accentColor?: string
 }
 
-export interface CollapseOverrides {
-  alwaysShow: string[]
-  alwaysHide: string[]
-}
-
 export interface TreeUpdateEvent {
   tree: NormalizedNode[]
 }

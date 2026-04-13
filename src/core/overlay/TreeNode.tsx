@@ -1,7 +1,6 @@
 import { h } from 'preact'
-import { useState, useMemo, useEffect, useRef } from 'preact/hooks'
+import { useState, useEffect, useRef } from 'preact/hooks'
 import type { NormalizedNode } from '../types'
-import { shouldCollapse } from '../collapse'
 
 interface TreeNodeProps {
   node: NormalizedNode
@@ -31,11 +30,7 @@ export function TreeNode({
   onContextMenu,
 }: TreeNodeProps) {
   const rowRef = useRef<HTMLDivElement>(null)
-  const defaultCollapsed = useMemo(
-    () => shouldCollapse(node.name, node.isFromNodeModules),
-    [node.name, node.isFromNodeModules],
-  )
-  const [collapsed, setCollapsed] = useState(defaultCollapsed)
+  const [collapsed, setCollapsed] = useState(node.isFromNodeModules)
 
   // Force expand when picker selects a descendant
   useEffect(() => {
@@ -65,7 +60,7 @@ export function TreeNode({
   useEffect(() => {
     if (isSelected && expandedNodeIds) {
       requestAnimationFrame(() => {
-        rowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+        rowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       })
     }
   }, [isSelected, expandedNodeIds])

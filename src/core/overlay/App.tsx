@@ -5,7 +5,6 @@ import { FloatingIcon } from './FloatingIcon'
 import { Panel } from './Panel'
 import { Highlight } from './Highlight'
 import { ContextMenu } from './ContextMenu'
-import { addAlwaysShow, addAlwaysHide, removeOverride } from '../collapse'
 import { startCapture } from '../console-capture'
 import { EVENTS, STORAGE_KEYS } from '../../shared/constants'
 
@@ -158,6 +157,39 @@ export function App({ config }: AppProps) {
       })
     })
   }, [])
+
+  // Push page content aside when panel is open
+  useEffect(() => {
+    const html = document.documentElement
+    const cleanup = () => {
+      html.style.marginLeft = ''
+      html.style.marginRight = ''
+      html.style.height = ''
+      html.style.overflow = ''
+    }
+
+    if (!isOpen) {
+      cleanup()
+      return
+    }
+
+    const marginPx = `${panelSize}px`
+    html.style.marginLeft = ''
+    html.style.marginRight = ''
+    html.style.height = ''
+    html.style.overflow = ''
+
+    if (dockPosition === 'bottom') {
+      html.style.height = `calc(100vh - ${panelSize}px)`
+      html.style.overflow = 'auto'
+    } else if (dockPosition === 'left') {
+      html.style.marginLeft = marginPx
+    } else {
+      html.style.marginRight = marginPx
+    }
+
+    return cleanup
+  }, [isOpen, dockPosition, panelSize])
 
   const errorCount = useMemo(
     () => consoleEntries.filter((e) => e.type === 'error').length,
@@ -354,6 +386,7 @@ export function App({ config }: AppProps) {
 
   const handleSelect = useCallback((node: NormalizedNode) => {
     setSelectedNode(node)
+    setContextMenu(null)
   }, [])
 
   const handleHover = useCallback((node: NormalizedNode | null) => {
@@ -382,6 +415,7 @@ export function App({ config }: AppProps) {
   }, [])
 
   const handleContextMenu = useCallback((e: MouseEvent, node: NormalizedNode) => {
+    if (!node.source) return
     setContextMenu({ x: e.clientX, y: e.clientY, node })
   }, [])
 
@@ -438,24 +472,12 @@ export function App({ config }: AppProps) {
         />
       )}
 
-      {contextMenu && (
+      {contextMenu && contextMenu.node.source && (
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          nodeName={contextMenu.node.name}
-          isFromNodeModules={contextMenu.node.isFromNodeModules}
-          onAlwaysShow={() => {
-            addAlwaysShow(contextMenu.node.name)
-            closeContextMenu()
-          }}
-          onAlwaysHide={() => {
-            addAlwaysHide(contextMenu.node.name)
-            closeContextMenu()
-          }}
-          onResetOverride={() => {
-            removeOverride(contextMenu.node.name)
-            closeContextMenu()
-          }}
+          source={contextMenu.node.source}
+          usageSource={contextMenu.node.usageSource}
           onClose={closeContextMenu}
         />
       )}

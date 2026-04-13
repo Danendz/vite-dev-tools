@@ -199,6 +199,7 @@ export const STYLES = /* css */ `
   .detail-pane {
     flex-shrink: 0;
     overflow: auto;
+    overscroll-behavior: contain;
     padding: 12px 14px;
     position: relative;
   }
@@ -692,6 +693,7 @@ export const STYLES = /* css */ `
   .console-entries {
     flex: 1;
     overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 4px 0;
   }
 
