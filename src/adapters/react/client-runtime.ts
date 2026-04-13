@@ -12,9 +12,13 @@ function getHideLibrary(): boolean {
   return localStorage.getItem(STORAGE_KEYS.HIDE_LIBRARY) !== 'false'
 }
 
+function getHideProviders(): boolean {
+  return localStorage.getItem(STORAGE_KEYS.HIDE_PROVIDERS) !== 'false'
+}
+
 function walkAndDispatch() {
   if (!lastFiberRoot) return
-  const tree = walkFiberTree(lastFiberRoot, getHideLibrary())
+  const tree = walkFiberTree(lastFiberRoot, getHideLibrary(), getHideProviders())
   window.dispatchEvent(
     new CustomEvent(EVENTS.TREE_UPDATE, { detail: { tree } }),
   )

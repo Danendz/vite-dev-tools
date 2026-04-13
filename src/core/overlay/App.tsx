@@ -79,11 +79,20 @@ export function App({ config }: AppProps) {
   const [hideLibrary, setHideLibrary] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.HIDE_LIBRARY) !== 'false'
   })
+  const [hideProviders, setHideProviders] = useState(() => {
+    return localStorage.getItem(STORAGE_KEYS.HIDE_PROVIDERS) !== 'false'
+  })
   const [fontSize, setFontSize] = useState<number>(() => {
     const stored = localStorage.getItem(STORAGE_KEYS.FONT_SIZE)
     return stored ? parseInt(stored, 10) : 11
   })
+  const [editor, setEditor] = useState(() => {
+    return localStorage.getItem(STORAGE_KEYS.EDITOR) ?? ''
+  })
+  const [searchQuery, setSearchQuery] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [collapseTarget, setCollapseTarget] = useState<'all' | 'none' | null>(null)
+  const [collapseVersion, setCollapseVersion] = useState(0)
   const [isPickerActive, setIsPickerActive] = useState(false)
   const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string> | null>(null)
   const [tree, setTree] = useState<NormalizedNode[]>([])
@@ -155,6 +164,42 @@ export function App({ config }: AppProps) {
     [consoleEntries],
   )
 
+  // Search filter
+  const { filteredTree, matchingNodeIds, searchAncestorIds } = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    if (!query) return { filteredTree: tree, matchingNodeIds: null, searchAncestorIds: null }
+
+    const matching = new Set<string>()
+    const ancestors = new Set<string>()
+
+    function collectMatches(nodes: NormalizedNode[]) {
+      for (const node of nodes) {
+        if (node.name.toLowerCase().includes(query)) {
+          matching.add(node.id)
+        }
+        collectMatches(node.children)
+      }
+    }
+
+    function filterNodes(nodes: NormalizedNode[], parentPath: string[]): NormalizedNode[] {
+      const result: NormalizedNode[] = []
+      for (const node of nodes) {
+        const isMatch = matching.has(node.id)
+        const filteredChildren = filterNodes(node.children, [...parentPath, node.id])
+        if (isMatch || filteredChildren.length > 0) {
+          for (const id of parentPath) ancestors.add(id)
+          ancestors.add(node.id)
+          result.push({ ...node, children: filteredChildren })
+        }
+      }
+      return result
+    }
+
+    collectMatches(tree)
+    const filtered = filterNodes(tree, [])
+    return { filteredTree: filtered, matchingNodeIds: matching, searchAncestorIds: ancestors }
+  }, [tree, searchQuery])
+
   // Element picker mode
   useEffect(() => {
     if (!isPickerActive) return
@@ -170,8 +215,10 @@ export function App({ config }: AppProps) {
     }
 
     function handlePickerMove(e: MouseEvent) {
-      if (devtoolsHost?.contains(e.target as Node)) return
-      const node = findNodeForElement(e.target as HTMLElement, reverseMapRef.current)
+      // Use composedPath to pierce shadow DOM boundaries
+      const target = (e.composedPath()[0] ?? e.target) as HTMLElement
+      if (devtoolsHost?.contains(target)) return
+      const node = findNodeForElement(target, reverseMapRef.current)
       if (node) {
         handleHover(node)
         // Select in tree on hover, but skip if same node
@@ -186,10 +233,11 @@ export function App({ config }: AppProps) {
     }
 
     function handlePickerClick(e: MouseEvent) {
-      if (devtoolsHost?.contains(e.target as Node)) return
+      const target = (e.composedPath()[0] ?? e.target) as HTMLElement
+      if (devtoolsHost?.contains(target)) return
       e.preventDefault()
       e.stopPropagation()
-      const node = findNodeForElement(e.target as HTMLElement, reverseMapRef.current)
+      const node = findNodeForElement(target, reverseMapRef.current)
       if (node) {
         selectNode(node)
         handleHover(node)
@@ -232,6 +280,38 @@ export function App({ config }: AppProps) {
       window.dispatchEvent(new CustomEvent(EVENTS.REWALK))
       return next
     })
+  }, [])
+
+  const handleHideProvidersToggle = useCallback(() => {
+    setHideProviders((prev) => {
+      const next = !prev
+      localStorage.setItem(STORAGE_KEYS.HIDE_PROVIDERS, String(next))
+      window.dispatchEvent(new CustomEvent(EVENTS.REWALK))
+      return next
+    })
+  }, [])
+
+  const handleSearchChange = useCallback((query: string) => {
+    setSearchQuery(query)
+  }, [])
+
+  const handleCollapseAll = useCallback(() => {
+    setCollapseTarget('all')
+    setCollapseVersion((v) => v + 1)
+  }, [])
+
+  const handleExpandAll = useCallback(() => {
+    setCollapseTarget('none')
+    setCollapseVersion((v) => v + 1)
+  }, [])
+
+  const handleEditorChange = useCallback((value: string) => {
+    setEditor(value)
+    if (value) {
+      localStorage.setItem(STORAGE_KEYS.EDITOR, value)
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.EDITOR)
+    }
   }, [])
 
   const handleFontSizeChange = useCallback((size: number) => {
@@ -317,11 +397,16 @@ export function App({ config }: AppProps) {
 
       {isOpen && (
         <Panel
-          tree={tree}
+          tree={filteredTree}
           selectedNode={selectedNode}
           dockPosition={dockPosition}
           panelSize={panelSize}
           activeTab={activeTab}
+          searchQuery={searchQuery}
+          matchingNodeIds={matchingNodeIds}
+          searchAncestorIds={searchAncestorIds}
+          collapseTarget={collapseTarget}
+          collapseVersion={collapseVersion}
           consoleEntries={consoleEntries}
           consoleFilters={consoleFilters}
           errorCount={errorCount}
@@ -329,10 +414,17 @@ export function App({ config }: AppProps) {
           expandedNodeIds={expandedNodeIds}
           settingsOpen={settingsOpen}
           hideLibrary={hideLibrary}
+          hideProviders={hideProviders}
+          editor={editor}
           fontSize={fontSize}
+          onSearchChange={handleSearchChange}
+          onCollapseAll={handleCollapseAll}
+          onExpandAll={handleExpandAll}
           onPickerToggle={handlePickerToggle}
           onSettingsToggle={handleSettingsToggle}
           onHideLibraryToggle={handleHideLibraryToggle}
+          onHideProvidersToggle={handleHideProvidersToggle}
+          onEditorChange={handleEditorChange}
           onFontSizeChange={handleFontSizeChange}
           onDockChange={handleDockChange}
           onResize={handleResize}

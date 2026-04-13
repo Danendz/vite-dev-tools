@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, createElement } from 'react'
 import type { DevToolsConfig } from '../../core/types'
 import { HOOK_SCRIPT } from './hook'
 
@@ -10,8 +10,6 @@ declare const __DEVTOOLS_CONFIG__: DevToolsConfig
 
 /**
  * React component that mounts the devtools overlay.
- * Use this for projects where Vite doesn't serve index.html
- * (e.g., WordPress, custom SSR, micro-frontends).
  *
  * The Vite plugin (`devtools()`) is still required in vite.config.ts
  * for source transforms and serving the overlay files.
@@ -30,13 +28,15 @@ declare const __DEVTOOLS_CONFIG__: DevToolsConfig
  * }
  * ```
  */
-export function DevToolsPanel(props: DevToolsConfig = {}): null {
+export function DevToolsPanel(props: DevToolsConfig = {}) {
+  const containerRef = useRef<HTMLDivElement>(null)
   const initialized = useRef(false)
 
   useEffect(() => {
-    if (initialized.current) return
+    if (initialized.current || !containerRef.current) return
     initialized.current = true
 
+    const container = containerRef.current
     const config = { ...__DEVTOOLS_CONFIG__, ...props }
 
     // 1. Inject hook script (wraps existing __REACT_DEVTOOLS_GLOBAL_HOOK__)
@@ -47,16 +47,16 @@ export function DevToolsPanel(props: DevToolsConfig = {}): null {
     // 2. Load runtime (fiber walker + commit listener)
     import(/* @vite-ignore */ __DEVTOOLS_RUNTIME_URL__)
 
-    // 3. Load and mount overlay
+    // 3. Load and mount overlay inside this component's container
     import(/* @vite-ignore */ __DEVTOOLS_OVERLAY_URL__).then((mod) => {
-      mod.mountOverlay(config)
+      mod.mountOverlay(config, container)
     })
 
     return () => {
-      const host = document.getElementById('danendz-devtools')
+      const host = container.querySelector('#danendz-devtools')
       if (host) host.remove()
     }
   }, [])
 
-  return null
+  return createElement('div', { ref: containerRef })
 }

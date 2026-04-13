@@ -1,4 +1,5 @@
 import type { NormalizedNode, HookInfo } from '../../core/types'
+import { getOverrides } from '../../core/collapse'
 
 // React fiber tag constants
 const FunctionComponent = 0
@@ -42,19 +43,10 @@ function getComponentName(fiber: any): string {
 }
 
 /**
- * Parse source location from fiber.
- * Priority:
- * 1. __devtools_source — injected by our Vite transform (most reliable, points to definition site)
- * 2. _debugSource — React 18 and earlier
- * 3. _debugStack — React 19+ (fallback, points to usage site)
+ * Get the React-provided usage-site source (where component is rendered in parent JSX).
+ * Returns from _debugSource (React 18) or _debugStack (React 19+).
  */
-function getSourceLocation(fiber: any) {
-  // Our Vite transform annotation — points to component DEFINITION
-  if (fiber.type?.__devtools_source) {
-    return fiber.type.__devtools_source
-  }
-
-  // React 18 and earlier
+function getReactSource(fiber: any) {
   if (fiber._debugSource) {
     return {
       fileName: fiber._debugSource.fileName,
@@ -63,13 +55,28 @@ function getSourceLocation(fiber: any) {
     }
   }
 
-  // React 19+: parse from _debugStack (fallback — points to usage site)
   if (fiber._debugStack) {
     const parsed = parseDebugStack(fiber._debugStack)
     if (parsed) return parsed
   }
 
   return null
+}
+
+/**
+ * Parse source locations from fiber.
+ * Returns both definition-site and usage-site when available.
+ * - source: __devtools_source (definition) if available, else React source (usage)
+ * - usageSource: React source (usage) only when __devtools_source was used as primary
+ */
+function getSourceLocations(fiber: any): { source: ReturnType<typeof getReactSource>, usageSource: ReturnType<typeof getReactSource> } {
+  const definitionSource = fiber.type?.__devtools_source ?? null
+  const reactSource = getReactSource(fiber)
+
+  if (definitionSource) {
+    return { source: definitionSource, usageSource: reactSource }
+  }
+  return { source: reactSource, usageSource: null }
 }
 
 // Cache parsed stack results to avoid re-parsing the same stack
@@ -115,7 +122,7 @@ function parseDebugStack(stack: Error | string) {
 }
 
 function isFromNodeModules(fiber: any): boolean {
-  const source = getSourceLocation(fiber)
+  const { source } = getSourceLocations(fiber)
   // No source info → no __devtools_source injected → not a user file → library component
   if (!source?.fileName) return true
   return source.fileName.includes('node_modules/') || source.fileName.includes('.vite/deps/')
@@ -174,13 +181,32 @@ function getHooks(fiber: any): HookInfo[] {
   // Only function components have hooks in memoizedState as linked list
   if (fiber.tag !== FunctionComponent) return hooks
 
+  const rawHookData: unknown[] | undefined = fiber.type?.__devtools_hooks
+  let hookIndex = 0
   let hook = fiber.memoizedState
   while (hook !== null && hook !== undefined) {
     const inferred = inferHookType(hook)
+    const entry = rawHookData?.[hookIndex]
+
+    let varName: string | undefined
+    let lineNumber: number | undefined
+
+    if (Array.isArray(entry)) {
+      // New format: [varName, lineNumber]
+      varName = entry[0] ?? undefined
+      lineNumber = entry[1]
+    } else if (typeof entry === 'string') {
+      // Old format: just the variable name
+      varName = entry
+    }
+
     hooks.push({
       name: inferred.name,
       value: inferred.value,
+      varName,
+      lineNumber,
     })
+    hookIndex++
     hook = hook.next
   }
   return hooks
@@ -241,7 +267,7 @@ function isComponentFiber(fiber: any): boolean {
   return COMPONENT_TAGS.has(fiber.tag)
 }
 
-function walkFiberChildren(fiber: any, hideLibrary: boolean): NormalizedNode[] {
+function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: boolean): NormalizedNode[] {
   const nodes: NormalizedNode[] = []
   let child = fiber.child
 
@@ -253,16 +279,21 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean): NormalizedNode[] {
         // skip entirely
       } else if (hideLibrary && isFromNodeModules(child)) {
         // Hide library components — re-parent their children to this level
-        nodes.push(...walkFiberChildren(child, hideLibrary))
+        nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders))
+      } else if (hideProviders && name.endsWith('Provider') && !getOverrides().alwaysShow.includes(name)) {
+        // Hide provider wrappers — re-parent their children
+        nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders))
       } else {
+        const locations = getSourceLocations(child)
         const node: NormalizedNode = {
           id: `fiber_${nodeIdCounter++}`,
           name,
-          source: getSourceLocation(child),
+          source: locations.source,
+          usageSource: locations.usageSource ?? undefined,
           props: getProps(child),
           hooks: getHooks(child),
           state: getState(child),
-          children: walkFiberChildren(child, hideLibrary),
+          children: walkFiberChildren(child, hideLibrary, hideProviders),
           isFromNodeModules: isFromNodeModules(child),
           _domElements: findDOMElements(child),
         }
@@ -270,7 +301,7 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean): NormalizedNode[] {
       }
     } else {
       // Not a component fiber — skip it but walk its children
-      nodes.push(...walkFiberChildren(child, hideLibrary))
+      nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders))
     }
     child = child.sibling
   }
@@ -278,8 +309,8 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean): NormalizedNode[] {
   return nodes
 }
 
-export function walkFiberTree(rootFiber: any, hideLibrary = false): NormalizedNode[] {
+export function walkFiberTree(rootFiber: any, hideLibrary = false, hideProviders = false): NormalizedNode[] {
   nodeIdCounter = 0
-  return walkFiberChildren(rootFiber, hideLibrary)
+  return walkFiberChildren(rootFiber, hideLibrary, hideProviders)
 }
 

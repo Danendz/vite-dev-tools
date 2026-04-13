@@ -18,7 +18,9 @@ export const STORAGE_KEYS = {
   DOCK_POSITION: 'danendz-devtools:dock-position',
   PANEL_SIZE: 'danendz-devtools:panel-size',
   HIDE_LIBRARY: 'danendz-devtools:hide-library',
+  HIDE_PROVIDERS: 'danendz-devtools:hide-providers',
   FONT_SIZE: 'danendz-devtools:font-size',
+  EDITOR: 'danendz-devtools:editor',
 } as const
 
 // Server endpoints

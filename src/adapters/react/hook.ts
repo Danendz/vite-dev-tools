@@ -2,7 +2,7 @@
  * This code sets up the __REACT_DEVTOOLS_GLOBAL_HOOK__ to intercept
  * React fiber tree commits. It must run BEFORE React loads.
  *
- * This is injected as inline script content via transformIndexHtml.
+ * Injected by the DevToolsPanel component at mount time.
  */
 export const HOOK_SCRIPT = /* js */ `
 (function() {

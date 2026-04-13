@@ -20,24 +20,7 @@ pnpm add -D @danendz/vite-dev-tools
 
 ## Setup
 
-### Standard Vite app (with `index.html`)
-
-Add the plugin to your Vite config — scripts are injected automatically:
-
-```ts
-// vite.config.ts
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import { devtools } from '@danendz/vite-dev-tools/react'
-
-export default defineConfig({
-  plugins: [react(), devtools()],
-})
-```
-
-### Proxy setup (WordPress, custom SSR, micro-frontends)
-
-For projects where Vite doesn't serve `index.html`, use the `<DevToolsPanel />` component instead. The Vite plugin is still required for source transforms.
+Add the plugin to your Vite config and render the `<DevToolsPanel />` component in your app:
 
 ```ts
 // vite.config.ts
@@ -64,7 +47,7 @@ function App() {
 }
 ```
 
-Works like React Query DevTools — just render the component in your app tree. It handles hook injection, runtime loading, and overlay mounting automatically.
+Works like React Query DevTools — just render the component in your app tree. It handles hook injection, runtime loading, and overlay mounting automatically. Works with any setup: standard Vite apps, proxied backends (WordPress, custom SSR), and micro-frontends.
 
 The plugin only runs in `serve` mode — it's automatically excluded from production builds.
 

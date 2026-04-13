@@ -1,5 +1,5 @@
 import { h } from 'preact'
-import { useRef, useCallback, useMemo } from 'preact/hooks'
+import { useRef, useState, useCallback, useMemo } from 'preact/hooks'
 import type { NormalizedNode, DockPosition, ActiveTab, ConsoleEntry } from '../types'
 import { TreeView } from './TreeView'
 import { DetailPanel } from './DetailPanel'
@@ -17,6 +17,11 @@ interface PanelProps {
   dockPosition: DockPosition
   panelSize: number
   activeTab: ActiveTab
+  searchQuery: string
+  matchingNodeIds: Set<string> | null
+  searchAncestorIds: Set<string> | null
+  collapseTarget: 'all' | 'none' | null
+  collapseVersion: number
   consoleEntries: ConsoleEntry[]
   consoleFilters: { errors: boolean; warnings: boolean }
   errorCount: number
@@ -24,10 +29,17 @@ interface PanelProps {
   expandedNodeIds: Set<string> | null
   settingsOpen: boolean
   hideLibrary: boolean
+  hideProviders: boolean
+  editor: string
   fontSize: number
+  onSearchChange: (query: string) => void
+  onCollapseAll: () => void
+  onExpandAll: () => void
   onPickerToggle: () => void
   onSettingsToggle: () => void
   onHideLibraryToggle: () => void
+  onHideProvidersToggle: () => void
+  onEditorChange: (editor: string) => void
   onFontSizeChange: (size: number) => void
   onDockChange: (pos: DockPosition) => void
   onResize: (size: number) => void
@@ -46,6 +58,11 @@ export function Panel({
   dockPosition,
   panelSize,
   activeTab,
+  searchQuery,
+  matchingNodeIds,
+  searchAncestorIds,
+  collapseTarget,
+  collapseVersion,
   consoleEntries,
   consoleFilters,
   errorCount,
@@ -53,10 +70,17 @@ export function Panel({
   expandedNodeIds,
   settingsOpen,
   hideLibrary,
+  hideProviders,
+  editor,
   fontSize,
+  onSearchChange,
+  onCollapseAll,
+  onExpandAll,
   onPickerToggle,
   onSettingsToggle,
   onHideLibraryToggle,
+  onHideProvidersToggle,
+  onEditorChange,
   onFontSizeChange,
   onDockChange,
   onResize,
@@ -68,7 +92,42 @@ export function Panel({
   onContextMenu,
   onClose,
 }: PanelProps) {
+  const [detailSize, setDetailSize] = useState(() => dockPosition === 'bottom' ? 260 : 220)
   const dragRef = useRef<{ startPos: number; startSize: number } | null>(null)
+  const detailDragRef = useRef<{ startPos: number; startSize: number } | null>(null)
+
+  const handleDetailPointerDown = useCallback(
+    (e: PointerEvent) => {
+      e.preventDefault()
+      ;(e.target as Element).setPointerCapture(e.pointerId)
+      const startPos = dockPosition === 'bottom' ? e.clientX : e.clientY
+      detailDragRef.current = { startPos, startSize: detailSize }
+      document.documentElement.style.userSelect = 'none'
+    },
+    [dockPosition, detailSize],
+  )
+
+  const handleDetailPointerMove = useCallback(
+    (e: PointerEvent) => {
+      if (!detailDragRef.current) return
+      const { startPos, startSize } = detailDragRef.current
+      if (dockPosition === 'bottom') {
+        // Horizontal: dragging left edge of detail pane
+        const delta = startPos - e.clientX
+        setDetailSize(Math.max(150, Math.min(startSize + delta, panelSize * 0.7)))
+      } else {
+        // Vertical: dragging top edge of detail pane
+        const delta = startPos - e.clientY
+        setDetailSize(Math.max(80, Math.min(startSize + delta, panelSize * 0.7)))
+      }
+    },
+    [dockPosition, panelSize],
+  )
+
+  const handleDetailPointerUp = useCallback(() => {
+    detailDragRef.current = null
+    document.documentElement.style.userSelect = ''
+  }, [])
 
   const handlePointerDown = useCallback(
     (e: PointerEvent) => {
@@ -195,8 +254,12 @@ export function Panel({
           {settingsOpen && (
             <SettingsPopover
               hideLibrary={hideLibrary}
+              hideProviders={hideProviders}
+              editor={editor}
               fontSize={fontSize}
               onHideLibraryToggle={onHideLibraryToggle}
+              onHideProvidersToggle={onHideProvidersToggle}
+              onEditorChange={onEditorChange}
               onFontSizeChange={onFontSizeChange}
               onClose={onSettingsToggle}
             />
@@ -226,12 +289,33 @@ export function Panel({
                 tree={tree}
                 selectedId={selectedNode?.id ?? null}
                 expandedNodeIds={expandedNodeIds}
+                searchQuery={searchQuery}
+                matchingNodeIds={matchingNodeIds}
+                searchAncestorIds={searchAncestorIds}
+                collapseTarget={collapseTarget}
+                collapseVersion={collapseVersion}
+                onSearchChange={onSearchChange}
+                onCollapseAll={onCollapseAll}
+                onExpandAll={onExpandAll}
                 onSelect={onSelect}
                 onHover={onHover}
                 onContextMenu={onContextMenu}
               />
             </div>
-            <div class="detail-pane">
+            <div
+              class="detail-pane"
+              style={isVertical ? { height: `${detailSize}px` } : { width: `${detailSize}px` }}
+            >
+              <div
+                class="detail-resize-handle"
+                style={isVertical
+                  ? { top: 0, left: 0, right: 0, height: '4px', cursor: 'ns-resize' }
+                  : { top: 0, left: 0, bottom: 0, width: '4px', cursor: 'ew-resize' }
+                }
+                onPointerDown={handleDetailPointerDown}
+                onPointerMove={handleDetailPointerMove}
+                onPointerUp={handleDetailPointerUp}
+              />
               <DetailPanel node={selectedNode} />
             </div>
           </div>

@@ -7,6 +7,8 @@ export interface NormalizedNode {
   state: unknown
   children: NormalizedNode[]
   isFromNodeModules: boolean
+  /** Usage-site source location (where component is rendered in parent JSX) */
+  usageSource?: SourceLocation
   /** DOM element references for highlight — multiple when component returns a fragment */
   _domElements?: HTMLElement[]
 }
@@ -20,6 +22,8 @@ export interface SourceLocation {
 export interface HookInfo {
   name: string
   value: unknown
+  varName?: string
+  lineNumber?: number
 }
 
 export type DockPosition = 'bottom' | 'left' | 'right'
