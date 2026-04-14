@@ -231,6 +231,72 @@ function getSpecialTypeName(vnode: any): string | null {
 }
 
 /**
+ * Walk static DOM elements (from Vue's hoisted static vnodes).
+ * Static vnodes reference real DOM nodes via el/anchor — walk siblings between them.
+ */
+function walkStaticDOM(el: Node, anchor: Node | null, ctx: WalkContext): NormalizedNode[] {
+  const nodes: NormalizedNode[] = []
+
+  // Single element
+  if (!anchor && el instanceof HTMLElement) {
+    nodes.push(domElementToNode(el, ctx))
+    return nodes
+  }
+
+  // Multiple siblings: walk from el to anchor
+  let current: Node | null = el
+  while (current) {
+    if (current instanceof HTMLElement) {
+      nodes.push(domElementToNode(current, ctx))
+    }
+    if (current === anchor) break
+    current = current.nextSibling
+  }
+
+  return nodes
+}
+
+function domElementToNode(el: HTMLElement, ctx: WalkContext): NormalizedNode {
+  const tagName = el.tagName.toLowerCase()
+
+  // Extract props from DOM attributes
+  const props: Record<string, unknown> = {}
+  for (const attr of Array.from(el.attributes)) {
+    props[attr.name] = attr.value
+  }
+
+  // Get text content (only if the element has direct text, not nested elements)
+  let textContent: string | undefined
+  if (el.childNodes.length === 1 && el.childNodes[0].nodeType === 3) {
+    const text = el.childNodes[0].textContent?.trim()
+    if (text) textContent = text
+  }
+
+  // Recurse into child elements
+  const children: NormalizedNode[] = []
+  for (const child of Array.from(el.children)) {
+    if (child instanceof HTMLElement) {
+      children.push(domElementToNode(child, ctx))
+    }
+  }
+
+  return {
+    id: `vue_${nodeIdCounter++}`,
+    name: tagName,
+    source: null,
+    _parentSource: ctx.parentUsageSource,
+    props,
+    sections: [],
+    children,
+    isFromNodeModules: false,
+    isHostElement: true,
+    _domElements: [el],
+    textContent,
+    textFragments: textContent ? [textContent] : undefined,
+  }
+}
+
+/**
  * Walk a vnode tree and extract child component NormalizedNodes.
  */
 function walkVNodeChildren(vnode: any, hideLibrary: boolean, ctx: WalkContext): NormalizedNode[] {
@@ -342,6 +408,16 @@ function walkVNodeChildren(vnode: any, hideLibrary: boolean, ctx: WalkContext): 
       nodes.push(...walkVNodeChildren(child, hideLibrary, ctx))
     }
     return nodes
+  }
+
+  // Static content — Vue's compiler hoists entirely-static DOM into Symbol(v-stc) vnodes.
+  // These have shapeFlag=0 and children is an HTML string. Walk the actual DOM elements.
+  if (typeof vnode.type === 'symbol' && vnode.el) {
+    const desc = vnode.type.description ?? String(vnode.type)
+    if (desc === 'v-stc' || desc === 'Static') {
+      nodes.push(...walkStaticDOM(vnode.el, vnode.anchor, ctx))
+      return nodes
+    }
   }
 
   return nodes

@@ -31,6 +31,7 @@ interface PanelProps {
   settingsOpen: boolean
   hideLibrary: boolean
   hideProviders: boolean
+  showPreview: boolean
   editor: string
   fontSize: number
   supportedSettings?: string[]
@@ -40,6 +41,7 @@ interface PanelProps {
   onHideLibraryToggle: () => void
   onHideProvidersToggle: () => void
   onShowElementsToggle: () => void
+  onShowPreviewToggle: () => void
   onEditorChange: (editor: string) => void
   onFontSizeChange: (size: number) => void
   onDockChange: (pos: DockPosition) => void
@@ -77,6 +79,7 @@ export function Panel({
   settingsOpen,
   hideLibrary,
   hideProviders,
+  showPreview,
   editor,
   fontSize,
   supportedSettings,
@@ -86,6 +89,7 @@ export function Panel({
   onHideLibraryToggle,
   onHideProvidersToggle,
   onShowElementsToggle,
+  onShowPreviewToggle,
   onEditorChange,
   onFontSizeChange,
   onDockChange,
@@ -277,12 +281,14 @@ export function Panel({
               hideLibrary={hideLibrary}
               hideProviders={hideProviders}
               showElements={showElements}
+              showPreview={showPreview}
               editor={editor}
               fontSize={fontSize}
               supportedSettings={supportedSettings}
               onHideLibraryToggle={onHideLibraryToggle}
               onHideProvidersToggle={onHideProvidersToggle}
               onShowElementsToggle={onShowElementsToggle}
+              onShowPreviewToggle={onShowPreviewToggle}
               onEditorChange={onEditorChange}
               onFontSizeChange={onFontSizeChange}
               onClose={onSettingsToggle}

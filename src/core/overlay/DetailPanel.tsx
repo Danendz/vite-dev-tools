@@ -1,8 +1,10 @@
 import { h } from 'preact'
 import { useState, useRef, useEffect } from 'preact/hooks'
 import type { NormalizedNode, SourceLocation, InspectorItem, EditHint } from '../types'
-import { openInEditor, persistEdit, persistPropValue, persistTextValue } from '../communication'
-import { EVENTS } from '../../shared/constants'
+import { openInEditor, persistEdit, persistPropValue, persistTextValue, persistHookValue, undoEdit } from '../communication'
+import type { DiffData, PreviewResult } from '../communication'
+import { EVENTS, STORAGE_KEYS } from '../../shared/constants'
+import { PreviewModal } from './PreviewModal'
 
 function formatPath(source: SourceLocation): string {
   return `${source.fileName.replace(/^.*\/src\//, 'src/')}:${source.lineNumber}`
@@ -101,6 +103,7 @@ function EditableValue({ item, nodeId, source }: { item: InspectorItem; nodeId: 
   const [editError, setEditError] = useState<string | null>(null)
   const [showPersist, setShowPersist] = useState(false)
   const [persistStatus, setPersistStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -129,7 +132,13 @@ function EditableValue({ item, nodeId, source }: { item: InspectorItem; nodeId: 
   }
 
   const enterEditMode = () => {
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current)
+      resetTimerRef.current = null
+    }
     setEditError(null)
+    setUndoFile(null)
+    setPersistStatus('idle')
     if (valueType === 'object' || Array.isArray(value)) {
       setEditValue(JSON.stringify(value, null, 2))
     } else if (valueType === 'null') {
@@ -178,7 +187,10 @@ function EditableValue({ item, nodeId, source }: { item: InspectorItem; nodeId: 
     }
   }
 
-  const handlePersist = async () => {
+  const [previewDiff, setPreviewDiff] = useState<DiffData | null>(null)
+  const [undoFile, setUndoFile] = useState<string | null>(null)
+
+  const doActualPersist = async () => {
     if (!source?.fileName || item.lineNumber == null || !item.editHint) return
     setPersistStatus('saving')
     const result = await persistEdit({
@@ -189,7 +201,52 @@ function EditableValue({ item, nodeId, source }: { item: InspectorItem; nodeId: 
       componentName: '',
     })
     setPersistStatus(result.ok ? 'saved' : 'error')
-    if (result.ok) setTimeout(() => setShowPersist(false), 1500)
+    if (result.ok) {
+      setUndoFile(source.fileName)
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current)
+      resetTimerRef.current = setTimeout(() => {
+        setShowPersist(false)
+        setPersistStatus('idle')
+        setUndoFile(null)
+        resetTimerRef.current = null
+      }, 30000)
+    }
+  }
+
+  const handlePersist = async () => {
+    if (!source?.fileName || item.lineNumber == null || !item.editHint) return
+
+    const showPreview = localStorage.getItem(STORAGE_KEYS.SHOW_PREVIEW) !== 'false'
+    if (showPreview) {
+      setPersistStatus('saving')
+      const result = await persistEdit({
+        editHint: item.editHint,
+        value: item.value,
+        fileName: source.fileName,
+        lineNumber: item.lineNumber,
+        componentName: '',
+      }, true) as PreviewResult
+      setPersistStatus('idle')
+      if (result.ok && 'diff' in result) {
+        setPreviewDiff(result.diff)
+      }
+      return
+    }
+
+    await doActualPersist()
+  }
+
+  const handlePreviewConfirm = async () => {
+    setPreviewDiff(null)
+    await doActualPersist()
+  }
+
+  const handleUndo = async () => {
+    if (!undoFile) return
+    await undoEdit({ fileName: undoFile })
+    setUndoFile(null)
+    setPersistStatus('idle')
+    setShowPersist(false)
   }
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -209,9 +266,21 @@ function EditableValue({ item, nodeId, source }: { item: InspectorItem; nodeId: 
       <span class="editable-value-wrapper editable" onDblClick={enterEditMode}>
         <ValueDisplay value={value} />
         {showPersist && (
-          <button class="persist-btn" onClick={handlePersist} disabled={persistStatus === 'saving'}>
-            {persistStatus === 'saving' ? '...' : persistStatus === 'saved' ? '✓' : persistStatus === 'error' ? '✕ failed' : 'Persist'}
-          </button>
+          <>
+            <button class="persist-btn" onClick={handlePersist} disabled={persistStatus === 'saving'}>
+              {persistStatus === 'saving' ? '...' : persistStatus === 'saved' ? '\u2713' : persistStatus === 'error' ? '\u2715 failed' : 'Persist'}
+            </button>
+            {undoFile && persistStatus === 'saved' && (
+              <button class="undo-btn" onClick={handleUndo}>Undo</button>
+            )}
+          </>
+        )}
+        {previewDiff && (
+          <PreviewModal
+            diff={previewDiff}
+            onConfirm={handlePreviewConfirm}
+            onCancel={() => setPreviewDiff(null)}
+          />
         )}
       </span>
     )
@@ -278,7 +347,22 @@ function EditablePropValue({
   const [editError, setEditError] = useState<string | null>(null)
   const [showPersist, setShowPersist] = useState(false)
   const [persistStatus, setPersistStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [previewDiff, setPreviewDiff] = useState<DiffData | null>(null)
+  const [undoFile, setUndoFile] = useState<string | null>(null)
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
+
+  // Reset persist state when a new external edit arrives (e.g. inline tree edit)
+  useEffect(() => {
+    if (isEdited && persistStatus === 'saved') {
+      if (resetTimerRef.current) {
+        clearTimeout(resetTimerRef.current)
+        resetTimerRef.current = null
+      }
+      setPersistStatus('idle')
+      setUndoFile(null)
+    }
+  }, [isEdited])
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -296,7 +380,7 @@ function EditablePropValue({
     return <span class="detail-value">{String(value)}</span>
   }
 
-  const handlePersist = async () => {
+  const doActualPersist = async () => {
     if (!usageSource?.fileName || !usageSource?.lineNumber) return
     setPersistStatus('saving')
     const result = await persistPropValue({
@@ -308,11 +392,50 @@ function EditablePropValue({
     setPersistStatus(result.ok ? 'saved' : 'error')
     if (result.ok) {
       onPropPersisted?.(nodeId, propKey)
-      setTimeout(() => {
+      setUndoFile(usageSource.fileName)
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current)
+      resetTimerRef.current = setTimeout(() => {
         setShowPersist(false)
         setPersistStatus('idle')
-      }, 1500)
+        setUndoFile(null)
+        resetTimerRef.current = null
+      }, 30000)
     }
+  }
+
+  const handlePersist = async () => {
+    if (!usageSource?.fileName || !usageSource?.lineNumber) return
+
+    const showPreview = localStorage.getItem(STORAGE_KEYS.SHOW_PREVIEW) !== 'false'
+    if (showPreview) {
+      setPersistStatus('saving')
+      const result = await persistPropValue({
+        fileName: usageSource.fileName,
+        lineNumber: usageSource.lineNumber,
+        propKey,
+        newValue: value as string | number | boolean | null,
+      }, true) as PreviewResult
+      setPersistStatus('idle')
+      if (result.ok && 'diff' in result) {
+        setPreviewDiff(result.diff)
+      }
+      return
+    }
+
+    await doActualPersist()
+  }
+
+  const handlePreviewConfirm = async () => {
+    setPreviewDiff(null)
+    await doActualPersist()
+  }
+
+  const handleUndo = async () => {
+    if (!undoFile) return
+    await undoEdit({ fileName: undoFile })
+    setUndoFile(null)
+    setPersistStatus('idle')
+    setShowPersist(false)
   }
 
   // Show persist when: local edit confirmed OR prop was edited externally (e.g. inline tree edit)
@@ -327,7 +450,18 @@ function EditablePropValue({
       <button class="persist-btn-lg" onClick={handlePersist} disabled={persistStatus === 'saving'}>
         {persistStatus === 'saving' ? 'Saving...' : persistStatus === 'saved' ? '\u2713 Saved' : persistStatus === 'error' ? '\u2715 Failed' : 'Save to source'}
       </button>
+      {undoFile && persistStatus === 'saved' && (
+        <button class="undo-btn" onClick={handleUndo}>Undo</button>
+      )}
     </div>
+  )
+
+  const previewModal = previewDiff && (
+    <PreviewModal
+      diff={previewDiff}
+      onConfirm={handlePreviewConfirm}
+      onCancel={() => setPreviewDiff(null)}
+    />
   )
 
   // Boolean: single click toggles immediately
@@ -345,6 +479,7 @@ function EditablePropValue({
           <span class="detail-value boolean">{String(value)}</span>
         </span>
         {persistButton}
+        {previewModal}
       </>
     )
   }
@@ -393,8 +528,14 @@ function EditablePropValue({
     // Show persist button for primitive values when usageSource is available (not for dynamic bindings)
     const isPrimitive = parsed === null || ['string', 'number', 'boolean'].includes(typeof parsed)
     if (isPrimitive && !isDynamic && usageSource?.fileName && usageSource?.lineNumber) {
+      // Clear any pending reset timer from a previous save
+      if (resetTimerRef.current) {
+        clearTimeout(resetTimerRef.current)
+        resetTimerRef.current = null
+      }
       setShowPersist(true)
       setPersistStatus('idle')
+      setUndoFile(null)
     }
   }
 
@@ -417,6 +558,7 @@ function EditablePropValue({
           <ValueDisplay value={value} />
         </span>
         {persistButton}
+        {previewModal}
       </>
     )
   }
@@ -463,6 +605,9 @@ function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
   const [originalText, setOriginalText] = useState('')
   const [showPersist, setShowPersist] = useState(false)
   const [persistStatus, setPersistStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [previewDiff, setPreviewDiff] = useState<DiffData | null>(null)
+  const [undoFile, setUndoFile] = useState<string | null>(null)
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -473,9 +618,16 @@ function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
   }, [editing])
 
   const enterEditMode = () => {
+    // Clear any pending reset timer from a previous save
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current)
+      resetTimerRef.current = null
+    }
     setOriginalText(text)
     setEditValue(text)
     setEditing(true)
+    setUndoFile(null)
+    setPersistStatus('idle')
   }
 
   const cancelEdit = () => {
@@ -491,7 +643,7 @@ function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
     setPersistStatus('idle')
   }
 
-  const handlePersist = async () => {
+  const doActualPersist = async () => {
     if (!source?.fileName || !source?.lineNumber) return
     setPersistStatus('saving')
     const result = await persistTextValue({
@@ -501,7 +653,51 @@ function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
       newText: editValue,
     })
     setPersistStatus(result.ok ? 'saved' : 'error')
-    if (result.ok) setTimeout(() => setShowPersist(false), 1500)
+    if (result.ok) {
+      setUndoFile(source.fileName)
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current)
+      resetTimerRef.current = setTimeout(() => {
+        setShowPersist(false)
+        setPersistStatus('idle')
+        setUndoFile(null)
+        resetTimerRef.current = null
+      }, 30000)
+    }
+  }
+
+  const handlePersist = async () => {
+    if (!source?.fileName || !source?.lineNumber) return
+
+    const showPreview = localStorage.getItem(STORAGE_KEYS.SHOW_PREVIEW) !== 'false'
+    if (showPreview) {
+      setPersistStatus('saving')
+      const result = await persistTextValue({
+        fileName: source.fileName,
+        lineNumber: source.lineNumber,
+        oldText: originalText,
+        newText: editValue,
+      }, true) as PreviewResult
+      setPersistStatus('idle')
+      if (result.ok && 'diff' in result) {
+        setPreviewDiff(result.diff)
+      }
+      return
+    }
+
+    await doActualPersist()
+  }
+
+  const handlePreviewConfirm = async () => {
+    setPreviewDiff(null)
+    await doActualPersist()
+  }
+
+  const handleUndo = async () => {
+    if (!undoFile) return
+    await undoEdit({ fileName: undoFile })
+    setUndoFile(null)
+    setPersistStatus('idle')
+    setShowPersist(false)
   }
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -540,7 +736,17 @@ function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
           <button class="persist-btn-lg" onClick={handlePersist} disabled={persistStatus === 'saving'}>
             {persistStatus === 'saving' ? 'Saving...' : persistStatus === 'saved' ? '\u2713 Saved' : persistStatus === 'error' ? '\u2715 Failed' : 'Save to source'}
           </button>
+          {undoFile && persistStatus === 'saved' && (
+            <button class="undo-btn" onClick={handleUndo}>Undo</button>
+          )}
         </div>
+      )}
+      {previewDiff && (
+        <PreviewModal
+          diff={previewDiff}
+          onConfirm={handlePreviewConfirm}
+          onCancel={() => setPreviewDiff(null)}
+        />
       )}
     </div>
   )

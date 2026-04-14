@@ -5,12 +5,14 @@ interface SettingsPopoverProps {
   hideLibrary: boolean
   hideProviders: boolean
   showElements: boolean
+  showPreview: boolean
   editor: string
   fontSize: number
   supportedSettings?: string[]
   onHideLibraryToggle: () => void
   onHideProvidersToggle: () => void
   onShowElementsToggle: () => void
+  onShowPreviewToggle: () => void
   onEditorChange: (editor: string) => void
   onFontSizeChange: (size: number) => void
   onClose: () => void
@@ -33,12 +35,14 @@ export function SettingsPopover({
   hideLibrary,
   hideProviders,
   showElements,
+  showPreview,
   editor,
   fontSize,
   supportedSettings,
   onHideLibraryToggle,
   onHideProvidersToggle,
   onShowElementsToggle,
+  onShowPreviewToggle,
   onEditorChange,
   onFontSizeChange,
   onClose,
@@ -86,6 +90,12 @@ export function SettingsPopover({
           {showElements ? '\u2713' : ''}
         </span>
         <span>Show HTML elements</span>
+      </label>
+      <label class="settings-item" onClick={onShowPreviewToggle}>
+        <span class={`settings-checkbox${showPreview ? ' checked' : ''}`}>
+          {showPreview ? '\u2713' : ''}
+        </span>
+        <span>Preview before saving</span>
       </label>
       <div class="settings-item settings-font-size">
         <span>Font size</span>

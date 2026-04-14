@@ -6,6 +6,8 @@ import type { FrameworkAdapter } from './adapter'
 import type { DevToolsConfig } from './types'
 import { createEditorMiddleware } from '../shared/editor'
 import { DEFAULT_CONFIG, ENDPOINTS } from '../shared/constants'
+import { undoStore } from '../shared/undo-store'
+import { buildDiff } from '../shared/diff'
 
 const DIR = path.dirname(fileURLToPath(import.meta.url))
 
@@ -123,6 +125,7 @@ export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevTool
       })
 
       // Generic persist-edit endpoint — delegates to adapter.rewriteSource
+      // Supports preview mode (dry-run) via `preview: true` in body
       if (adapter.rewriteSource) {
         server.middlewares.use((req: any, res: any, next: any) => {
           if (req.method !== 'POST' || req.url !== ENDPOINTS.PERSIST_EDIT) return next()
@@ -132,7 +135,7 @@ export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevTool
           req.on('end', () => {
             res.setHeader('Content-Type', 'application/json')
             try {
-              const { editHint, value, fileName, lineNumber, componentName } = JSON.parse(body)
+              const { editHint, value, fileName, lineNumber, componentName, preview } = JSON.parse(body)
 
               let filePath = path.resolve(projectRoot, fileName.replace(/^\//, ''))
               if (!fs.existsSync(filePath)) {
@@ -158,6 +161,14 @@ export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevTool
                 return
               }
 
+              if (preview) {
+                // Return diff without writing
+                res.end(JSON.stringify({ ok: true, preview: true, diff: buildDiff(source, patched, fileName, lineNumber) }))
+                return
+              }
+
+              // Store undo backup before writing
+              undoStore.set(filePath, { previousContent: source, timestamp: Date.now() })
               fs.writeFileSync(filePath, patched, 'utf-8')
               res.end(JSON.stringify({ ok: true }))
             } catch (e: any) {
@@ -168,6 +179,39 @@ export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevTool
         })
       }
 
+      // Undo endpoint — restores the last written file from in-memory backup
+      server.middlewares.use((req: any, res: any, next: any) => {
+        if (req.method !== 'POST' || req.url !== ENDPOINTS.UNDO_EDIT) return next()
+
+        let body = ''
+        req.on('data', (chunk: string) => { body += chunk })
+        req.on('end', () => {
+          res.setHeader('Content-Type', 'application/json')
+          try {
+            const { fileName } = JSON.parse(body)
+
+            let filePath = path.resolve(projectRoot, fileName.replace(/^\//, ''))
+            if (!fs.existsSync(filePath)) {
+              filePath = fileName
+            }
+
+            const backup = undoStore.get(filePath)
+            if (!backup) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, error: 'No undo available for this file' }))
+              return
+            }
+
+            fs.writeFileSync(filePath, backup.previousContent, 'utf-8')
+            undoStore.delete(filePath)
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e: any) {
+            res.statusCode = 500
+            res.end(JSON.stringify({ ok: false, error: e.message }))
+          }
+        })
+      })
+
       // Let adapter register additional middlewares (e.g. legacy persist endpoints)
       if ((adapter as any).configureServer) {
         (adapter as any).configureServer(server)
@@ -175,3 +219,4 @@ export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevTool
     },
   }
 }
+

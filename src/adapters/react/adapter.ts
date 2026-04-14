@@ -3,6 +3,17 @@ import path from 'node:path'
 import type { FrameworkAdapter, RewriteEdit } from '../../core/adapter'
 import { ENDPOINTS } from '../../shared/constants'
 import { HOOK_SCRIPT } from './hook'
+import {
+  parseJSX,
+  findComponentDeclarations as findComponentDeclarationsAST,
+  findHookCalls,
+  findJSXOpeningElements,
+  findJSXAttribute,
+  findStringLiterals,
+  spliceSource,
+} from '../../shared/ast-utils'
+import { undoStore } from '../../shared/undo-store'
+import { buildDiff } from '../../shared/diff'
 
 /**
  * Detect installed React major version from node_modules.
@@ -23,10 +34,9 @@ function detectReactMajorVersion(projectRoot: string): number {
  */
 let reactMajor = 0
 
-/**
- * Find component-like declarations in source code.
- */
-function findComponentDeclarations(code: string): Array<{ name: string; line: number }> {
+// ---- Regex fallbacks (kept for robustness when AST parsing fails) ----
+
+function findComponentDeclarationsRegex(code: string): Array<{ name: string; line: number }> {
   const components: Array<{ name: string; line: number }> = []
   const lines = code.split('\n')
 
@@ -48,10 +58,7 @@ function findComponentDeclarations(code: string): Array<{ name: string; line: nu
   return components
 }
 
-/**
- * Find hook calls inside a component body and extract variable names.
- */
-function findHookNames(code: string, componentLine: number): { varName: string | null; line: number }[] | null {
+function findHookNamesRegex(code: string, componentLine: number): { varName: string | null; line: number }[] | null {
   const lines = code.split('\n')
   const hooks: { varName: string | null; line: number }[] = []
 
@@ -87,6 +94,60 @@ function findHookNames(code: string, componentLine: number): { varName: string |
   return hooks.length > 0 ? hooks : null
 }
 
+// ---- AST-based implementations with regex fallback ----
+
+interface ComponentInfo {
+  name: string
+  line: number
+  bodyRange?: [number, number]
+}
+
+interface ParsedFile {
+  components: ComponentInfo[]
+  program: any
+  lineStarts: number[] | null
+}
+
+/**
+ * Parse a file with OXC and extract component declarations and hook names.
+ * Falls back to regex on parse failure.
+ */
+function parseFileComponents(code: string, id: string): ParsedFile {
+  const parsed = parseJSX(id, code)
+  if (parsed) {
+    const astComponents = findComponentDeclarationsAST(parsed.program, parsed.lineStarts)
+    return {
+      components: astComponents.map(c => ({ name: c.name, line: c.line, bodyRange: c.bodyRange })),
+      program: parsed.program,
+      lineStarts: parsed.lineStarts,
+    }
+  }
+  // Fallback to regex
+  return {
+    components: findComponentDeclarationsRegex(code),
+    program: null,
+    lineStarts: null,
+  }
+}
+
+function getHookNames(
+  code: string,
+  componentLine: number,
+  program: any,
+  bodyRange?: [number, number],
+  lineStarts?: number[] | null,
+): { varName: string | null; line: number }[] | null {
+  if (program && bodyRange) {
+    const hooks = findHookCalls(program, bodyRange[0], bodyRange[1], lineStarts ?? undefined)
+    if (hooks.length > 0) {
+      return hooks.map(h => ({ varName: h.varName, line: h.line }))
+    }
+    return null
+  }
+  // Fallback to regex
+  return findHookNamesRegex(code, componentLine)
+}
+
 /** Known HTML element names — only inject __source on these to avoid false positives on lowercase component refs */
 const HTML_ELEMENTS = new Set([
   'a', 'abbr', 'address', 'area', 'article', 'aside', 'audio',
@@ -116,10 +177,30 @@ const HTML_ELEMENTS = new Set([
 
 /**
  * Inject __source="filePath:line:col" prop on lowercase JSX host elements.
- * Used for React 19+ where _debugSource is no longer available.
+ * Uses OXC AST with regex state-machine fallback.
  */
-function injectJSXSourceProps(code: string, relativePath: string): string | null {
-  // Pre-compute line start offsets for fast line/column lookup
+function injectJSXSourceProps(code: string, relativePath: string, id?: string): string | null {
+  // Try AST-based approach first
+  const parsed = id ? parseJSX(id, code) : null
+  if (parsed) {
+    const elements = findJSXOpeningElements(parsed.program, name => HTML_ELEMENTS.has(name), parsed.lineStarts)
+    const edits: Array<{ start: number; end: number; replacement: string }> = []
+
+    for (const el of elements) {
+      if (el.attributes.includes('__source')) continue
+      const attr = ` __source="${relativePath}:${el.line}:${el.col}"`
+      edits.push({ start: el.nameEndOffset, end: el.nameEndOffset, replacement: attr })
+    }
+
+    if (edits.length === 0) return null
+    return spliceSource(code, edits)
+  }
+
+  // Fallback: regex state machine
+  return injectJSXSourcePropsRegex(code, relativePath)
+}
+
+function injectJSXSourcePropsRegex(code: string, relativePath: string): string | null {
   const lineStarts: number[] = [0]
   for (let i = 0; i < code.length; i++) {
     if (code[i] === '\n') lineStarts.push(i + 1)
@@ -137,18 +218,15 @@ function injectJSXSourceProps(code: string, relativePath: string): string | null
 
   const injections: Array<{ offset: number; attr: string }> = []
 
-  // State machine to track context (skip strings, comments, template literals)
   let i = 0
   while (i < code.length) {
     const ch = code[i]
 
-    // Single-line comment
     if (ch === '/' && code[i + 1] === '/') {
       while (i < code.length && code[i] !== '\n') i++
       continue
     }
 
-    // Multi-line comment
     if (ch === '/' && code[i + 1] === '*') {
       i += 2
       while (i < code.length - 1 && !(code[i] === '*' && code[i + 1] === '/')) i++
@@ -156,59 +234,43 @@ function injectJSXSourceProps(code: string, relativePath: string): string | null
       continue
     }
 
-    // Template literal
     if (ch === '`') {
       i++
       while (i < code.length && code[i] !== '`') {
-        if (code[i] === '\\') i++ // skip escaped char
+        if (code[i] === '\\') i++
         i++
       }
-      i++ // skip closing backtick
+      i++
       continue
     }
 
-    // String (single or double quote)
     if (ch === '"' || ch === "'") {
       const quote = ch
       i++
       while (i < code.length && code[i] !== quote) {
-        if (code[i] === '\\') i++ // skip escaped char
+        if (code[i] === '\\') i++
         i++
       }
-      i++ // skip closing quote
+      i++
       continue
     }
 
-    // JSX opening tag: < followed by lowercase letter
     if (ch === '<' && i + 1 < code.length) {
       const next = code[i + 1]
-
-      // Skip closing tags </...>
       if (next === '/') { i++; continue }
-
-      // Skip fragments <>
       if (next === '>') { i++; continue }
 
-      // Only match lowercase tags (host elements)
       if (next >= 'a' && next <= 'z') {
         const tagStart = i
-        i++ // skip <
-        // Read tag name
+        i++
         const nameStart = i
         while (i < code.length && /[a-zA-Z0-9\-]/.test(code[i])) i++
         const tagName = code.slice(nameStart, i)
 
-        // Skip if empty tag name or not a known HTML element
         if (!tagName || !HTML_ELEMENTS.has(tagName)) continue
-
-        // Skip member expressions like i18nContext.Provider
         if (i < code.length && code[i] === '.') continue
 
-        // The insertion point is right after the tag name
         const insertOffset = i
-
-        // Check if __source is already present in this tag
-        // Scan forward to find > or /> to get the tag bounds
         let depth = 0
         let j = i
         let hasSource = false
@@ -217,7 +279,6 @@ function injectJSXSourceProps(code: string, relativePath: string): string | null
           else if (code[j] === '}') depth--
           else if (depth === 0) {
             if (code[j] === '>' || (code[j] === '/' && code[j + 1] === '>')) break
-            // Check for __source attribute
             if (code.slice(j, j + 8) === '__source') hasSource = true
           }
           j++
@@ -239,7 +300,6 @@ function injectJSXSourceProps(code: string, relativePath: string): string | null
 
   if (injections.length === 0) return null
 
-  // Apply injections in reverse order to preserve offsets
   let result = code
   for (let k = injections.length - 1; k >= 0; k--) {
     const { offset, attr } = injections[k]
@@ -249,24 +309,107 @@ function injectJSXSourceProps(code: string, relativePath: string): string | null
 }
 
 function rewriteHook(source: string, edit: RewriteEdit): string | null {
+  const serialized = typeof edit.value === 'string' ? JSON.stringify(edit.value) : String(edit.value)
+
+  // Try AST: find the useState() call near the target line and replace its first argument
+  const parsed = parseJSX('file.tsx', source)
+  if (parsed) {
+    const hooks = findHookCalls(parsed.program, 0, source.length, parsed.lineStarts)
+    for (const hook of hooks) {
+      if (hook.hookName === 'useState' && hook.line === edit.line && hook.firstArgRange) {
+        return spliceSource(source, [{
+          start: hook.firstArgRange[0],
+          end: hook.firstArgRange[1],
+          replacement: serialized,
+        }])
+      }
+    }
+    // If AST found hooks but not on this line, widen the search (+/- 2 lines)
+    for (const hook of hooks) {
+      if (hook.hookName === 'useState' && Math.abs(hook.line - edit.line) <= 2 && hook.firstArgRange) {
+        return spliceSource(source, [{
+          start: hook.firstArgRange[0],
+          end: hook.firstArgRange[1],
+          replacement: serialized,
+        }])
+      }
+    }
+  }
+
+  // Fallback: regex
+  return rewriteHookRegex(source, edit)
+}
+
+function rewriteHookRegex(source: string, edit: RewriteEdit): string | null {
   const lines = source.split('\n')
   const targetLine = lines[edit.line - 1]
-
   if (!targetLine || !targetLine.includes('useState')) return null
 
   const serialized = typeof edit.value === 'string' ? JSON.stringify(edit.value) : String(edit.value)
-  const replaced = targetLine.replace(
-    /useState\(\s*([^,)]+)/,
-    `useState(${serialized}`,
-  )
-
+  const replaced = targetLine.replace(/useState\(\s*([^,)]+)/, `useState(${serialized}`)
   if (replaced === targetLine) return null
 
   lines[edit.line - 1] = replaced
   return lines.join('\n')
 }
 
+/**
+ * Rewrite a prop value in JSX source code.
+ * For string values inside expressions like {__('Bundles')}, only replaces the
+ * string literal, preserving the function wrapper.
+ */
 function rewriteProp(source: string, edit: RewriteEdit): string | null {
+  const propKey = (edit.editHint as any).propKey as string
+  const serialized = typeof edit.value === 'string' ? JSON.stringify(edit.value) : String(edit.value)
+
+  // Try AST: find the JSXAttribute and replace precisely
+  const parsed = parseJSX('file.tsx', source)
+  if (parsed) {
+    const attr = findJSXAttribute(parsed.program, propKey, edit.line, 5, parsed.lineStarts)
+    if (attr) {
+      // Case 1: Static string prop like title="hello"
+      if (attr.stringLiteralRange) {
+        // Replace the entire literal (including quotes) with the new quoted value
+        return spliceSource(source, [{
+          start: attr.stringLiteralRange[0],
+          end: attr.stringLiteralRange[1],
+          replacement: JSON.stringify(edit.value),
+        }])
+      }
+
+      // Case 2: Expression prop like title={__('Bundles')} or title={value}
+      if (attr.expressionRange) {
+        if (typeof edit.value === 'string') {
+          // For strings: find string literals inside the expression and replace only those
+          const literals = findStringLiterals(parsed.program, attr.expressionRange[0], attr.expressionRange[1])
+          if (literals.length === 1) {
+            // Single string literal — replace its content, preserving quote style
+            const lit = literals[0]
+            const quote = lit.raw[0] // preserve original quote style
+            return spliceSource(source, [{
+              start: lit.range[0],
+              end: lit.range[1],
+              replacement: quote + edit.value + quote,
+            }])
+          }
+          // Multiple or zero string literals — fall through to replace entire expression
+        }
+
+        // For non-string values or complex expressions: replace the entire expression
+        return spliceSource(source, [{
+          start: attr.expressionRange[0],
+          end: attr.expressionRange[1],
+          replacement: serialized,
+        }])
+      }
+    }
+  }
+
+  // Fallback: regex
+  return rewritePropRegex(source, edit)
+}
+
+function rewritePropRegex(source: string, edit: RewriteEdit): string | null {
   const lines = source.split('\n')
   const propKey = (edit.editHint as any).propKey as string
   const serialized = typeof edit.value === 'string' ? JSON.stringify(edit.value) : String(edit.value)
@@ -313,7 +456,7 @@ export const reactAdapter: FrameworkAdapter = {
   },
 
   transform(code: string, id: string, projectRoot: string) {
-    const components = findComponentDeclarations(code)
+    const { components, program, lineStarts } = parseFileComponents(code, id)
     const relativePath = '/' + path.relative(projectRoot, id).replace(/\\/g, '/')
     const annotations: string[] = []
 
@@ -328,7 +471,7 @@ export const reactAdapter: FrameworkAdapter = {
       }
 
       // __devtools_hooks: all React versions
-      const hookData = findHookNames(code, c.line - 1)
+      const hookData = getHookNames(code, c.line - 1, program, c.bodyRange, lineStarts)
       if (hookData) {
         const hookArray = JSON.stringify(hookData.map(h => [h.varName, h.line]))
         annotations.push(
@@ -343,7 +486,7 @@ export const reactAdapter: FrameworkAdapter = {
     let transformedCode = code
     const hasJsxSourceTransform = (reactAdapter as any)._hasJsxSourceTransform
     if (!(reactMajor > 0 && reactMajor < 19) && !hasJsxSourceTransform && /\.[jt]sx$/.test(id)) {
-      const injected = injectJSXSourceProps(code, relativePath)
+      const injected = injectJSXSourceProps(code, relativePath, id)
       if (injected) transformedCode = injected
     }
 
@@ -389,7 +532,7 @@ export const reactAdapter: FrameworkAdapter = {
       req.on('end', () => {
         res.setHeader('Content-Type', 'application/json')
         try {
-          const { fileName, lineNumber, newValue } = JSON.parse(body)
+          const { fileName, lineNumber, newValue, preview } = JSON.parse(body)
 
           let filePath = path.resolve(projectRoot, fileName.replace(/^\//, ''))
           if (!fs.existsSync(filePath)) {
@@ -415,6 +558,12 @@ export const reactAdapter: FrameworkAdapter = {
             return
           }
 
+          if (preview) {
+            res.end(JSON.stringify({ ok: true, preview: true, diff: buildDiff(content, patched, fileName, lineNumber) }))
+            return
+          }
+
+          undoStore.set(filePath, { previousContent: content, timestamp: Date.now() })
           fs.writeFileSync(filePath, patched, 'utf-8')
           res.end(JSON.stringify({ ok: true }))
         } catch (e: any) {
@@ -433,7 +582,7 @@ export const reactAdapter: FrameworkAdapter = {
       req.on('end', () => {
         res.setHeader('Content-Type', 'application/json')
         try {
-          const { fileName, lineNumber, propKey, newValue } = JSON.parse(body)
+          const { fileName, lineNumber, propKey, newValue, preview } = JSON.parse(body)
 
           let filePath = path.resolve(projectRoot, fileName.replace(/^\//, ''))
           if (!fs.existsSync(filePath)) {
@@ -459,6 +608,12 @@ export const reactAdapter: FrameworkAdapter = {
             return
           }
 
+          if (preview) {
+            res.end(JSON.stringify({ ok: true, preview: true, diff: buildDiff(content, patched, fileName, lineNumber) }))
+            return
+          }
+
+          undoStore.set(filePath, { previousContent: content, timestamp: Date.now() })
           fs.writeFileSync(filePath, patched, 'utf-8')
           res.end(JSON.stringify({ ok: true }))
         } catch (e: any) {
@@ -477,7 +632,7 @@ export const reactAdapter: FrameworkAdapter = {
       req.on('end', () => {
         res.setHeader('Content-Type', 'application/json')
         try {
-          const { fileName, lineNumber, oldText, newText } = JSON.parse(body)
+          const { fileName, lineNumber, oldText, newText, preview } = JSON.parse(body)
 
           if (!oldText || typeof newText !== 'string' || !fileName) {
             res.statusCode = 400
@@ -516,7 +671,14 @@ export const reactAdapter: FrameworkAdapter = {
             return
           }
 
-          fs.writeFileSync(filePath, lines.join('\n'), 'utf-8')
+          const patched = lines.join('\n')
+          if (preview) {
+            res.end(JSON.stringify({ ok: true, preview: true, diff: buildDiff(content, patched, fileName, lineNumber) }))
+            return
+          }
+
+          undoStore.set(filePath, { previousContent: content, timestamp: Date.now() })
+          fs.writeFileSync(filePath, patched, 'utf-8')
           res.end(JSON.stringify({ ok: true }))
         } catch (e: any) {
           res.statusCode = 500

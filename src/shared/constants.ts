@@ -28,6 +28,7 @@ export const STORAGE_KEYS = {
   EDITOR: 'danendz-devtools:editor',
   DETAIL_SIZE: 'danendz-devtools:detail-size',
   SHOW_ELEMENTS: 'danendz-devtools:show-elements',
+  SHOW_PREVIEW: 'danendz-devtools:show-preview',
 } as const
 
 // Server endpoints
@@ -37,6 +38,7 @@ export const ENDPOINTS = {
   PERSIST_HOOK: '/__devtools/persist-hook',
   PERSIST_PROP: '/__devtools/persist-prop',
   PERSIST_TEXT: '/__devtools/persist-text',
+  UNDO_EDIT: '/__devtools/undo-edit',
 } as const
 
 // Default config

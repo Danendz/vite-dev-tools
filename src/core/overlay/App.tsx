@@ -92,6 +92,9 @@ export function App({ config }: AppProps) {
   const [showElements, setShowElements] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.SHOW_ELEMENTS) === 'true'
   })
+  const [showPreview, setShowPreview] = useState(() => {
+    return localStorage.getItem(STORAGE_KEYS.SHOW_PREVIEW) !== 'false'
+  })
   const [searchQuery, setSearchQuery] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [isPickerActive, setIsPickerActive] = useState(false)
@@ -392,6 +395,14 @@ export function App({ config }: AppProps) {
     })
   }, [])
 
+  const handleShowPreviewToggle = useCallback(() => {
+    setShowPreview((prev) => {
+      const next = !prev
+      localStorage.setItem(STORAGE_KEYS.SHOW_PREVIEW, String(next))
+      return next
+    })
+  }, [])
+
   const handleSearchChange = useCallback((query: string) => {
     setSearchQuery(query)
   }, [])
@@ -571,6 +582,8 @@ export function App({ config }: AppProps) {
           onHideLibraryToggle={handleHideLibraryToggle}
           onHideProvidersToggle={handleHideProvidersToggle}
           onShowElementsToggle={handleShowElementsToggle}
+          showPreview={showPreview}
+          onShowPreviewToggle={handleShowPreviewToggle}
           onEditorChange={handleEditorChange}
           onFontSizeChange={handleFontSizeChange}
           onDockChange={handleDockChange}
