@@ -33,26 +33,57 @@ function getComponentName(instance: any): string {
   return 'Anonymous'
 }
 
-function getSourceLocation(instance: any): SourceLocation | null {
-  const type = instance.type
-  if (!type?.__file) return null
+/**
+ * Resolve the usage-site source location for a component instance.
+ * Looks up the parent file's component usage map (populated at module-load time
+ * by the devtools transform) to find where this component is rendered.
+ * This avoids Vue's attribute fallthrough which corrupts prop-based approaches
+ * when a component is the root element of another component.
+ */
+interface UsageInfo {
+  source: SourceLocation
+  dynamicProps?: string[]
+}
 
-  // __file gives us the file path
-  // unplugin-vue-source may add __source with line/column info
-  const source = type.__source
-  if (source) {
-    return {
-      fileName: source.file ?? type.__file,
-      lineNumber: source.line ?? 1,
-      columnNumber: source.column ?? 1,
+function parseUsageSource(instance: any): UsageInfo | null {
+  const parentFile = instance.parent?.type?.__file
+  if (!parentFile) return null
+
+  const map = (globalThis as any).__DEVTOOLS_USAGE_MAP__
+  if (!map) return null
+
+  const componentName = getComponentName(instance)
+  const normalized = componentName.toLowerCase().replace(/-/g, '')
+
+  // Map keys are relative paths; __file is absolute — match via endsWith
+  for (const [filePath, fileUsages] of Object.entries(map)) {
+    if (!parentFile.endsWith(filePath)) continue
+
+    for (const [tagName, locations] of Object.entries(fileUsages as Record<string, Array<{ line: number; col: number; dynamicProps?: string[] }>>)) {
+      if (tagName.toLowerCase().replace(/-/g, '') === normalized && locations.length > 0) {
+        return {
+          source: {
+            fileName: filePath.startsWith('/') ? filePath : `/${filePath}`,
+            lineNumber: locations[0].line,
+            columnNumber: locations[0].col,
+          },
+          dynamicProps: locations[0].dynamicProps,
+        }
+      }
     }
   }
 
-  return {
-    fileName: type.__file,
-    lineNumber: 1,
-    columnNumber: 1,
-  }
+  return null
+}
+
+/**
+ * Definition-site source from instance.type.__file (set by @vitejs/plugin-vue).
+ * Points to the component's own .vue file.
+ */
+function getDefinitionSource(instance: any): SourceLocation | null {
+  const file = instance.type?.__file
+  if (!file) return null
+  return { fileName: file, lineNumber: 1, columnNumber: 1 }
 }
 
 function isFromNodeModules(instance: any): boolean {
@@ -159,12 +190,15 @@ function walkVNodeChildren(vnode: any, hideLibrary: boolean): NormalizedNode[] {
       nodes.push(...walkVNodeChildren(instance.subTree, hideLibrary))
     } else {
       const children = walkVNodeChildren(instance.subTree, hideLibrary)
-      const source = getSourceLocation(instance)
+      const source = getDefinitionSource(instance)
+      const usage = parseUsageSource(instance)
 
       const node: NormalizedNode = {
         id: `vue_${nodeIdCounter++}`,
         name,
         source,
+        usageSource: usage?.source ?? undefined,
+        dynamicProps: usage?.dynamicProps,
         props: getProps(instance),
         sections: extractSections(instance),
         children,
@@ -220,12 +254,15 @@ export function walkInstanceTree(appInstance: any, hideLibrary = false): Normali
 
   const rootName = getComponentName(appInstance)
   const children = walkVNodeChildren(appInstance.subTree, hideLibrary)
-  const source = getSourceLocation(appInstance)
+  const source = getDefinitionSource(appInstance)
+  const usage = parseUsageSource(appInstance)
 
   const rootNode: NormalizedNode = {
     id: `vue_${nodeIdCounter++}`,
     name: rootName,
     source,
+    usageSource: usage?.source ?? undefined,
+    dynamicProps: usage?.dynamicProps,
     props: getProps(appInstance),
     sections: extractSections(appInstance),
     children,

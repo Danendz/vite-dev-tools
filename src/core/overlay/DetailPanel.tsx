@@ -259,6 +259,7 @@ function EditablePropValue({
   value,
   nodeId,
   usageSource,
+  dynamicProps,
   isEdited,
   onPropEdit,
   onPropPersisted,
@@ -267,6 +268,7 @@ function EditablePropValue({
   value: unknown
   nodeId: string
   usageSource?: SourceLocation
+  dynamicProps?: string[]
   isEdited: boolean
   onPropEdit?: (nodeId: string, propKey: string) => void
   onPropPersisted?: (nodeId: string, propKey: string) => void
@@ -314,7 +316,9 @@ function EditablePropValue({
   }
 
   // Show persist when: local edit confirmed OR prop was edited externally (e.g. inline tree edit)
-  const canPersist = usageSource?.fileName && usageSource?.lineNumber &&
+  // Dynamic bindings (:prop="expr") cannot be persisted to source
+  const isDynamic = dynamicProps?.includes(propKey)
+  const canPersist = !isDynamic && usageSource?.fileName && usageSource?.lineNumber &&
     (value === null || ['string', 'number', 'boolean'].includes(typeof value))
   const shouldShowPersist = showPersist || (isEdited && canPersist && persistStatus !== 'saved')
 
@@ -386,9 +390,9 @@ function EditablePropValue({
     setEditing(false)
     setEditError(null)
 
-    // Show persist button for primitive values when usageSource is available
+    // Show persist button for primitive values when usageSource is available (not for dynamic bindings)
     const isPrimitive = parsed === null || ['string', 'number', 'boolean'].includes(typeof parsed)
-    if (isPrimitive && usageSource?.fileName && usageSource?.lineNumber) {
+    if (isPrimitive && !isDynamic && usageSource?.fileName && usageSource?.lineNumber) {
       setShowPersist(true)
       setPersistStatus('idle')
     }
@@ -604,6 +608,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
                   value={value}
                   nodeId={node.id}
                   usageSource={node.usageSource ?? node.source ?? undefined}
+                  dynamicProps={node.dynamicProps}
                   isEdited={isEdited}
                   onPropEdit={onPropEdit}
                   onPropPersisted={onPropPersisted}

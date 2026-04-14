@@ -32,6 +32,8 @@ export interface NormalizedNode {
   isFromNodeModules: boolean
   /** Usage-site source location (where component is rendered in parent JSX) */
   usageSource?: SourceLocation
+  /** Prop names that use dynamic bindings (:prop="expr") — persist-to-source is disabled for these */
+  dynamicProps?: string[]
   /** DOM element references for highlight — multiple when component returns a fragment */
   _domElements?: HTMLElement[]
   /** Joined text content from direct HostText children (for tree row preview) */

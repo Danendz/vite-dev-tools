@@ -17,16 +17,28 @@ function getHideLibrary(): boolean {
   return localStorage.getItem(STORAGE_KEYS.HIDE_LIBRARY) !== 'false'
 }
 
-function reapplyPendingEdits(nodes: import('../../core/types').NormalizedNode[]) {
+function reapplyPendingEdits(nodes: import('../../core/types').NormalizedNode[]): Array<{nodeId: string, propKey: string}> {
+  const reverted: Array<{nodeId: string, propKey: string}> = []
+
   for (const node of nodes) {
     const edits = pendingPropEdits.get(node.id)
     if (edits) {
       for (const [propKey, value] of edits) {
-        node.props[propKey] = value
+        const freshValue = node.props[propKey]
+        // Compare serialized values to handle objects/arrays
+        if (JSON.stringify(freshValue) !== JSON.stringify(value)) {
+          // Vue re-rendered with a different value — edit was overridden
+          edits.delete(propKey)
+          reverted.push({ nodeId: node.id, propKey })
+        }
+        // If equal, getProps() already has the correct value — no override needed
       }
+      if (edits.size === 0) pendingPropEdits.delete(node.id)
     }
-    reapplyPendingEdits(node.children)
+    reverted.push(...reapplyPendingEdits(node.children))
   }
+
+  return reverted
 }
 
 function walkAndDispatch() {
@@ -38,13 +50,21 @@ function walkAndDispatch() {
   if (!appInstance) return
   const tree = walkInstanceTree(appInstance, getHideLibrary())
 
+  let reverted: Array<{nodeId: string, propKey: string}> = []
   if (pendingPropEdits.size > 0) {
-    reapplyPendingEdits(tree)
+    reverted = reapplyPendingEdits(tree)
   }
 
   window.dispatchEvent(
     new CustomEvent(EVENTS.TREE_UPDATE, { detail: { tree } }),
   )
+
+  // Notify overlay to clear "edited" highlight for reverted props
+  for (const { nodeId, propKey } of reverted) {
+    window.dispatchEvent(new CustomEvent(EVENTS.PROP_PERSISTED, {
+      detail: { nodeId, propKey },
+    }))
+  }
 }
 
 function scheduleWalk() {
@@ -95,9 +115,24 @@ window.addEventListener(EVENTS.PROP_EDIT, (event: Event) => {
     return
   }
 
-  // Props are read-only in Vue — editing props means editing the parent's binding.
-  // For now, update the normalized node display. Full prop editing would require
-  // finding the parent instance and modifying its setupState/data that feeds the prop.
+  // Vue 3 wraps instance.props in readonly(shallowReactive(raw)).
+  // Drill through __v_raw to reach the raw props object, set the value,
+  // then force the component to re-render via instance.update().
+  let propsTarget = instance.props
+  try {
+    // Two __v_raw hops: readonly proxy → shallowReactive proxy → raw object
+    const reactive = propsTarget?.__v_raw
+    if (reactive) {
+      const raw = reactive.__v_raw
+      propsTarget = raw || reactive
+    }
+  } catch {}
+  propsTarget[propKey] = newValue
+
+  if (typeof instance.update === 'function') {
+    instance.update()
+  }
+
   walkAndDispatch()
 })
 

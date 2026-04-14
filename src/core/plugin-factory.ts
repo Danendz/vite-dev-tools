@@ -9,7 +9,7 @@ import { DEFAULT_CONFIG, ENDPOINTS } from '../shared/constants'
 
 const DIR = path.dirname(fileURLToPath(import.meta.url))
 
-const SOURCE_FILE_RE = /\.[jt]sx?$/
+const SOURCE_FILE_RE = /\.([jt]sx?|vue)$/
 
 export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevToolsConfig): Plugin {
   const mergedConfig: DevToolsConfig = {
@@ -19,8 +19,6 @@ export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevTool
     supportedSettings: adapter.supportedSettings,
   }
   let projectRoot = ''
-
-  const composedPlugins = adapter.composedPlugins?.() ?? []
 
   // Virtual module URLs served via middleware
   const VIRTUAL_CLIENT = `/@danendz-devtools/client`
@@ -40,7 +38,6 @@ export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevTool
           __DEVTOOLS_RUNTIME_URL__: JSON.stringify(`/@fs/${runtimePath}`),
           __DEVTOOLS_CONFIG__: JSON.stringify(mergedConfig),
         },
-        plugins: composedPlugins,
       }
     },
 
