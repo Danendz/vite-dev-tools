@@ -1,35 +1,550 @@
 import { h } from 'preact'
-import type { NormalizedNode } from '../types'
-import { openInEditor } from '../communication'
+import { useState, useRef, useEffect } from 'preact/hooks'
+import type { NormalizedNode, SourceLocation, HookInfo } from '../types'
+import { openInEditor, persistHookValue, persistPropValue, persistTextValue } from '../communication'
+import { EVENTS } from '../../shared/constants'
+
+function formatPath(source: SourceLocation): string {
+  return `${source.fileName.replace(/^.*\/src\//, 'src/')}:${source.lineNumber}`
+}
+
+function copyPath(source: SourceLocation, e: Event) {
+  e.stopPropagation()
+  navigator.clipboard.writeText(formatPath(source))
+}
 
 interface DetailPanelProps {
   node: NormalizedNode | null
+  editedProps?: Map<string, Set<string>>
+  onPropEdit?: (nodeId: string, propKey: string) => void
+  onPropPersisted?: (nodeId: string, propKey: string) => void
 }
 
-function formatValue(value: unknown): { text: string; className: string } {
+function formatPrimitive(value: unknown): { text: string; className: string } | null {
   if (value === null) return { text: 'null', className: 'detail-value' }
   if (value === undefined) return { text: 'undefined', className: 'detail-value' }
-
   switch (typeof value) {
-    case 'string':
-      return { text: `"${value}"`, className: 'detail-value string' }
-    case 'number':
-      return { text: String(value), className: 'detail-value number' }
-    case 'boolean':
-      return { text: String(value), className: 'detail-value boolean' }
-    case 'object':
-      try {
-        const str = JSON.stringify(value, null, 2)
-        return { text: str.length > 100 ? str.slice(0, 100) + '...' : str, className: 'detail-value' }
-      } catch {
-        return { text: '[Object]', className: 'detail-value' }
-      }
-    default:
-      return { text: String(value), className: 'detail-value' }
+    case 'string': return { text: `"${value}"`, className: 'detail-value string' }
+    case 'number': return { text: String(value), className: 'detail-value number' }
+    case 'boolean': return { text: String(value), className: 'detail-value boolean' }
+    default: return null
   }
 }
 
-export function DetailPanel({ node }: DetailPanelProps) {
+function isExpandableObject(value: unknown): value is Record<string, unknown> | unknown[] {
+  return value !== null && typeof value === 'object'
+}
+
+function objectPreview(value: Record<string, unknown> | unknown[]): string {
+  try {
+    if (Array.isArray(value)) return `Array(${value.length})`
+    const keys = Object.keys(value)
+    const preview = keys.slice(0, 3).join(', ')
+    return `{${preview}${keys.length > 3 ? ', \u2026' : ''}}`
+  } catch {
+    return '[Object]'
+  }
+}
+
+function ExpandableValue({ value }: { value: Record<string, unknown> | unknown[] }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <span class="detail-value">
+      <span class="detail-expand-toggle" onClick={() => setExpanded(!expanded)}>
+        {expanded ? '\u25BC' : '\u25B6'}
+      </span>
+      {!expanded ? (
+        <span class="detail-object-preview" onClick={() => setExpanded(true)}>
+          {objectPreview(value)}
+        </span>
+      ) : (
+        <div class="detail-object-expanded">
+          {(Array.isArray(value) ? value.map((v, i) => [String(i), v]) : Object.entries(value)).map(
+            ([k, v]) => {
+              const prim = formatPrimitive(v)
+              return (
+                <div class="detail-object-entry" key={k}>
+                  <span class="detail-key">{k}:</span>
+                  {prim ? (
+                    <span class={prim.className}>{prim.text}</span>
+                  ) : isExpandableObject(v) ? (
+                    <ExpandableValue value={v} />
+                  ) : (
+                    <span class="detail-value">{String(v)}</span>
+                  )}
+                </div>
+              )
+            },
+          )}
+        </div>
+      )}
+    </span>
+  )
+}
+
+function ValueDisplay({ value }: { value: unknown }) {
+  const prim = formatPrimitive(value)
+  if (prim) return <span class={prim.className}>{prim.text}</span>
+  if (isExpandableObject(value)) return <ExpandableValue value={value} />
+  return <span class="detail-value">{String(value)}</span>
+}
+
+function dispatchEdit(nodeId: string, hook: HookInfo, newValue: unknown) {
+  window.dispatchEvent(new CustomEvent(EVENTS.HOOK_EDIT, {
+    detail: {
+      nodeId,
+      hookIndex: hook.hookIndex,
+      newValue,
+      hookType: hook.name as 'useState' | 'useRef',
+    },
+  }))
+}
+
+function EditableValue({ hook, nodeId, source }: { hook: HookInfo; nodeId: string; source: SourceLocation | null }) {
+  const [editing, setEditing] = useState(false)
+  const [editValue, setEditValue] = useState('')
+  const [editError, setEditError] = useState<string | null>(null)
+  const [showPersist, setShowPersist] = useState(false)
+  const [persistStatus, setPersistStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus()
+      if (inputRef.current instanceof HTMLInputElement) {
+        inputRef.current.select()
+      }
+    }
+  }, [editing])
+
+  const value = hook.value
+  const valueType = value === null ? 'null' : typeof value
+
+  // Boolean: single click toggles immediately
+  if (valueType === 'boolean') {
+    return (
+      <span
+        class="editable-value-wrapper editable edit-boolean-toggle"
+        onClick={() => dispatchEdit(nodeId, hook, !value)}
+        title="Click to toggle"
+      >
+        <span class={`detail-value boolean`}>{String(value)}</span>
+      </span>
+    )
+  }
+
+  const enterEditMode = () => {
+    setEditError(null)
+    if (valueType === 'object' || Array.isArray(value)) {
+      setEditValue(JSON.stringify(value, null, 2))
+    } else if (valueType === 'null') {
+      setEditValue('null')
+    } else {
+      setEditValue(String(value))
+    }
+    setEditing(true)
+  }
+
+  const cancelEdit = () => {
+    setEditing(false)
+    setEditError(null)
+  }
+
+  const confirmEdit = () => {
+    let parsed: unknown
+    try {
+      if (valueType === 'string') {
+        parsed = editValue
+      } else if (valueType === 'number') {
+        parsed = Number(editValue)
+        if (Number.isNaN(parsed)) {
+          setEditError('Invalid number')
+          return
+        }
+      } else {
+        // Object, array, null, undefined
+        parsed = JSON.parse(editValue)
+      }
+    } catch {
+      setEditError('Invalid JSON')
+      return
+    }
+
+    dispatchEdit(nodeId, hook, parsed)
+    setEditing(false)
+    setEditError(null)
+
+    // Show persist button for useState with primitive values
+    const isPrimitive = parsed === null || ['string', 'number', 'boolean'].includes(typeof parsed)
+    if (hook.name === 'useState' && isPrimitive && hook.lineNumber != null && source?.fileName) {
+      setShowPersist(true)
+      setPersistStatus('idle')
+    }
+  }
+
+  const handlePersist = async () => {
+    if (!source?.fileName || hook.lineNumber == null) return
+    setPersistStatus('saving')
+    const result = await persistHookValue({
+      fileName: source.fileName,
+      lineNumber: hook.lineNumber,
+      newValue: hook.value as string | number | boolean | null,
+    })
+    setPersistStatus(result.ok ? 'saved' : 'error')
+    if (result.ok) setTimeout(() => setShowPersist(false), 1500)
+  }
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      cancelEdit()
+    } else if (e.key === 'Enter') {
+      if (e.target instanceof HTMLTextAreaElement) {
+        if (e.ctrlKey || e.metaKey) confirmEdit()
+      } else {
+        confirmEdit()
+      }
+    }
+  }
+
+  if (!editing) {
+    return (
+      <span class="editable-value-wrapper editable" onDblClick={enterEditMode}>
+        <ValueDisplay value={value} />
+        {showPersist && (
+          <button class="persist-btn" onClick={handlePersist} disabled={persistStatus === 'saving'}>
+            {persistStatus === 'saving' ? '...' : persistStatus === 'saved' ? '✓' : persistStatus === 'error' ? '✕ failed' : 'Persist'}
+          </button>
+        )}
+      </span>
+    )
+  }
+
+  const isComplex = valueType === 'object' || Array.isArray(value)
+
+  return (
+    <span class="edit-inline">
+      {isComplex ? (
+        <textarea
+          ref={inputRef as any}
+          class="edit-textarea"
+          value={editValue}
+          onInput={(e) => setEditValue((e.target as HTMLTextAreaElement).value)}
+          onKeyDown={handleKeyDown}
+        />
+      ) : (
+        <input
+          ref={inputRef as any}
+          class="edit-input"
+          type={valueType === 'number' ? 'number' : 'text'}
+          value={editValue}
+          onInput={(e) => setEditValue((e.target as HTMLInputElement).value)}
+          onKeyDown={handleKeyDown}
+        />
+      )}
+      <span class="edit-controls">
+        <button class="edit-btn confirm" onClick={confirmEdit} title="Confirm (Enter)">✓</button>
+        <button class="edit-btn" onClick={cancelEdit} title="Cancel (Esc)">✕</button>
+      </span>
+      {editError && <span class="edit-error">{editError}</span>}
+    </span>
+  )
+}
+
+function dispatchPropEdit(nodeId: string, propKey: string, newValue: unknown) {
+  window.dispatchEvent(new CustomEvent(EVENTS.PROP_EDIT, {
+    detail: { nodeId, propKey, newValue },
+  }))
+}
+
+function EditablePropValue({
+  propKey,
+  value,
+  nodeId,
+  usageSource,
+  isEdited,
+  onPropEdit,
+  onPropPersisted,
+}: {
+  propKey: string
+  value: unknown
+  nodeId: string
+  usageSource?: SourceLocation
+  isEdited: boolean
+  onPropEdit?: (nodeId: string, propKey: string) => void
+  onPropPersisted?: (nodeId: string, propKey: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [editValue, setEditValue] = useState('')
+  const [editError, setEditError] = useState<string | null>(null)
+  const [showPersist, setShowPersist] = useState(false)
+  const [persistStatus, setPersistStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus()
+      if (inputRef.current instanceof HTMLInputElement) {
+        inputRef.current.select()
+      }
+    }
+  }, [editing])
+
+  const valueType = value === null ? 'null' : typeof value
+  const isFunction = value === 'fn()'
+
+  if (isFunction) {
+    return <span class="detail-value">{String(value)}</span>
+  }
+
+  const handlePersist = async () => {
+    if (!usageSource?.fileName || !usageSource?.lineNumber) return
+    setPersistStatus('saving')
+    const result = await persistPropValue({
+      fileName: usageSource.fileName,
+      lineNumber: usageSource.lineNumber,
+      propKey,
+      newValue: value as string | number | boolean | null,
+    })
+    setPersistStatus(result.ok ? 'saved' : 'error')
+    if (result.ok) {
+      onPropPersisted?.(nodeId, propKey)
+      setTimeout(() => {
+        setShowPersist(false)
+        setPersistStatus('idle')
+      }, 1500)
+    }
+  }
+
+  // Show persist when: local edit confirmed OR prop was edited externally (e.g. inline tree edit)
+  const canPersist = usageSource?.fileName && usageSource?.lineNumber &&
+    (value === null || ['string', 'number', 'boolean'].includes(typeof value))
+  const shouldShowPersist = showPersist || (isEdited && canPersist && persistStatus !== 'saved')
+
+  const persistButton = shouldShowPersist && (
+    <div class="persist-row">
+      <button class="persist-btn-lg" onClick={handlePersist} disabled={persistStatus === 'saving'}>
+        {persistStatus === 'saving' ? 'Saving...' : persistStatus === 'saved' ? '\u2713 Saved' : persistStatus === 'error' ? '\u2715 Failed' : 'Save to source'}
+      </button>
+    </div>
+  )
+
+  // Boolean: single click toggles immediately
+  if (valueType === 'boolean') {
+    return (
+      <>
+        <span
+          class={`editable-value-wrapper editable edit-boolean-toggle${isEdited ? ' prop-edited' : ''}`}
+          onClick={() => {
+            dispatchPropEdit(nodeId, propKey, !value)
+            onPropEdit?.(nodeId, propKey)
+          }}
+          title="Click to toggle"
+        >
+          <span class="detail-value boolean">{String(value)}</span>
+        </span>
+        {persistButton}
+      </>
+    )
+  }
+
+  const enterEditMode = () => {
+    setEditError(null)
+    if (isExpandableObject(value)) {
+      setEditValue(JSON.stringify(value, null, 2))
+    } else if (valueType === 'null') {
+      setEditValue('null')
+    } else {
+      setEditValue(String(value))
+    }
+    setEditing(true)
+  }
+
+  const cancelEdit = () => {
+    setEditing(false)
+    setEditError(null)
+  }
+
+  const confirmEdit = () => {
+    let parsed: unknown
+    try {
+      if (valueType === 'string') {
+        parsed = editValue
+      } else if (valueType === 'number') {
+        parsed = Number(editValue)
+        if (Number.isNaN(parsed)) {
+          setEditError('Invalid number')
+          return
+        }
+      } else {
+        parsed = JSON.parse(editValue)
+      }
+    } catch {
+      setEditError('Invalid JSON')
+      return
+    }
+
+    dispatchPropEdit(nodeId, propKey, parsed)
+    onPropEdit?.(nodeId, propKey)
+    setEditing(false)
+    setEditError(null)
+
+    // Show persist button for primitive values when usageSource is available
+    const isPrimitive = parsed === null || ['string', 'number', 'boolean'].includes(typeof parsed)
+    if (isPrimitive && usageSource?.fileName && usageSource?.lineNumber) {
+      setShowPersist(true)
+      setPersistStatus('idle')
+    }
+  }
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      cancelEdit()
+    } else if (e.key === 'Enter') {
+      if (e.target instanceof HTMLTextAreaElement) {
+        if (e.ctrlKey || e.metaKey) confirmEdit()
+      } else {
+        confirmEdit()
+      }
+    }
+  }
+
+  if (!editing) {
+    return (
+      <>
+        <span class={`editable-value-wrapper editable${isEdited ? ' prop-edited' : ''}`} onDblClick={enterEditMode}>
+          <ValueDisplay value={value} />
+        </span>
+        {persistButton}
+      </>
+    )
+  }
+
+  const isComplex = isExpandableObject(value)
+
+  return (
+    <span class="edit-inline">
+      {isComplex ? (
+        <textarea
+          ref={inputRef as any}
+          class={`edit-textarea${editError ? ' edit-error-input' : ''}`}
+          value={editValue}
+          onInput={(e) => setEditValue((e.target as HTMLTextAreaElement).value)}
+          onKeyDown={handleKeyDown}
+        />
+      ) : (
+        <input
+          ref={inputRef as any}
+          class={`edit-input${editError ? ' edit-error-input' : ''}`}
+          type={valueType === 'number' ? 'number' : 'text'}
+          value={editValue}
+          onInput={(e) => setEditValue((e.target as HTMLInputElement).value)}
+          onKeyDown={handleKeyDown}
+        />
+      )}
+      <span class="edit-controls">
+        <button class="edit-btn confirm" onClick={confirmEdit} title="Confirm (Enter)">✓</button>
+        <button class="edit-btn" onClick={cancelEdit} title="Cancel (Esc)">✕</button>
+      </span>
+      {editError && <span class="edit-error">{editError}</span>}
+    </span>
+  )
+}
+
+function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
+  text: string
+  nodeId: string
+  fragmentIndex: number
+  source: SourceLocation | null
+}) {
+  const [editing, setEditing] = useState(false)
+  const [editValue, setEditValue] = useState('')
+  const [originalText, setOriginalText] = useState('')
+  const [showPersist, setShowPersist] = useState(false)
+  const [persistStatus, setPersistStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.select()
+    }
+  }, [editing])
+
+  const enterEditMode = () => {
+    setOriginalText(text)
+    setEditValue(text)
+    setEditing(true)
+  }
+
+  const cancelEdit = () => {
+    setEditing(false)
+  }
+
+  const confirmEdit = () => {
+    window.dispatchEvent(new CustomEvent(EVENTS.TEXT_EDIT, {
+      detail: { nodeId, fragmentIndex, newValue: editValue },
+    }))
+    setEditing(false)
+    setShowPersist(true)
+    setPersistStatus('idle')
+  }
+
+  const handlePersist = async () => {
+    if (!source?.fileName || !source?.lineNumber) return
+    setPersistStatus('saving')
+    const result = await persistTextValue({
+      fileName: source.fileName,
+      lineNumber: source.lineNumber,
+      oldText: originalText,
+      newText: editValue,
+    })
+    setPersistStatus(result.ok ? 'saved' : 'error')
+    if (result.ok) setTimeout(() => setShowPersist(false), 1500)
+  }
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    e.stopPropagation()
+    if (e.key === 'Escape') cancelEdit()
+    else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) confirmEdit()
+  }
+
+  if (editing) {
+    return (
+      <div class="detail-row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+        <textarea
+          ref={inputRef}
+          class="edit-textarea"
+          value={editValue}
+          onInput={(e) => setEditValue((e.target as HTMLTextAreaElement).value)}
+          onKeyDown={handleKeyDown}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        />
+        <span class="edit-controls">
+          <button class="edit-btn confirm" onMouseDown={(e) => { e.preventDefault(); confirmEdit() }} title="Confirm (Ctrl+Enter)">&#10003;</button>
+          <button class="edit-btn" onMouseDown={(e) => { e.preventDefault(); cancelEdit() }} title="Cancel (Esc)">&#10005;</button>
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <div class="detail-row">
+      <span class="detail-text-fragment editable" onDblClick={enterEditMode} title="Double-click to edit">
+        "{text}"
+      </span>
+      {showPersist && source?.fileName && (
+        <div class="persist-row">
+          <button class="persist-btn-lg" onClick={handlePersist} disabled={persistStatus === 'saving'}>
+            {persistStatus === 'saving' ? 'Saving...' : persistStatus === 'saved' ? '\u2713 Saved' : persistStatus === 'error' ? '\u2715 Failed' : 'Save to source'}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: DetailPanelProps) {
   if (!node) {
     return <div class="detail-pane-empty">Select a component to inspect</div>
   }
@@ -39,24 +554,44 @@ export function DetailPanel({ node }: DetailPanelProps) {
   const hasHooks = node.hooks.length > 0
   const hasState = node.state !== null && node.state !== undefined
 
+  const showUsageSource = node.usageSource && node.source &&
+    node.usageSource.fileName !== node.source.fileName
+
   return (
     <div>
       <div class="detail-section">
         <div class="detail-component-name">{node.name}</div>
         {node.source && (
-          <div class="source-info">
-            {node.source.fileName.replace(/^.*\/src\//, 'src/')}:{node.source.lineNumber}
-          </div>
+          <>
+            {showUsageSource && <div class="source-label">Source</div>}
+            <div class="source-link-row">
+              <div class="source-link" onClick={() => openInEditor(node.source!)}>
+                {formatPath(node.source)}
+              </div>
+              <button class="source-copy-btn" onClick={(e) => copyPath(node.source!, e)} title="Copy path">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+              </button>
+            </div>
+          </>
         )}
-        {node.source && (
-          <button class="open-editor-btn" onClick={() => openInEditor(node.source!)}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-              <polyline points="15,3 21,3 21,9" />
-              <line x1="10" y1="14" x2="21" y2="3" />
-            </svg>
-            Open in Editor
-          </button>
+        {showUsageSource && (
+          <>
+            <div class="source-label">Used in</div>
+            <div class="source-link-row">
+              <div class="source-link" onClick={() => openInEditor(node.usageSource!)}>
+                {formatPath(node.usageSource!)}
+              </div>
+              <button class="source-copy-btn" onClick={(e) => copyPath(node.usageSource!, e)} title="Copy path">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+              </button>
+            </div>
+          </>
         )}
       </div>
 
@@ -64,14 +599,37 @@ export function DetailPanel({ node }: DetailPanelProps) {
         <div class="detail-section">
           <div class="detail-section-title">Props</div>
           {propEntries.map(([key, value]) => {
-            const formatted = formatValue(value)
+            const isEdited = editedProps?.get(node.id)?.has(key) ?? false
             return (
               <div class="detail-row" key={key}>
                 <span class="detail-key">{key}:</span>
-                <span class={formatted.className}>{formatted.text}</span>
+                <EditablePropValue
+                  propKey={key}
+                  value={value}
+                  nodeId={node.id}
+                  usageSource={node.usageSource ?? node.source ?? undefined}
+                  isEdited={isEdited}
+                  onPropEdit={onPropEdit}
+                  onPropPersisted={onPropPersisted}
+                />
               </div>
             )
           })}
+        </div>
+      )}
+
+      {node.textFragments && node.textFragments.length > 0 && (
+        <div class="detail-section">
+          <div class="detail-section-title">Text</div>
+          {node.textFragments.map((text, i) => (
+            <TextFragmentRow
+              key={i}
+              text={text}
+              nodeId={node.id}
+              fragmentIndex={i}
+              source={node.usageSource ?? node.source}
+            />
+          ))}
         </div>
       )}
 
@@ -79,18 +637,15 @@ export function DetailPanel({ node }: DetailPanelProps) {
         <div class="detail-section">
           <div class="detail-section-title">State</div>
           {typeof node.state === 'object' && node.state !== null ? (
-            Object.entries(node.state as Record<string, unknown>).map(([key, value]) => {
-              const formatted = formatValue(value)
-              return (
-                <div class="detail-row" key={key}>
-                  <span class="detail-key">{key}:</span>
-                  <span class={formatted.className}>{formatted.text}</span>
-                </div>
-              )
-            })
+            Object.entries(node.state as Record<string, unknown>).map(([key, value]) => (
+              <div class="detail-row" key={key}>
+                <span class="detail-key">{key}:</span>
+                <ValueDisplay value={value} />
+              </div>
+            ))
           ) : (
             <div class="detail-row">
-              <span class={formatValue(node.state).className}>{formatValue(node.state).text}</span>
+              <ValueDisplay value={node.state} />
             </div>
           )}
         </div>
@@ -100,11 +655,25 @@ export function DetailPanel({ node }: DetailPanelProps) {
         <div class="detail-section">
           <div class="detail-section-title">Hooks</div>
           {node.hooks.map((hook, i) => {
-            const formatted = formatValue(hook.value)
+            const label = hook.varName ?? hook.name
+            const canNavigate = hook.lineNumber != null && node.source != null
+
             return (
               <div class="detail-row" key={i}>
-                <span class="detail-key">{hook.name}:</span>
-                <span class={formatted.className}>{formatted.text}</span>
+                <span
+                  class={`detail-key${canNavigate ? ' detail-key-clickable' : ''}`}
+                  onClick={canNavigate ? () => openInEditor({
+                    fileName: node.source!.fileName,
+                    lineNumber: hook.lineNumber!,
+                    columnNumber: 1,
+                  }) : undefined}
+                >
+                  {label}:
+                </span>
+                {hook.editable
+                  ? <EditableValue hook={hook} nodeId={node.id} source={node.source} />
+                  : <ValueDisplay value={hook.value} />}
+                {hook.varName && <span class="hook-type-tag">[{hook.name}]</span>}
               </div>
             )
           })}

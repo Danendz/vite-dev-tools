@@ -2,7 +2,7 @@
  * This code sets up the __REACT_DEVTOOLS_GLOBAL_HOOK__ to intercept
  * React fiber tree commits. It must run BEFORE React loads.
  *
- * This is injected as inline script content via transformIndexHtml.
+ * Injected by the DevToolsPanel component at mount time.
  */
 export const HOOK_SCRIPT = /* js */ `
 (function() {
@@ -21,6 +21,20 @@ export const HOOK_SCRIPT = /* js */ `
         detail: { rendererID: rendererID, root: root }
       }));
     };
+    // Capture renderer reference for overrideProps support
+    var originalInject = existingHook.inject;
+    if (originalInject) {
+      existingHook.inject = function(renderer) {
+        window.__DANENDZ_DEVTOOLS_RENDERER__ = renderer;
+        return originalInject.call(this, renderer);
+      };
+    }
+    // Also check if renderers were already injected
+    if (existingHook.renderers && existingHook.renderers.size > 0) {
+      existingHook.renderers.forEach(function(renderer) {
+        window.__DANENDZ_DEVTOOLS_RENDERER__ = renderer;
+      });
+    }
   } else {
     // Create our own hook
     var renderers = new Map();
@@ -30,6 +44,7 @@ export const HOOK_SCRIPT = /* js */ `
       inject: function(renderer) {
         var id = renderers.size + 1;
         renderers.set(id, renderer);
+        window.__DANENDZ_DEVTOOLS_RENDERER__ = renderer;
         return id;
       },
       onScheduleFiberRoot: function() {},

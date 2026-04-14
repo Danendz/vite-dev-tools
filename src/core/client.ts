@@ -11,11 +11,11 @@ function hexToRgb(hex: string): string {
   return `${r}, ${g}, ${b}`
 }
 
-export function mountOverlay(config: DevToolsConfig) {
+export function mountOverlay(config: DevToolsConfig, container?: HTMLElement) {
   // Create host element
   const host = document.createElement('div')
   host.id = 'danendz-devtools'
-  document.body.appendChild(host)
+  ;(container ?? document.body).appendChild(host)
 
   // Attach shadow DOM for style isolation
   const shadow = host.attachShadow({ mode: 'open' })

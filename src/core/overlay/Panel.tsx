@@ -1,10 +1,11 @@
 import { h } from 'preact'
-import { useRef, useCallback, useMemo } from 'preact/hooks'
+import { useRef, useState, useCallback, useMemo } from 'preact/hooks'
 import type { NormalizedNode, DockPosition, ActiveTab, ConsoleEntry } from '../types'
 import { TreeView } from './TreeView'
 import { DetailPanel } from './DetailPanel'
 import { ConsolePane } from './ConsolePane'
 import { SettingsPopover } from './SettingsPopover'
+import { STORAGE_KEYS } from '../../shared/constants'
 
 const MIN_HEIGHT = 150
 const MAX_HEIGHT_RATIO = 0.8
@@ -17,6 +18,9 @@ interface PanelProps {
   dockPosition: DockPosition
   panelSize: number
   activeTab: ActiveTab
+  searchQuery: string
+  matchingNodeIds: Set<string> | null
+  searchAncestorIds: Set<string> | null
   consoleEntries: ConsoleEntry[]
   consoleFilters: { errors: boolean; warnings: boolean }
   errorCount: number
@@ -24,16 +28,26 @@ interface PanelProps {
   expandedNodeIds: Set<string> | null
   settingsOpen: boolean
   hideLibrary: boolean
+  hideProviders: boolean
+  editor: string
   fontSize: number
+  onSearchChange: (query: string) => void
   onPickerToggle: () => void
   onSettingsToggle: () => void
   onHideLibraryToggle: () => void
+  onHideProvidersToggle: () => void
+  onEditorChange: (editor: string) => void
   onFontSizeChange: (size: number) => void
   onDockChange: (pos: DockPosition) => void
   onResize: (size: number) => void
   onTabChange: (tab: ActiveTab) => void
   onFilterChange: (filters: { errors: boolean; warnings: boolean }) => void
   onClearConsole: () => void
+  editedProps: Map<string, Set<string>>
+  expandedPropsSet: Set<string>
+  onPropEdit: (nodeId: string, propKey: string) => void
+  onPropPersisted: (nodeId: string, propKey: string) => void
+  onExpandProps: (nodeId: string) => void
   onSelect: (node: NormalizedNode) => void
   onHover: (node: NormalizedNode | null) => void
   onContextMenu: (e: MouseEvent, node: NormalizedNode) => void
@@ -46,6 +60,9 @@ export function Panel({
   dockPosition,
   panelSize,
   activeTab,
+  searchQuery,
+  matchingNodeIds,
+  searchAncestorIds,
   consoleEntries,
   consoleFilters,
   errorCount,
@@ -53,22 +70,77 @@ export function Panel({
   expandedNodeIds,
   settingsOpen,
   hideLibrary,
+  hideProviders,
+  editor,
   fontSize,
+  onSearchChange,
   onPickerToggle,
   onSettingsToggle,
   onHideLibraryToggle,
+  onHideProvidersToggle,
+  onEditorChange,
   onFontSizeChange,
   onDockChange,
   onResize,
   onTabChange,
   onFilterChange,
   onClearConsole,
+  editedProps,
+  expandedPropsSet,
+  onPropEdit,
+  onPropPersisted,
+  onExpandProps,
   onSelect,
   onHover,
   onContextMenu,
   onClose,
 }: PanelProps) {
+  const [detailSize, setDetailSize] = useState(() => {
+    const stored = localStorage.getItem(STORAGE_KEYS.DETAIL_SIZE)
+    if (stored) {
+      const num = parseInt(stored, 10)
+      if (!isNaN(num) && num > 0) return num
+    }
+    return dockPosition === 'bottom' ? 260 : 220
+  })
   const dragRef = useRef<{ startPos: number; startSize: number } | null>(null)
+  const detailDragRef = useRef<{ startPos: number; startSize: number } | null>(null)
+
+  const handleDetailPointerDown = useCallback(
+    (e: PointerEvent) => {
+      e.preventDefault()
+      ;(e.target as Element).setPointerCapture(e.pointerId)
+      const startPos = dockPosition === 'bottom' ? e.clientX : e.clientY
+      detailDragRef.current = { startPos, startSize: detailSize }
+      document.documentElement.style.userSelect = 'none'
+    },
+    [dockPosition, detailSize],
+  )
+
+  const handleDetailPointerMove = useCallback(
+    (e: PointerEvent) => {
+      if (!detailDragRef.current) return
+      const { startPos, startSize } = detailDragRef.current
+      if (dockPosition === 'bottom') {
+        // Horizontal: dragging left edge of detail pane
+        const delta = startPos - e.clientX
+        setDetailSize(Math.max(120, Math.min(startSize + delta, panelSize * 0.85)))
+      } else {
+        // Vertical: dragging top edge of detail pane
+        const delta = startPos - e.clientY
+        setDetailSize(Math.max(60, Math.min(startSize + delta, panelSize * 0.85)))
+      }
+    },
+    [dockPosition, panelSize],
+  )
+
+  const handleDetailPointerUp = useCallback(() => {
+    if (detailDragRef.current) {
+      localStorage.setItem(STORAGE_KEYS.DETAIL_SIZE, String(detailSize))
+    }
+    detailDragRef.current = null
+    document.documentElement.style.userSelect = ''
+  }, [detailSize])
 
   const handlePointerDown = useCallback(
     (e: PointerEvent) => {
@@ -195,8 +267,12 @@ export function Panel({
           {settingsOpen && (
             <SettingsPopover
               hideLibrary={hideLibrary}
+              hideProviders={hideProviders}
+              editor={editor}
               fontSize={fontSize}
               onHideLibraryToggle={onHideLibraryToggle}
+              onHideProvidersToggle={onHideProvidersToggle}
+              onEditorChange={onEditorChange}
               onFontSizeChange={onFontSizeChange}
               onClose={onSettingsToggle}
             />
@@ -226,13 +302,34 @@ export function Panel({
                 tree={tree}
                 selectedId={selectedNode?.id ?? null}
                 expandedNodeIds={expandedNodeIds}
+                searchQuery={searchQuery}
+                matchingNodeIds={matchingNodeIds}
+                searchAncestorIds={searchAncestorIds}
+                editedProps={editedProps}
+                expandedPropsSet={expandedPropsSet}
+                onSearchChange={onSearchChange}
+                onPropEdit={onPropEdit}
+                onExpandProps={onExpandProps}
                 onSelect={onSelect}
                 onHover={onHover}
                 onContextMenu={onContextMenu}
               />
             </div>
-            <div class="detail-pane">
-              <DetailPanel node={selectedNode} />
+            <div
+              class="detail-pane"
+              style={isVertical ? { height: `${detailSize}px` } : { width: `${detailSize}px` }}
+            >
+              <div
+                class="detail-resize-handle"
+                style={isVertical
+                  ? { top: 0, left: 0, right: 0, height: '4px', cursor: 'ns-resize' }
+                  : { top: 0, left: 0, bottom: 0, width: '4px', cursor: 'ew-resize' }
+                }
+                onPointerDown={handleDetailPointerDown}
+                onPointerMove={handleDetailPointerMove}
+                onPointerUp={handleDetailPointerUp}
+              />
+              <DetailPanel node={selectedNode} editedProps={editedProps} onPropEdit={onPropEdit} onPropPersisted={onPropPersisted} />
             </div>
           </div>
         ) : (

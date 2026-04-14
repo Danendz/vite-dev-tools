@@ -1,11 +1,11 @@
 import { h } from 'preact'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'preact/hooks'
-import type { NormalizedNode, DevToolsConfig, TreeUpdateEvent, DockPosition, ActiveTab, ConsoleEntry } from '../types'
+import type { NormalizedNode, DevToolsConfig, TreeUpdateEvent, DockPosition, ActiveTab, ConsoleEntry, ToastItem } from '../types'
 import { FloatingIcon } from './FloatingIcon'
 import { Panel } from './Panel'
 import { Highlight } from './Highlight'
 import { ContextMenu } from './ContextMenu'
-import { addAlwaysShow, addAlwaysHide, removeOverride } from '../collapse'
+import { ToastContainer } from './ToastContainer'
 import { startCapture } from '../console-capture'
 import { EVENTS, STORAGE_KEYS } from '../../shared/constants'
 
@@ -79,10 +79,17 @@ export function App({ config }: AppProps) {
   const [hideLibrary, setHideLibrary] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.HIDE_LIBRARY) !== 'false'
   })
+  const [hideProviders, setHideProviders] = useState(() => {
+    return localStorage.getItem(STORAGE_KEYS.HIDE_PROVIDERS) !== 'false'
+  })
   const [fontSize, setFontSize] = useState<number>(() => {
     const stored = localStorage.getItem(STORAGE_KEYS.FONT_SIZE)
     return stored ? parseInt(stored, 10) : 11
   })
+  const [editor, setEditor] = useState(() => {
+    return localStorage.getItem(STORAGE_KEYS.EDITOR) ?? ''
+  })
+  const [searchQuery, setSearchQuery] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [isPickerActive, setIsPickerActive] = useState(false)
   const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string> | null>(null)
@@ -96,6 +103,10 @@ export function App({ config }: AppProps) {
     y: number
     node: NormalizedNode
   } | null>(null)
+  const [editedProps, setEditedProps] = useState<Map<string, Set<string>>>(new Map())
+  const [expandedPropsSet, setExpandedPropsSet] = useState<Set<string>>(new Set())
+  const [toasts, setToasts] = useState<ToastItem[]>([])
+  const toastIdRef = useRef(0)
 
   // Listen for tree updates from the React runtime
   useEffect(() => {
@@ -150,10 +161,121 @@ export function App({ config }: AppProps) {
     })
   }, [])
 
+  // Listen for toast events from communication/runtime layers
+  const MAX_TOASTS = 5
+  useEffect(() => {
+    function handleToast(e: Event) {
+      const { type, message } = (e as CustomEvent).detail
+      const id = `toast_${toastIdRef.current++}`
+      setToasts((prev) => {
+        let next = [...prev, { id, type, message, dismissedAt: null }]
+        const visible = next.filter((t) => t.dismissedAt === null)
+        if (visible.length > MAX_TOASTS) {
+          const oldest = visible[0]
+          next = next.map((t) =>
+            t.id === oldest.id ? { ...t, dismissedAt: Date.now() } : t,
+          )
+        }
+        return next
+      })
+    }
+    window.addEventListener(EVENTS.TOAST, handleToast)
+    return () => window.removeEventListener(EVENTS.TOAST, handleToast)
+  }, [])
+
+  // Auto-dismiss toasts after 15 seconds
+  useEffect(() => {
+    const active = toasts.filter((t) => t.dismissedAt === null)
+    if (active.length === 0) return
+
+    const timers = active.map((toast) => {
+      return setTimeout(() => {
+        setToasts((prev) =>
+          prev.map((t) =>
+            t.id === toast.id && t.dismissedAt === null
+              ? { ...t, dismissedAt: Date.now() }
+              : t,
+          ),
+        )
+      }, 15000)
+    })
+
+    return () => timers.forEach(clearTimeout)
+  }, [toasts])
+
+  // Push page content aside when panel is open
+  useEffect(() => {
+    const html = document.documentElement
+    const cleanup = () => {
+      html.style.marginLeft = ''
+      html.style.marginRight = ''
+      html.style.height = ''
+      html.style.overflow = ''
+    }
+
+    if (!isOpen) {
+      cleanup()
+      return
+    }
+
+    const marginPx = `${panelSize}px`
+    html.style.marginLeft = ''
+    html.style.marginRight = ''
+    html.style.height = ''
+    html.style.overflow = ''
+
+    if (dockPosition === 'bottom') {
+      html.style.height = `calc(100vh - ${panelSize}px)`
+      html.style.overflow = 'auto'
+    } else if (dockPosition === 'left') {
+      html.style.marginLeft = marginPx
+    } else {
+      html.style.marginRight = marginPx
+    }
+
+    return cleanup
+  }, [isOpen, dockPosition, panelSize])
+
   const errorCount = useMemo(
     () => consoleEntries.filter((e) => e.type === 'error').length,
     [consoleEntries],
   )
+
+  // Search filter
+  const { filteredTree, matchingNodeIds, searchAncestorIds } = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    if (!query) return { filteredTree: tree, matchingNodeIds: null, searchAncestorIds: null }
+
+    const matching = new Set<string>()
+    const ancestors = new Set<string>()
+
+    function collectMatches(nodes: NormalizedNode[]) {
+      for (const node of nodes) {
+        if (node.name.toLowerCase().includes(query)) {
+          matching.add(node.id)
+        }
+        collectMatches(node.children)
+      }
+    }
+
+    function filterNodes(nodes: NormalizedNode[], parentPath: string[]): NormalizedNode[] {
+      const result: NormalizedNode[] = []
+      for (const node of nodes) {
+        const isMatch = matching.has(node.id)
+        const filteredChildren = filterNodes(node.children, [...parentPath, node.id])
+        if (isMatch || filteredChildren.length > 0) {
+          for (const id of parentPath) ancestors.add(id)
+          ancestors.add(node.id)
+          result.push({ ...node, children: filteredChildren })
+        }
+      }
+      return result
+    }
+
+    collectMatches(tree)
+    const filtered = filterNodes(tree, [])
+    return { filteredTree: filtered, matchingNodeIds: matching, searchAncestorIds: ancestors }
+  }, [tree, searchQuery])
 
   // Element picker mode
   useEffect(() => {
@@ -170,8 +292,10 @@ export function App({ config }: AppProps) {
     }
 
     function handlePickerMove(e: MouseEvent) {
-      if (devtoolsHost?.contains(e.target as Node)) return
-      const node = findNodeForElement(e.target as HTMLElement, reverseMapRef.current)
+      // Use composedPath to pierce shadow DOM boundaries
+      const target = (e.composedPath()[0] ?? e.target) as HTMLElement
+      if (devtoolsHost?.contains(target)) return
+      const node = findNodeForElement(target, reverseMapRef.current)
       if (node) {
         handleHover(node)
         // Select in tree on hover, but skip if same node
@@ -186,10 +310,11 @@ export function App({ config }: AppProps) {
     }
 
     function handlePickerClick(e: MouseEvent) {
-      if (devtoolsHost?.contains(e.target as Node)) return
+      const target = (e.composedPath()[0] ?? e.target) as HTMLElement
+      if (devtoolsHost?.contains(target)) return
       e.preventDefault()
       e.stopPropagation()
-      const node = findNodeForElement(e.target as HTMLElement, reverseMapRef.current)
+      const node = findNodeForElement(target, reverseMapRef.current)
       if (node) {
         selectNode(node)
         handleHover(node)
@@ -234,6 +359,28 @@ export function App({ config }: AppProps) {
     })
   }, [])
 
+  const handleHideProvidersToggle = useCallback(() => {
+    setHideProviders((prev) => {
+      const next = !prev
+      localStorage.setItem(STORAGE_KEYS.HIDE_PROVIDERS, String(next))
+      window.dispatchEvent(new CustomEvent(EVENTS.REWALK))
+      return next
+    })
+  }, [])
+
+  const handleSearchChange = useCallback((query: string) => {
+    setSearchQuery(query)
+  }, [])
+
+  const handleEditorChange = useCallback((value: string) => {
+    setEditor(value)
+    if (value) {
+      localStorage.setItem(STORAGE_KEYS.EDITOR, value)
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.EDITOR)
+    }
+  }, [])
+
   const handleFontSizeChange = useCallback((size: number) => {
     setFontSize(size)
     localStorage.setItem(STORAGE_KEYS.FONT_SIZE, String(size))
@@ -272,8 +419,50 @@ export function App({ config }: AppProps) {
     setConsoleFilters(filters)
   }, [])
 
+  const handlePropEdit = useCallback((nodeId: string, propKey: string) => {
+    setEditedProps((prev) => {
+      const next = new Map(prev)
+      const keys = new Set(next.get(nodeId) ?? [])
+      keys.add(propKey)
+      next.set(nodeId, keys)
+      return next
+    })
+  }, [])
+
+  const handlePropPersisted = useCallback((nodeId: string, propKey: string) => {
+    setEditedProps((prev) => {
+      const next = new Map(prev)
+      const prevKeys = next.get(nodeId)
+      if (prevKeys) {
+        const newKeys = new Set(prevKeys)
+        newKeys.delete(propKey)
+        if (newKeys.size === 0) next.delete(nodeId)
+        else next.set(nodeId, newKeys)
+      }
+      return next
+    })
+    // Notify client-runtime to remove from pending edits
+    window.dispatchEvent(new CustomEvent(EVENTS.PROP_PERSISTED, {
+      detail: { nodeId, propKey },
+    }))
+  }, [])
+
+  const handleExpandProps = useCallback((nodeId: string) => {
+    setExpandedPropsSet((prev) => {
+      const next = new Set(prev)
+      if (next.has(nodeId)) {
+        next.delete(nodeId)
+      } else {
+        next.add(nodeId)
+      }
+      return next
+    })
+  }, [])
+
   const handleSelect = useCallback((node: NormalizedNode) => {
     setSelectedNode(node)
+    setContextMenu(null)
+    setExpandedPropsSet(new Set())
   }, [])
 
   const handleHover = useCallback((node: NormalizedNode | null) => {
@@ -302,11 +491,25 @@ export function App({ config }: AppProps) {
   }, [])
 
   const handleContextMenu = useCallback((e: MouseEvent, node: NormalizedNode) => {
+    if (!node.source) return
     setContextMenu({ x: e.clientX, y: e.clientY, node })
   }, [])
 
   const closeContextMenu = useCallback(() => {
     setContextMenu(null)
+  }, [])
+
+  const handleToastDismiss = useCallback((id: string) => {
+    setToasts((prev) => {
+      const toast = prev.find((t) => t.id === id)
+      if (!toast) return prev
+      if (toast.dismissedAt === null) {
+        return prev.map((t) =>
+          t.id === id ? { ...t, dismissedAt: Date.now() } : t,
+        )
+      }
+      return prev.filter((t) => t.id !== id)
+    })
   }, [])
 
   return (
@@ -317,11 +520,14 @@ export function App({ config }: AppProps) {
 
       {isOpen && (
         <Panel
-          tree={tree}
+          tree={filteredTree}
           selectedNode={selectedNode}
           dockPosition={dockPosition}
           panelSize={panelSize}
           activeTab={activeTab}
+          searchQuery={searchQuery}
+          matchingNodeIds={matchingNodeIds}
+          searchAncestorIds={searchAncestorIds}
           consoleEntries={consoleEntries}
           consoleFilters={consoleFilters}
           errorCount={errorCount}
@@ -329,16 +535,26 @@ export function App({ config }: AppProps) {
           expandedNodeIds={expandedNodeIds}
           settingsOpen={settingsOpen}
           hideLibrary={hideLibrary}
+          hideProviders={hideProviders}
+          editor={editor}
           fontSize={fontSize}
+          onSearchChange={handleSearchChange}
           onPickerToggle={handlePickerToggle}
           onSettingsToggle={handleSettingsToggle}
           onHideLibraryToggle={handleHideLibraryToggle}
+          onHideProvidersToggle={handleHideProvidersToggle}
+          onEditorChange={handleEditorChange}
           onFontSizeChange={handleFontSizeChange}
           onDockChange={handleDockChange}
           onResize={handleResize}
           onTabChange={handleTabChange}
           onFilterChange={handleFilterChange}
           onClearConsole={handleClearConsole}
+          editedProps={editedProps}
+          expandedPropsSet={expandedPropsSet}
+          onPropEdit={handlePropEdit}
+          onPropPersisted={handlePropPersisted}
+          onExpandProps={handleExpandProps}
           onSelect={handleSelect}
           onHover={handleHover}
           onContextMenu={handleContextMenu}
@@ -346,26 +562,18 @@ export function App({ config }: AppProps) {
         />
       )}
 
-      {contextMenu && (
+      {contextMenu && contextMenu.node.source && (
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          nodeName={contextMenu.node.name}
-          isFromNodeModules={contextMenu.node.isFromNodeModules}
-          onAlwaysShow={() => {
-            addAlwaysShow(contextMenu.node.name)
-            closeContextMenu()
-          }}
-          onAlwaysHide={() => {
-            addAlwaysHide(contextMenu.node.name)
-            closeContextMenu()
-          }}
-          onResetOverride={() => {
-            removeOverride(contextMenu.node.name)
-            closeContextMenu()
-          }}
+          source={contextMenu.node.source}
+          usageSource={contextMenu.node.usageSource}
           onClose={closeContextMenu}
         />
+      )}
+
+      {toasts.length > 0 && (
+        <ToastContainer toasts={toasts} dockPosition={dockPosition} onDismiss={handleToastDismiss} />
       )}
     </div>
   )
