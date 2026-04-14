@@ -357,7 +357,6 @@ function getHostElementSource(fiber: any): ReturnType<typeof getReactSource> {
 
   const sourceProp = fiber.memoizedProps?.__source
   if (sourceProp) {
-    // Object format (from OXC/Babel jsx-source transform): { fileName, lineNumber, columnNumber }
     if (typeof sourceProp === 'object' && sourceProp.fileName) {
       return {
         fileName: sourceProp.fileName,
@@ -365,7 +364,6 @@ function getHostElementSource(fiber: any): ReturnType<typeof getReactSource> {
         columnNumber: sourceProp.columnNumber ?? 1,
       }
     }
-    // String format (from our transform): "fileName:line:col"
     if (typeof sourceProp === 'string') {
       const lastColon = sourceProp.lastIndexOf(':')
       const secondLastColon = sourceProp.lastIndexOf(':', lastColon - 1)

@@ -377,6 +377,19 @@ function EditablePropValue({
   const previewConfirmRef = useRef<(() => Promise<void>) | null>(null)
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
 
+  // Reset all local state when the selected node changes
+  useEffect(() => {
+    setEditing(false)
+    setShowPersist(false)
+    setPersistStatus('idle')
+    setPreviewDiff(null)
+    setUndoFile(null)
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current)
+      resetTimerRef.current = null
+    }
+  }, [nodeId])
+
   // Reset persist state when a new external edit arrives (e.g. inline tree edit)
   useEffect(() => {
     if (isEdited && persistStatus === 'saved') {
@@ -895,7 +908,10 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
         <div class="detail-section">
           <div class="detail-section-title">{node.isHostElement ? 'Attributes' : 'Props'}</div>
           {propEntries.map(([key, value]) => {
-            if (node.isHostElement) {
+            const valueType = typeof value
+            const isPrimitive = value === null || valueType === 'string' || valueType === 'number' || valueType === 'boolean'
+            // Host elements: editable only when source exists and value is primitive
+            if (node.isHostElement && (!node.source || !isPrimitive)) {
               return (
                 <div class="detail-row" key={key}>
                   <span class="detail-key">{key}:</span>
@@ -911,7 +927,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
                   propKey={key}
                   value={value}
                   nodeId={node.id}
-                  usageSource={node.usageSource ?? node.source ?? undefined}
+                  usageSource={node.isHostElement ? (node.source ?? undefined) : (node.usageSource ?? node.source ?? undefined)}
                   dynamicProps={node.dynamicProps}
                   isEdited={isEdited}
                   onPropEdit={onPropEdit}

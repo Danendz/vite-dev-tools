@@ -36,7 +36,7 @@ function sendPersist(
       const body = await res.json().catch(() => null)
       if (!res.ok || (body && !body.ok)) {
         const error = body?.error ?? res.statusText
-        if (!preview) dispatchToast(`Failed to persist ${label}: ${error}`)
+        dispatchToast(`Failed to persist ${label}: ${error}`)
         return { ok: false as const, error }
       }
       if (body?.preview) {

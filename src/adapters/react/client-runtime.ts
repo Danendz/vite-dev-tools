@@ -51,15 +51,27 @@ function reapplyPendingEdits(nodes: import('../../core/types').NormalizedNode[])
     const edits = pendingPropEdits.get(node.id)
     if (edits) {
       const fiber = fiberRefMap.get(node.id)
-      for (const [propKey, value] of edits) {
-        node.props[propKey] = value
-        if (fiber?.memoizedProps && fiber.memoizedProps[propKey] !== value) {
-          const renderer = (window as any).__DANENDZ_DEVTOOLS_RENDERER__
-          if (renderer?.overrideProps) {
-            renderer.overrideProps(fiber, [propKey], value)
+      if (fiber?.tag === 5 && fiber.stateNode instanceof HTMLElement) {
+        // Host element: reapply via direct DOM manipulation
+        for (const [propKey, value] of edits) {
+          node.props[propKey] = value
+          if (value === false || value === null) {
+            fiber.stateNode.removeAttribute(propKey)
           } else {
-            if (fiber.pendingProps) fiber.pendingProps[propKey] = value
-            if (fiber.memoizedProps) fiber.memoizedProps[propKey] = value
+            fiber.stateNode.setAttribute(propKey, String(value))
+          }
+        }
+      } else {
+        for (const [propKey, value] of edits) {
+          node.props[propKey] = value
+          if (fiber?.memoizedProps && fiber.memoizedProps[propKey] !== value) {
+            const renderer = (window as any).__DANENDZ_DEVTOOLS_RENDERER__
+            if (renderer?.overrideProps) {
+              renderer.overrideProps(fiber, [propKey], value)
+            } else {
+              if (fiber.pendingProps) fiber.pendingProps[propKey] = value
+              if (fiber.memoizedProps) fiber.memoizedProps[propKey] = value
+            }
           }
         }
       }
@@ -114,6 +126,17 @@ window.addEventListener(EVENTS.PROP_EDIT, (event: Event) => {
     window.dispatchEvent(new CustomEvent(EVENTS.TOAST, {
       detail: { type: 'error', message: `Fiber not found for prop edit (node: ${nodeId})` },
     }))
+    return
+  }
+
+  // Host element (tag 5) — apply via direct DOM manipulation
+  if (fiber.tag === 5 && fiber.stateNode instanceof HTMLElement) {
+    if (newValue === false || newValue === null) {
+      fiber.stateNode.removeAttribute(propKey)
+    } else {
+      fiber.stateNode.setAttribute(propKey, String(newValue))
+    }
+    walkAndDispatch()
     return
   }
 

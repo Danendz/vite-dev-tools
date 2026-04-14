@@ -500,12 +500,11 @@ export const reactAdapter: FrameworkAdapter = {
       }
     }
 
-    // Inject __source prop on host JSX elements for React 19+ when the JSX transformer
-    // doesn't already do it (e.g. esbuild in Vite < 6 doesn't inject __source).
-    // OXC (Vite 6+) and SWC already inject __source, so we skip to avoid duplicates.
+    // Inject __source prop on host JSX elements for React 19+.
+    // OXC/SWC inject __source via jsxDEV but React 19 strips it from host element
+    // memoizedProps. Our injection as a JSX attribute survives in memoizedProps.
     let transformedCode = code
-    const hasJsxSourceTransform = (reactAdapter as any)._hasJsxSourceTransform
-    if (!(reactMajor > 0 && reactMajor < 19) && !hasJsxSourceTransform && /\.[jt]sx$/.test(id)) {
+    if (!(reactMajor > 0 && reactMajor < 19) && /\.[jt]sx$/.test(id)) {
       const injected = injectJSXSourceProps(code, relativePath, id)
       if (injected) transformedCode = injected
     }
@@ -643,68 +642,5 @@ export const reactAdapter: FrameworkAdapter = {
       })
     })
 
-    // Legacy persist-text endpoint
-    server.middlewares.use((req: any, res: any, next: any) => {
-      if (req.method !== 'POST' || req.url !== ENDPOINTS.PERSIST_TEXT) return next()
-
-      let body = ''
-      req.on('data', (chunk: string) => { body += chunk })
-      req.on('end', () => {
-        res.setHeader('Content-Type', 'application/json')
-        try {
-          const { fileName, lineNumber, oldText, newText, preview } = JSON.parse(body)
-
-          if (!oldText || typeof newText !== 'string' || !fileName) {
-            res.statusCode = 400
-            res.end(JSON.stringify({ ok: false, error: 'Missing fileName, oldText, or newText' }))
-            return
-          }
-
-          let filePath = path.resolve(projectRoot, fileName.replace(/^\//, ''))
-          if (!fs.existsSync(filePath)) {
-            filePath = fileName
-            if (!fs.existsSync(filePath)) {
-              res.statusCode = 400
-              res.end(JSON.stringify({ ok: false, error: 'File not found' }))
-              return
-            }
-          }
-
-          const content = fs.readFileSync(filePath, 'utf-8')
-          const lines = content.split('\n')
-
-          const searchStart = Math.max(0, (lineNumber || 1) - 5)
-          const searchEnd = Math.min(lines.length, (lineNumber || 1) + 10)
-
-          let found = false
-          for (let i = searchStart; i < searchEnd; i++) {
-            if (lines[i].includes(oldText)) {
-              lines[i] = lines[i].replace(oldText, newText)
-              found = true
-              break
-            }
-          }
-
-          if (!found) {
-            res.statusCode = 400
-            res.end(JSON.stringify({ ok: false, error: `Text "${oldText.slice(0, 40)}" not found near line ${lineNumber}` }))
-            return
-          }
-
-          const patched = lines.join('\n')
-          if (preview) {
-            res.end(JSON.stringify({ ok: true, preview: true, diff: buildDiff(content, patched, fileName, lineNumber) }))
-            return
-          }
-
-          undoStore.set(filePath, { previousContent: content, timestamp: Date.now() })
-          fs.writeFileSync(filePath, patched, 'utf-8')
-          res.end(JSON.stringify({ ok: true }))
-        } catch (e: any) {
-          res.statusCode = 500
-          res.end(JSON.stringify({ ok: false, error: e.message }))
-        }
-      })
-    })
   },
 } as FrameworkAdapter & { configureServer: (server: any) => void }

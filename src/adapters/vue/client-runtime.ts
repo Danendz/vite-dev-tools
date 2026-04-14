@@ -2,7 +2,7 @@
  * Vue-specific client runtime.
  * Listens for component update events and sends normalized tree data to the overlay.
  */
-import { walkInstanceTree, instanceRefMap } from './instance-walker'
+import { walkInstanceTree, instanceRefMap, hostElementRefMap } from './instance-walker'
 import { EVENTS, STORAGE_KEYS } from '../../shared/constants'
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -27,17 +27,32 @@ function reapplyPendingEdits(nodes: import('../../core/types').NormalizedNode[])
   for (const node of nodes) {
     const edits = pendingPropEdits.get(node.id)
     if (edits) {
-      for (const [propKey, value] of edits) {
-        const freshValue = node.props[propKey]
-        // Compare serialized values to handle objects/arrays
-        if (JSON.stringify(freshValue) !== JSON.stringify(value)) {
-          // Vue re-rendered with a different value — edit was overridden
-          edits.delete(propKey)
-          reverted.push({ nodeId: node.id, propKey })
+      if (node.isHostElement) {
+        // Host elements: reapply via direct DOM manipulation
+        const el = hostElementRefMap.get(node.id)
+        if (el) {
+          for (const [propKey, value] of edits) {
+            if (value === false || value === null) {
+              el.removeAttribute(propKey)
+            } else {
+              el.setAttribute(propKey, String(value))
+            }
+            node.props[propKey] = value
+          }
         }
-        // If equal, getProps() already has the correct value — no override needed
+      } else {
+        for (const [propKey, value] of edits) {
+          const freshValue = node.props[propKey]
+          // Compare serialized values to handle objects/arrays
+          if (JSON.stringify(freshValue) !== JSON.stringify(value)) {
+            // Vue re-rendered with a different value — edit was overridden
+            edits.delete(propKey)
+            reverted.push({ nodeId: node.id, propKey })
+          }
+          // If equal, getProps() already has the correct value — no override needed
+        }
+        if (edits.size === 0) pendingPropEdits.delete(node.id)
       }
-      if (edits.size === 0) pendingPropEdits.delete(node.id)
     }
 
     // Re-apply text fragment edits
@@ -130,6 +145,18 @@ window.addEventListener(EVENTS.PROP_EDIT, (event: Event) => {
 
   if (!pendingPropEdits.has(nodeId)) pendingPropEdits.set(nodeId, new Map())
   pendingPropEdits.get(nodeId)!.set(propKey, newValue)
+
+  // Check if this is a host element edit — apply via direct DOM manipulation
+  const hostEl = hostElementRefMap.get(nodeId)
+  if (hostEl) {
+    if (newValue === false || newValue === null) {
+      hostEl.removeAttribute(propKey)
+    } else {
+      hostEl.setAttribute(propKey, String(newValue))
+    }
+    walkAndDispatch()
+    return
+  }
 
   const instance = instanceRefMap.get(nodeId)
   if (!instance) {

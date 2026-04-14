@@ -15,6 +15,9 @@ let nodeIdCounter = 0
 /** Maps node IDs to live component instances — rebuilt on every tree walk */
 export const instanceRefMap = new Map<string, any>()
 
+/** Maps node IDs to live DOM elements for host element edits — rebuilt on every tree walk */
+export const hostElementRefMap = new Map<string, HTMLElement>()
+
 function getComponentName(instance: any): string {
   const type = instance.type
   if (!type) return 'Unknown'
@@ -371,11 +374,12 @@ function domElementToNode(el: HTMLElement, ctx: WalkContext): NormalizedNode {
     }
   }
 
-  return {
+  const source = getElementSource(tagName, ctx)
+  const hostNode: NormalizedNode = {
     id: `vue_${nodeIdCounter++}`,
     name: tagName,
-    source: null,
-    _parentSource: ctx.parentUsageSource,
+    source,
+    _parentSource: !source && ctx.parentUsageSource ? ctx.parentUsageSource : undefined,
     props,
     sections: [],
     children,
@@ -385,6 +389,8 @@ function domElementToNode(el: HTMLElement, ctx: WalkContext): NormalizedNode {
     textContent,
     textFragments: textContent ? [textContent] : undefined,
   }
+  hostElementRefMap.set(hostNode.id, el)
+  return hostNode
 }
 
 /**
@@ -490,6 +496,9 @@ function walkVNodeChildren(vnode: any, hideLibrary: boolean, ctx: WalkContext): 
       textContent,
       textFragments: textContent ? [textContent] : undefined,
     }
+    if (vnode.el instanceof HTMLElement) {
+      hostElementRefMap.set(hostNode.id, vnode.el)
+    }
     nodes.push(hostNode)
     return nodes
   }
@@ -581,6 +590,7 @@ function walkVNodeChildren(vnode: any, hideLibrary: boolean, ctx: WalkContext): 
 export function walkInstanceTree(appInstance: any, hideLibrary = false): NormalizedNode[] {
   nodeIdCounter = 0
   instanceRefMap.clear()
+  hostElementRefMap.clear()
 
   if (!appInstance) return []
 

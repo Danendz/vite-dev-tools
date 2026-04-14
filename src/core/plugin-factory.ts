@@ -218,6 +218,70 @@ export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevTool
         })
       })
 
+      // Persist-text endpoint — framework-agnostic text search-and-replace near a line
+      server.middlewares.use((req: any, res: any, next: any) => {
+        if (req.method !== 'POST' || req.url !== ENDPOINTS.PERSIST_TEXT) return next()
+
+        let body = ''
+        req.on('data', (chunk: string) => { body += chunk })
+        req.on('end', () => {
+          res.setHeader('Content-Type', 'application/json')
+          try {
+            const { fileName, lineNumber, oldText, newText, preview } = JSON.parse(body)
+
+            if (!oldText || typeof newText !== 'string' || !fileName) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, error: 'Missing fileName, oldText, or newText' }))
+              return
+            }
+
+            let filePath = path.resolve(projectRoot, fileName.replace(/^\//, ''))
+            if (!fs.existsSync(filePath)) {
+              filePath = fileName
+              if (!fs.existsSync(filePath)) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, error: 'File not found' }))
+                return
+              }
+            }
+
+            const content = fs.readFileSync(filePath, 'utf-8')
+            const lines = content.split('\n')
+
+            const searchStart = Math.max(0, (lineNumber || 1) - 5)
+            const searchEnd = Math.min(lines.length, (lineNumber || 1) + 10)
+
+            let found = false
+            for (let i = searchStart; i < searchEnd; i++) {
+              if (lines[i].includes(oldText)) {
+                lines[i] = lines[i].replace(oldText, newText)
+                found = true
+                break
+              }
+            }
+
+            if (!found) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, error: `Text "${oldText.slice(0, 40)}" not found near line ${lineNumber}` }))
+              return
+            }
+
+            const patched = lines.join('\n')
+            if (preview) {
+              res.end(JSON.stringify({ ok: true, preview: true, diff: buildDiff(content, patched, fileName, lineNumber) }))
+              return
+            }
+
+            undoStore.set(filePath, { previousContent: content, timestamp: Date.now() })
+            fs.writeFileSync(filePath, patched, 'utf-8')
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e: any) {
+            res.statusCode = 500
+            res.end(JSON.stringify({ ok: false, error: e.message }))
+          }
+        })
+      })
+
       // Let adapter register additional middlewares (e.g. legacy persist endpoints)
       if ((adapter as any).configureServer) {
         (adapter as any).configureServer(server)

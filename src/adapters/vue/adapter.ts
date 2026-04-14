@@ -414,25 +414,31 @@ function rewriteTemplatePropAST(
   return null
 }
 
-/** Walk Vue template AST to find an element node near a target line */
+/** Walk Vue template AST to find the closest element node to a target line */
 function findTemplateElement(node: any, targetLine: number): any | null {
-  if (!node) return null
+  let best: any = null
+  let bestDist = Infinity
 
-  if (node.type === 1 && node.loc?.start?.line) {
-    // Check if this element's tag is near the target line
-    if (Math.abs(node.loc.start.line - targetLine) <= 3) {
-      return node
+  function walk(n: any) {
+    if (!n) return
+
+    if (n.type === 1 && n.loc?.start?.line) {
+      const dist = Math.abs(n.loc.start.line - targetLine)
+      if (dist <= 3 && dist < bestDist) {
+        best = n
+        bestDist = dist
+      }
+    }
+
+    if (n.children) {
+      for (const child of n.children) {
+        walk(child)
+      }
     }
   }
 
-  if (node.children) {
-    for (const child of node.children) {
-      const found = findTemplateElement(child, targetLine)
-      if (found) return found
-    }
-  }
-
-  return null
+  walk(node)
+  return best
 }
 
 function rewriteTemplatePropRegex(source: string, edit: RewriteEdit): string | null {
