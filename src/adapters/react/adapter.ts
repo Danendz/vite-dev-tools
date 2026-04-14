@@ -87,6 +87,33 @@ function findHookNames(code: string, componentLine: number): { varName: string |
   return hooks.length > 0 ? hooks : null
 }
 
+/** Known HTML element names — only inject __source on these to avoid false positives on lowercase component refs */
+const HTML_ELEMENTS = new Set([
+  'a', 'abbr', 'address', 'area', 'article', 'aside', 'audio',
+  'b', 'base', 'bdi', 'bdo', 'blockquote', 'body', 'br', 'button',
+  'canvas', 'caption', 'cite', 'code', 'col', 'colgroup',
+  'data', 'datalist', 'dd', 'del', 'details', 'dfn', 'dialog', 'div', 'dl', 'dt',
+  'em', 'embed',
+  'fieldset', 'figcaption', 'figure', 'footer', 'form',
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'head', 'header', 'hgroup', 'hr', 'html',
+  'i', 'iframe', 'img', 'input', 'ins',
+  'kbd',
+  'label', 'legend', 'li', 'link',
+  'main', 'map', 'mark', 'menu', 'meta', 'meter',
+  'nav', 'noscript',
+  'object', 'ol', 'optgroup', 'option', 'output',
+  'p', 'picture', 'pre', 'progress',
+  'q',
+  'rp', 'rt', 'ruby',
+  's', 'samp', 'script', 'search', 'section', 'select', 'slot', 'small', 'source', 'span', 'strong', 'style', 'sub', 'summary', 'sup',
+  'table', 'tbody', 'td', 'template', 'textarea', 'tfoot', 'th', 'thead', 'time', 'title', 'tr', 'track',
+  'u', 'ul',
+  'var', 'video',
+  'wbr',
+  // SVG elements
+  'svg', 'path', 'circle', 'rect', 'line', 'polyline', 'polygon', 'ellipse', 'g', 'text', 'tspan', 'defs', 'use', 'clipPath', 'mask', 'pattern', 'image', 'foreignObject',
+])
+
 /**
  * Inject __source="filePath:line:col" prop on lowercase JSX host elements.
  * Used for React 19+ where _debugSource is no longer available.
@@ -171,8 +198,11 @@ function injectJSXSourceProps(code: string, relativePath: string): string | null
         while (i < code.length && /[a-zA-Z0-9\-]/.test(code[i])) i++
         const tagName = code.slice(nameStart, i)
 
-        // Skip if empty tag name
-        if (!tagName) continue
+        // Skip if empty tag name or not a known HTML element
+        if (!tagName || !HTML_ELEMENTS.has(tagName)) continue
+
+        // Skip member expressions like i18nContext.Provider
+        if (i < code.length && code[i] === '.') continue
 
         // The insertion point is right after the tag name
         const insertOffset = i
@@ -307,9 +337,12 @@ export const reactAdapter: FrameworkAdapter = {
       }
     }
 
-    // Inject __source prop on host JSX elements for React 19+
+    // Inject __source prop on host JSX elements for React 19+ when the JSX transformer
+    // doesn't already do it (e.g. esbuild in Vite < 6 doesn't inject __source).
+    // OXC (Vite 6+) and SWC already inject __source, so we skip to avoid duplicates.
     let transformedCode = code
-    if (!(reactMajor > 0 && reactMajor < 19)) {
+    const hasJsxSourceTransform = (reactAdapter as any)._hasJsxSourceTransform
+    if (!(reactMajor > 0 && reactMajor < 19) && !hasJsxSourceTransform && /\.[jt]sx$/.test(id)) {
       const injected = injectJSXSourceProps(code, relativePath)
       if (injected) transformedCode = injected
     }

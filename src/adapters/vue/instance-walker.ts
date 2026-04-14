@@ -92,6 +92,69 @@ function isFromNodeModules(instance: any): boolean {
   return file.includes('node_modules') || file.includes('.vite/deps/')
 }
 
+interface WalkContext {
+  parentFile: string | null
+  elementCounters: Map<string, number>
+  parentUsageSource?: SourceLocation
+}
+
+/**
+ * Resolve source location for an HTML element vnode from __DEVTOOLS_USAGE_MAP__.
+ * Uses order-based counter per tag name, clamped for v-for duplicates.
+ */
+function getElementSource(tagName: string, ctx: WalkContext): SourceLocation | null {
+  if (!ctx.parentFile) return null
+
+  const map = (globalThis as any).__DEVTOOLS_USAGE_MAP__
+  if (!map) return null
+
+  for (const [filePath, fileUsages] of Object.entries(map)) {
+    if (!ctx.parentFile.endsWith(filePath)) continue
+
+    const locations = (fileUsages as any)[tagName]
+    if (!locations || locations.length === 0) return null
+
+    const index = ctx.elementCounters.get(tagName) ?? 0
+    ctx.elementCounters.set(tagName, index + 1)
+
+    // Clamp to array length for v-for duplicates
+    const clampedIndex = Math.min(index, locations.length - 1)
+    const loc = locations[clampedIndex]
+
+    return {
+      fileName: filePath.startsWith('/') ? filePath : `/${filePath}`,
+      lineNumber: loc.line,
+      columnNumber: loc.col,
+    }
+  }
+
+  return null
+}
+
+const VUE_HOST_SKIP_KEYS = new Set(['children', 'key', 'ref', 'ref_for', 'ref_key'])
+
+function getHostElementProps(vnodeProps: any): Record<string, unknown> {
+  if (!vnodeProps || typeof vnodeProps !== 'object') return {}
+
+  const result: Record<string, unknown> = {}
+  for (const key of Object.keys(vnodeProps)) {
+    if (VUE_HOST_SKIP_KEYS.has(key)) continue
+    const value = vnodeProps[key]
+    if (typeof value === 'function') {
+      result[key] = 'fn()'
+    } else if (key === 'style' && typeof value === 'object' && value !== null) {
+      try { result[key] = JSON.parse(JSON.stringify(value)) }
+      catch { result[key] = '[Style]' }
+    } else if (typeof value === 'object' && value !== null) {
+      try { result[key] = JSON.parse(JSON.stringify(value)) }
+      catch { result[key] = '[Object]' }
+    } else {
+      result[key] = value
+    }
+  }
+  return result
+}
+
 function getProps(instance: any): Record<string, unknown> {
   const props = instance.props
   if (!props || typeof props !== 'object') return {}
@@ -170,7 +233,7 @@ function getSpecialTypeName(vnode: any): string | null {
 /**
  * Walk a vnode tree and extract child component NormalizedNodes.
  */
-function walkVNodeChildren(vnode: any, hideLibrary: boolean): NormalizedNode[] {
+function walkVNodeChildren(vnode: any, hideLibrary: boolean, ctx: WalkContext): NormalizedNode[] {
   if (!vnode) return []
 
   const nodes: NormalizedNode[] = []
@@ -185,13 +248,20 @@ function walkVNodeChildren(vnode: any, hideLibrary: boolean): NormalizedNode[] {
       return nodes
     }
 
+    // Fresh context for each component scope
+    const source = getDefinitionSource(instance)
+    const usage = parseUsageSource(instance)
+    const childCtx: WalkContext = {
+      parentFile: instance.type?.__file ?? null,
+      elementCounters: new Map(),
+      parentUsageSource: usage?.source ?? source ?? undefined,
+    }
+
     if (hideLibrary && isFromNodeModules(instance)) {
       // Hide library components — re-parent their children
-      nodes.push(...walkVNodeChildren(instance.subTree, hideLibrary))
+      nodes.push(...walkVNodeChildren(instance.subTree, hideLibrary, childCtx))
     } else {
-      const children = walkVNodeChildren(instance.subTree, hideLibrary)
-      const source = getDefinitionSource(instance)
-      const usage = parseUsageSource(instance)
+      const children = walkVNodeChildren(instance.subTree, hideLibrary, childCtx)
 
       const node: NormalizedNode = {
         id: `vue_${nodeIdCounter++}`,
@@ -211,12 +281,46 @@ function walkVNodeChildren(vnode: any, hideLibrary: boolean): NormalizedNode[] {
     return nodes
   }
 
+  // Element vnode — include as host element node
+  if (vnode.shapeFlag & ELEMENT && typeof vnode.type === 'string') {
+    const tagName = vnode.type
+    const source = getElementSource(tagName, ctx)
+
+    let textContent: string | undefined
+    if (typeof vnode.children === 'string' && vnode.children.trim() !== '') {
+      textContent = vnode.children
+    }
+
+    let children: NormalizedNode[] = []
+    if (vnode.shapeFlag & ARRAY_CHILDREN && Array.isArray(vnode.children)) {
+      for (const child of vnode.children) {
+        children.push(...walkVNodeChildren(child, hideLibrary, ctx))
+      }
+    }
+
+    const hostNode: NormalizedNode = {
+      id: `vue_${nodeIdCounter++}`,
+      name: tagName,
+      source,
+      _parentSource: !source && ctx.parentUsageSource ? ctx.parentUsageSource : undefined,
+      props: getHostElementProps(vnode.props),
+      sections: [],
+      children,
+      isFromNodeModules: false,
+      isHostElement: true,
+      _domElements: vnode.el instanceof HTMLElement ? [vnode.el] : [],
+      textContent,
+      textFragments: textContent ? [textContent] : undefined,
+    }
+    nodes.push(hostNode)
+    return nodes
+  }
+
   // Teleport — show as named node with children
   if (vnode.shapeFlag & TELEPORT) {
-    // Teleport children are in vnode.children
     if (Array.isArray(vnode.children)) {
       for (const child of vnode.children) {
-        nodes.push(...walkVNodeChildren(child, hideLibrary))
+        nodes.push(...walkVNodeChildren(child, hideLibrary, ctx))
       }
     }
     return nodes
@@ -225,17 +329,17 @@ function walkVNodeChildren(vnode: any, hideLibrary: boolean): NormalizedNode[] {
   // Suspense — walk default slot
   if (vnode.shapeFlag & SUSPENSE) {
     if (vnode.ssContent) {
-      nodes.push(...walkVNodeChildren(vnode.ssContent, hideLibrary))
+      nodes.push(...walkVNodeChildren(vnode.ssContent, hideLibrary, ctx))
     } else if (vnode.ssFallback) {
-      nodes.push(...walkVNodeChildren(vnode.ssFallback, hideLibrary))
+      nodes.push(...walkVNodeChildren(vnode.ssFallback, hideLibrary, ctx))
     }
     return nodes
   }
 
-  // Fragment / element with array children
+  // Fragment / array children
   if (vnode.shapeFlag & ARRAY_CHILDREN && Array.isArray(vnode.children)) {
     for (const child of vnode.children) {
-      nodes.push(...walkVNodeChildren(child, hideLibrary))
+      nodes.push(...walkVNodeChildren(child, hideLibrary, ctx))
     }
     return nodes
   }
@@ -253,9 +357,14 @@ export function walkInstanceTree(appInstance: any, hideLibrary = false): Normali
   if (!appInstance) return []
 
   const rootName = getComponentName(appInstance)
-  const children = walkVNodeChildren(appInstance.subTree, hideLibrary)
   const source = getDefinitionSource(appInstance)
   const usage = parseUsageSource(appInstance)
+  const rootCtx: WalkContext = {
+    parentFile: appInstance.type?.__file ?? null,
+    elementCounters: new Map(),
+    parentUsageSource: usage?.source ?? source ?? undefined,
+  }
+  const children = walkVNodeChildren(appInstance.subTree, hideLibrary, rootCtx)
 
   const rootNode: NormalizedNode = {
     id: `vue_${nodeIdCounter++}`,

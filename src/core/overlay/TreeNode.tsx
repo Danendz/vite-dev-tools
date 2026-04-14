@@ -321,7 +321,7 @@ export function TreeNode({
           )}
           {'>'}
         </span>
-        {node.textContent && (
+        {node.textContent && !(isElementExpanded && hasHostElementChildren) && (
           <span class="tree-node-text">
             {' "'}
             {node.textContent.length > 40

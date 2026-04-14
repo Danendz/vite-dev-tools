@@ -47,6 +47,12 @@ export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevTool
       if (version) {
         console.log(`[devtools] Detected ${adapter.name} ${version}`)
       }
+      // Detect if the JSX transformer injects __source (OXC in Vite 6+, SWC, Babel plugin)
+      // esbuild (Vite < 6) does NOT inject __source by default
+      const hasJsxSourceTransform = resolvedConfig.plugins?.some(
+        (p: any) => p.name === 'vite:oxc' || p.name === 'vite:swc'
+      ) ?? false
+      ;(adapter as any)._hasJsxSourceTransform = hasJsxSourceTransform
     },
 
     transformIndexHtml(html) {

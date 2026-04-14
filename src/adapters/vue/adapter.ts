@@ -7,6 +7,11 @@ import { HOOK_SCRIPT } from './hook'
 
 const require = createRequire(import.meta.url)
 
+const VUE_BUILTIN_ELEMENTS = new Set([
+  'template', 'slot', 'component', 'transition', 'transition-group',
+  'keep-alive', 'teleport', 'suspense',
+])
+
 /**
  * Detect installed Vue 3 version from node_modules.
  */
@@ -147,9 +152,10 @@ function injectSourceAttributes(code: string, id: string, projectRoot: string): 
 
         const tagName = code.slice(tagStart + 1, j)
 
-        // Only track component tags (PascalCase or kebab-case with hyphen)
+        // Track component tags (PascalCase or kebab-case) and HTML element tags
         const isComponent = /[A-Z]/.test(tagName) || tagName.includes('-')
-        if (isComponent) {
+        const isTrackableElement = !isComponent && !VUE_BUILTIN_ELEMENTS.has(tagName)
+        if (isComponent || isTrackableElement) {
           const { line, column } = getLineCol(tagStart)
           if (!usages[tagName]) usages[tagName] = []
           usages[tagName].push({ line, col: column })

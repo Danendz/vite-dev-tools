@@ -313,14 +313,25 @@ function getHostElementSource(fiber: any): ReturnType<typeof getReactSource> {
   }
 
   const sourceProp = fiber.memoizedProps?.__source
-  if (typeof sourceProp === 'string') {
-    const lastColon = sourceProp.lastIndexOf(':')
-    const secondLastColon = sourceProp.lastIndexOf(':', lastColon - 1)
-    if (secondLastColon > 0) {
+  if (sourceProp) {
+    // Object format (from OXC/Babel jsx-source transform): { fileName, lineNumber, columnNumber }
+    if (typeof sourceProp === 'object' && sourceProp.fileName) {
       return {
-        fileName: sourceProp.slice(0, secondLastColon),
-        lineNumber: parseInt(sourceProp.slice(secondLastColon + 1, lastColon), 10),
-        columnNumber: parseInt(sourceProp.slice(lastColon + 1), 10),
+        fileName: sourceProp.fileName,
+        lineNumber: sourceProp.lineNumber ?? 1,
+        columnNumber: sourceProp.columnNumber ?? 1,
+      }
+    }
+    // String format (from our transform): "fileName:line:col"
+    if (typeof sourceProp === 'string') {
+      const lastColon = sourceProp.lastIndexOf(':')
+      const secondLastColon = sourceProp.lastIndexOf(':', lastColon - 1)
+      if (secondLastColon > 0) {
+        return {
+          fileName: sourceProp.slice(0, secondLastColon),
+          lineNumber: parseInt(sourceProp.slice(secondLastColon + 1, lastColon), 10),
+          columnNumber: parseInt(sourceProp.slice(lastColon + 1), 10),
+        }
       }
     }
   }
@@ -393,7 +404,40 @@ function collectDirectText(fiber: any): { texts: string[]; fibers: any[] } {
   return { texts, fibers }
 }
 
-function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: boolean): NormalizedNode[] {
+/**
+ * Collect only immediate HostText children of a fiber (no recursion into nested elements).
+ * Also handles React's optimization where single text children are stored as a string
+ * in memoizedProps.children instead of creating a HostText fiber.
+ */
+function collectImmediateText(fiber: any): { texts: string[]; fibers: any[] } {
+  const texts: string[] = []
+  const fibers: any[] = []
+  let child = fiber.child
+  while (child) {
+    if (child.tag === 6) {
+      const text = typeof child.memoizedProps === 'string' ? child.memoizedProps : ''
+      if (text.trim() !== '') {
+        texts.push(text)
+        fibers.push(child)
+      }
+    }
+    child = child.sibling
+  }
+
+  // React optimizes single text children — no HostText fiber is created,
+  // text is stored directly in memoizedProps.children as a string
+  if (texts.length === 0) {
+    const children = fiber.memoizedProps?.children
+    if (typeof children === 'string' && children.trim() !== '') {
+      texts.push(children)
+      fibers.push(fiber)
+    }
+  }
+
+  return { texts, fibers }
+}
+
+function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: boolean, parentUsageSource?: import('../../core/types').SourceLocation): NormalizedNode[] {
   const nodes: NormalizedNode[] = []
   let child = fiber.child
 
@@ -403,12 +447,13 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: bool
       if (name.startsWith('__DevTools')) {
         // skip devtools own components
       } else if (hideLibrary && isFromNodeModules(child)) {
-        nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders))
+        nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource))
       } else if (hideProviders && name.endsWith('Provider')) {
-        nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders))
+        nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource))
       } else {
         const locations = getSourceLocations(child)
-        const children = walkFiberChildren(child, hideLibrary, hideProviders)
+        const componentSource = locations.usageSource ?? locations.source
+        const children = walkFiberChildren(child, hideLibrary, hideProviders, componentSource ?? undefined)
 
         const { texts, fibers: textFibers } = collectDirectText(child)
 
@@ -438,24 +483,28 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: bool
     } else if (child.tag === HostComponent) {
       // Include host element as a node in the tree
       const tagName = child.stateNode?.tagName?.toLowerCase() ?? (typeof child.type === 'string' ? child.type : 'unknown')
-      const { texts } = collectDirectText(child)
+      const { texts, fibers: textFibers } = collectImmediateText(child)
+      const hostSource = getHostElementSource(child)
 
       const hostNode: NormalizedNode = {
         id: `fiber_${nodeIdCounter++}`,
         name: tagName,
-        source: getHostElementSource(child),
+        source: hostSource,
+        _parentSource: !hostSource && parentUsageSource ? parentUsageSource : undefined,
         props: getHostElementProps(child),
         sections: [],
-        children: walkFiberChildren(child, hideLibrary, hideProviders),
+        children: walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource),
         isFromNodeModules: false,
         isHostElement: true,
         _domElements: child.stateNode instanceof HTMLElement ? [child.stateNode] : [],
         textContent: texts.join(' ') || undefined,
+        textFragments: texts.length > 0 ? texts : undefined,
+        _textFibers: textFibers.length > 0 ? textFibers : undefined,
       }
       fiberRefMap.set(hostNode.id, child)
       nodes.push(hostNode)
     } else if (child.tag !== 6) {
-      nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders))
+      nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource))
     }
     child = child.sibling
   }

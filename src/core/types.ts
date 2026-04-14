@@ -36,6 +36,8 @@ export interface NormalizedNode {
   dynamicProps?: string[]
   /** True for DOM/host elements (div, span, etc.) vs components */
   isHostElement?: boolean
+  /** Fallback source from parent component — used for library host elements that lack own source */
+  _parentSource?: SourceLocation
   /** DOM element references for highlight — multiple when component returns a fragment */
   _domElements?: HTMLElement[]
   /** Joined text content from direct HostText children (for tree row preview) */

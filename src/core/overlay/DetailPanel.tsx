@@ -554,6 +554,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
   const propEntries = Object.entries(node.props)
   const hasProps = propEntries.length > 0
 
+  const effectiveSource = node.source ?? node._parentSource ?? null
   const showUsageSource = !node.isHostElement && node.usageSource && node.source &&
     node.usageSource.fileName !== node.source.fileName
 
@@ -561,14 +562,14 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
     <div>
       <div class="detail-section">
         <div class="detail-component-name">{node.isHostElement ? `<${node.name}>` : node.name}</div>
-        {node.source && (
+        {effectiveSource && (
           <>
             {showUsageSource && <div class="source-label">Source</div>}
             <div class="source-link-row">
-              <div class="source-link" onClick={() => openInEditor(node.source!)}>
-                {formatPath(node.source)}
+              <div class="source-link" onClick={() => openInEditor(effectiveSource)}>
+                {formatPath(effectiveSource)}
               </div>
-              <button class="source-copy-btn" onClick={(e) => copyPath(node.source!, e)} title="Copy path">
+              <button class="source-copy-btn" onClick={(e) => copyPath(effectiveSource, e)} title="Copy path">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
                   <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
@@ -636,7 +637,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
               text={text}
               nodeId={node.id}
               fragmentIndex={i}
-              source={node.usageSource ?? node.source}
+              source={node.isHostElement ? (node.source ?? node._parentSource ?? null) : (node.usageSource ?? node.source)}
             />
           ))}
         </div>
