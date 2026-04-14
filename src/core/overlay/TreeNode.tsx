@@ -281,6 +281,15 @@ export function TreeNode({
           )}
           {'>'}
         </span>
+        {node.textContent && (
+          <span class="tree-node-text">
+            {' "'}
+            {node.textContent.length > 40
+              ? node.textContent.slice(0, 40) + '\u2026'
+              : node.textContent}
+            {'"'}
+          </span>
+        )}
         {collapsed && hasChildren && (
           <span class="tree-node-collapsed-count">
             ({countCollapsedChildren(node)})

@@ -1,7 +1,7 @@
 import { h } from 'preact'
 import { useState, useRef, useEffect } from 'preact/hooks'
 import type { NormalizedNode, SourceLocation, HookInfo } from '../types'
-import { openInEditor, persistHookValue, persistPropValue } from '../communication'
+import { openInEditor, persistHookValue, persistPropValue, persistTextValue } from '../communication'
 import { EVENTS } from '../../shared/constants'
 
 function formatPath(source: SourceLocation): string {
@@ -185,13 +185,13 @@ function EditableValue({ hook, nodeId, source }: { hook: HookInfo; nodeId: strin
   const handlePersist = async () => {
     if (!source?.fileName || hook.lineNumber == null) return
     setPersistStatus('saving')
-    const ok = await persistHookValue({
+    const result = await persistHookValue({
       fileName: source.fileName,
       lineNumber: hook.lineNumber,
       newValue: hook.value as string | number | boolean | null,
     })
-    setPersistStatus(ok ? 'saved' : 'error')
-    if (ok) setTimeout(() => setShowPersist(false), 1500)
+    setPersistStatus(result.ok ? 'saved' : 'error')
+    if (result.ok) setTimeout(() => setShowPersist(false), 1500)
   }
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -299,14 +299,14 @@ function EditablePropValue({
   const handlePersist = async () => {
     if (!usageSource?.fileName || !usageSource?.lineNumber) return
     setPersistStatus('saving')
-    const ok = await persistPropValue({
+    const result = await persistPropValue({
       fileName: usageSource.fileName,
       lineNumber: usageSource.lineNumber,
       propKey,
       newValue: value as string | number | boolean | null,
     })
-    setPersistStatus(ok ? 'saved' : 'error')
-    if (ok) {
+    setPersistStatus(result.ok ? 'saved' : 'error')
+    if (result.ok) {
       onPropPersisted?.(nodeId, propKey)
       setTimeout(() => {
         setShowPersist(false)
@@ -450,6 +450,100 @@ function EditablePropValue({
   )
 }
 
+function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
+  text: string
+  nodeId: string
+  fragmentIndex: number
+  source: SourceLocation | null
+}) {
+  const [editing, setEditing] = useState(false)
+  const [editValue, setEditValue] = useState('')
+  const [originalText, setOriginalText] = useState('')
+  const [showPersist, setShowPersist] = useState(false)
+  const [persistStatus, setPersistStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.select()
+    }
+  }, [editing])
+
+  const enterEditMode = () => {
+    setOriginalText(text)
+    setEditValue(text)
+    setEditing(true)
+  }
+
+  const cancelEdit = () => {
+    setEditing(false)
+  }
+
+  const confirmEdit = () => {
+    window.dispatchEvent(new CustomEvent(EVENTS.TEXT_EDIT, {
+      detail: { nodeId, fragmentIndex, newValue: editValue },
+    }))
+    setEditing(false)
+    setShowPersist(true)
+    setPersistStatus('idle')
+  }
+
+  const handlePersist = async () => {
+    if (!source?.fileName || !source?.lineNumber) return
+    setPersistStatus('saving')
+    const result = await persistTextValue({
+      fileName: source.fileName,
+      lineNumber: source.lineNumber,
+      oldText: originalText,
+      newText: editValue,
+    })
+    setPersistStatus(result.ok ? 'saved' : 'error')
+    if (result.ok) setTimeout(() => setShowPersist(false), 1500)
+  }
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    e.stopPropagation()
+    if (e.key === 'Escape') cancelEdit()
+    else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) confirmEdit()
+  }
+
+  if (editing) {
+    return (
+      <div class="detail-row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+        <textarea
+          ref={inputRef}
+          class="edit-textarea"
+          value={editValue}
+          onInput={(e) => setEditValue((e.target as HTMLTextAreaElement).value)}
+          onKeyDown={handleKeyDown}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        />
+        <span class="edit-controls">
+          <button class="edit-btn confirm" onMouseDown={(e) => { e.preventDefault(); confirmEdit() }} title="Confirm (Ctrl+Enter)">&#10003;</button>
+          <button class="edit-btn" onMouseDown={(e) => { e.preventDefault(); cancelEdit() }} title="Cancel (Esc)">&#10005;</button>
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <div class="detail-row">
+      <span class="detail-text-fragment editable" onDblClick={enterEditMode} title="Double-click to edit">
+        "{text}"
+      </span>
+      {showPersist && source?.fileName && (
+        <div class="persist-row">
+          <button class="persist-btn-lg" onClick={handlePersist} disabled={persistStatus === 'saving'}>
+            {persistStatus === 'saving' ? 'Saving...' : persistStatus === 'saved' ? '\u2713 Saved' : persistStatus === 'error' ? '\u2715 Failed' : 'Save to source'}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: DetailPanelProps) {
   if (!node) {
     return <div class="detail-pane-empty">Select a component to inspect</div>
@@ -521,6 +615,21 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
               </div>
             )
           })}
+        </div>
+      )}
+
+      {node.textFragments && node.textFragments.length > 0 && (
+        <div class="detail-section">
+          <div class="detail-section-title">Text</div>
+          {node.textFragments.map((text, i) => (
+            <TextFragmentRow
+              key={i}
+              text={text}
+              nodeId={node.id}
+              fragmentIndex={i}
+              source={node.usageSource ?? node.source}
+            />
+          ))}
         </div>
       )}
 

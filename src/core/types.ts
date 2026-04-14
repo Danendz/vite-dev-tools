@@ -11,6 +11,12 @@ export interface NormalizedNode {
   usageSource?: SourceLocation
   /** DOM element references for highlight — multiple when component returns a fragment */
   _domElements?: HTMLElement[]
+  /** Joined text content from direct HostText children (for tree row preview) */
+  textContent?: string
+  /** Individual text fragments from direct HostText children (for DetailPanel editing) */
+  textFragments?: string[]
+  /** Live HostText fiber references for runtime text editing */
+  _textFibers?: any[]
 }
 
 export interface SourceLocation {
@@ -51,6 +57,13 @@ export interface ConsoleEntry {
   timestamp: number
   message: string
   stack: string | null
+}
+
+export interface ToastItem {
+  id: string
+  type: 'error' | 'warning'
+  message: string
+  dismissedAt: number | null
 }
 
 export type ActiveTab = 'inspect' | 'console'

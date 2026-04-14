@@ -1,10 +1,11 @@
 import { h } from 'preact'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'preact/hooks'
-import type { NormalizedNode, DevToolsConfig, TreeUpdateEvent, DockPosition, ActiveTab, ConsoleEntry } from '../types'
+import type { NormalizedNode, DevToolsConfig, TreeUpdateEvent, DockPosition, ActiveTab, ConsoleEntry, ToastItem } from '../types'
 import { FloatingIcon } from './FloatingIcon'
 import { Panel } from './Panel'
 import { Highlight } from './Highlight'
 import { ContextMenu } from './ContextMenu'
+import { ToastContainer } from './ToastContainer'
 import { startCapture } from '../console-capture'
 import { EVENTS, STORAGE_KEYS } from '../../shared/constants'
 
@@ -104,6 +105,8 @@ export function App({ config }: AppProps) {
   } | null>(null)
   const [editedProps, setEditedProps] = useState<Map<string, Set<string>>>(new Map())
   const [expandedPropsSet, setExpandedPropsSet] = useState<Set<string>>(new Set())
+  const [toasts, setToasts] = useState<ToastItem[]>([])
+  const toastIdRef = useRef(0)
 
   // Listen for tree updates from the React runtime
   useEffect(() => {
@@ -157,6 +160,48 @@ export function App({ config }: AppProps) {
       })
     })
   }, [])
+
+  // Listen for toast events from communication/runtime layers
+  const MAX_TOASTS = 5
+  useEffect(() => {
+    function handleToast(e: Event) {
+      const { type, message } = (e as CustomEvent).detail
+      const id = `toast_${toastIdRef.current++}`
+      setToasts((prev) => {
+        let next = [...prev, { id, type, message, dismissedAt: null }]
+        const visible = next.filter((t) => t.dismissedAt === null)
+        if (visible.length > MAX_TOASTS) {
+          const oldest = visible[0]
+          next = next.map((t) =>
+            t.id === oldest.id ? { ...t, dismissedAt: Date.now() } : t,
+          )
+        }
+        return next
+      })
+    }
+    window.addEventListener(EVENTS.TOAST, handleToast)
+    return () => window.removeEventListener(EVENTS.TOAST, handleToast)
+  }, [])
+
+  // Auto-dismiss toasts after 15 seconds
+  useEffect(() => {
+    const active = toasts.filter((t) => t.dismissedAt === null)
+    if (active.length === 0) return
+
+    const timers = active.map((toast) => {
+      return setTimeout(() => {
+        setToasts((prev) =>
+          prev.map((t) =>
+            t.id === toast.id && t.dismissedAt === null
+              ? { ...t, dismissedAt: Date.now() }
+              : t,
+          ),
+        )
+      }, 15000)
+    })
+
+    return () => timers.forEach(clearTimeout)
+  }, [toasts])
 
   // Push page content aside when panel is open
   useEffect(() => {
@@ -396,6 +441,10 @@ export function App({ config }: AppProps) {
       }
       return next
     })
+    // Notify client-runtime to remove from pending edits
+    window.dispatchEvent(new CustomEvent(EVENTS.PROP_PERSISTED, {
+      detail: { nodeId, propKey },
+    }))
   }, [])
 
   const handleExpandProps = useCallback((nodeId: string) => {
@@ -448,6 +497,19 @@ export function App({ config }: AppProps) {
 
   const closeContextMenu = useCallback(() => {
     setContextMenu(null)
+  }, [])
+
+  const handleToastDismiss = useCallback((id: string) => {
+    setToasts((prev) => {
+      const toast = prev.find((t) => t.id === id)
+      if (!toast) return prev
+      if (toast.dismissedAt === null) {
+        return prev.map((t) =>
+          t.id === id ? { ...t, dismissedAt: Date.now() } : t,
+        )
+      }
+      return prev.filter((t) => t.id !== id)
+    })
   }, [])
 
   return (
@@ -508,6 +570,10 @@ export function App({ config }: AppProps) {
           usageSource={contextMenu.node.usageSource}
           onClose={closeContextMenu}
         />
+      )}
+
+      {toasts.length > 0 && (
+        <ToastContainer toasts={toasts} dockPosition={dockPosition} onDismiss={handleToastDismiss} />
       )}
     </div>
   )

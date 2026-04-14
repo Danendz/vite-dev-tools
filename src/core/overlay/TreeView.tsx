@@ -173,8 +173,9 @@ export function TreeView({
   }, [flatVisible])
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    // Don't intercept if typing in the search input
-    if ((e.target as HTMLElement)?.tagName === 'INPUT') return
+    // Don't intercept if typing in an input or textarea
+    const tag = (e.target as HTMLElement)?.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return
 
     const key = e.key
     if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter'].includes(key)) return

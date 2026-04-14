@@ -5,6 +5,7 @@ import { TreeView } from './TreeView'
 import { DetailPanel } from './DetailPanel'
 import { ConsolePane } from './ConsolePane'
 import { SettingsPopover } from './SettingsPopover'
+import { STORAGE_KEYS } from '../../shared/constants'
 
 const MIN_HEIGHT = 150
 const MAX_HEIGHT_RATIO = 0.8
@@ -94,7 +95,14 @@ export function Panel({
   onContextMenu,
   onClose,
 }: PanelProps) {
-  const [detailSize, setDetailSize] = useState(() => dockPosition === 'bottom' ? 260 : 220)
+  const [detailSize, setDetailSize] = useState(() => {
+    const stored = localStorage.getItem(STORAGE_KEYS.DETAIL_SIZE)
+    if (stored) {
+      const num = parseInt(stored, 10)
+      if (!isNaN(num) && num > 0) return num
+    }
+    return dockPosition === 'bottom' ? 260 : 220
+  })
   const dragRef = useRef<{ startPos: number; startSize: number } | null>(null)
   const detailDragRef = useRef<{ startPos: number; startSize: number } | null>(null)
 
@@ -116,20 +124,23 @@ export function Panel({
       if (dockPosition === 'bottom') {
         // Horizontal: dragging left edge of detail pane
         const delta = startPos - e.clientX
-        setDetailSize(Math.max(150, Math.min(startSize + delta, panelSize * 0.7)))
+        setDetailSize(Math.max(120, Math.min(startSize + delta, panelSize * 0.85)))
       } else {
         // Vertical: dragging top edge of detail pane
         const delta = startPos - e.clientY
-        setDetailSize(Math.max(80, Math.min(startSize + delta, panelSize * 0.7)))
+        setDetailSize(Math.max(60, Math.min(startSize + delta, panelSize * 0.85)))
       }
     },
     [dockPosition, panelSize],
   )
 
   const handleDetailPointerUp = useCallback(() => {
+    if (detailDragRef.current) {
+      localStorage.setItem(STORAGE_KEYS.DETAIL_SIZE, String(detailSize))
+    }
     detailDragRef.current = null
     document.documentElement.style.userSelect = ''
-  }, [])
+  }, [detailSize])
 
   const handlePointerDown = useCallback(
     (e: PointerEvent) => {

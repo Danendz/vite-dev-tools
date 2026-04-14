@@ -11,6 +11,9 @@ export const EVENTS = {
   REWALK: 'devtools:rewalk',
   HOOK_EDIT: 'devtools:hook-edit',
   PROP_EDIT: 'devtools:prop-edit',
+  PROP_PERSISTED: 'devtools:prop-persisted',
+  TEXT_EDIT: 'devtools:text-edit',
+  TOAST: 'devtools:toast',
 } as const
 
 // localStorage keys
@@ -22,6 +25,7 @@ export const STORAGE_KEYS = {
   HIDE_PROVIDERS: 'danendz-devtools:hide-providers',
   FONT_SIZE: 'danendz-devtools:font-size',
   EDITOR: 'danendz-devtools:editor',
+  DETAIL_SIZE: 'danendz-devtools:detail-size',
 } as const
 
 // Server endpoints
@@ -29,6 +33,7 @@ export const ENDPOINTS = {
   OPEN_EDITOR: '/__devtools/open-editor',
   PERSIST_HOOK: '/__devtools/persist-hook',
   PERSIST_PROP: '/__devtools/persist-prop',
+  PERSIST_TEXT: '/__devtools/persist-text',
 } as const
 
 // Default config

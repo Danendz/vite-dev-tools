@@ -277,6 +277,49 @@ function isComponentFiber(fiber: any): boolean {
   return COMPONENT_TAGS.has(fiber.tag)
 }
 
+/**
+ * Collect HostText content directly from a component fiber's subtree.
+ * Traverses through HostComponents and library components (node_modules),
+ * but stops at user component boundaries (they'll collect their own text).
+ */
+function collectDirectText(fiber: any): { texts: string[]; fibers: any[] } {
+  const texts: string[] = []
+  const fibers: any[] = []
+  let child = fiber.child
+  while (child) {
+    if (child.tag === 6) {
+      const text = typeof child.memoizedProps === 'string' ? child.memoizedProps : ''
+      if (text.trim() !== '') {
+        texts.push(text)
+        fibers.push(child)
+      }
+    } else if (isComponentFiber(child)) {
+      // Traverse through library components — they're internal wrappers
+      if (isFromNodeModules(child)) {
+        const sub = collectDirectText(child)
+        texts.push(...sub.texts)
+        fibers.push(...sub.fibers)
+      }
+    } else {
+      // HostComponent — check children first, fall back to DOM textContent
+      const sub = collectDirectText(child)
+      if (sub.texts.length > 0) {
+        texts.push(...sub.texts)
+        fibers.push(...sub.fibers)
+      } else if (!child.child && child.stateNode) {
+        // Leaf HostComponent with no fiber children — read text from DOM
+        const domText = child.stateNode.textContent
+        if (typeof domText === 'string' && domText.trim() !== '') {
+          texts.push(domText)
+          fibers.push(child)
+        }
+      }
+    }
+    child = child.sibling
+  }
+  return { texts, fibers }
+}
+
 function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: boolean): NormalizedNode[] {
   const nodes: NormalizedNode[] = []
   let child = fiber.child
@@ -295,6 +338,11 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: bool
         nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders))
       } else {
         const locations = getSourceLocations(child)
+        const children = walkFiberChildren(child, hideLibrary, hideProviders)
+
+        // Collect text directly from the fiber subtree
+        const { texts, fibers: textFibers } = collectDirectText(child)
+
         const node: NormalizedNode = {
           id: `fiber_${nodeIdCounter++}`,
           name,
@@ -303,17 +351,21 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: bool
           props: getProps(child),
           hooks: getHooks(child),
           state: getState(child),
-          children: walkFiberChildren(child, hideLibrary, hideProviders),
+          children,
           isFromNodeModules: isFromNodeModules(child),
           _domElements: findDOMElements(child),
+          textContent: texts.join(' ') || undefined,
+          textFragments: texts.length > 0 ? texts : undefined,
+          _textFibers: textFibers.length > 0 ? textFibers : undefined,
         }
         fiberRefMap.set(node.id, child)
         nodes.push(node)
       }
-    } else {
-      // Not a component fiber — skip it but walk its children
+    } else if (child.tag !== 6) {
+      // Not a component fiber and not HostText — skip it but walk its children
       nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders))
     }
+    // HostText (tag 6) fibers are collected via collectDirectText, skip here
     child = child.sibling
   }
 
