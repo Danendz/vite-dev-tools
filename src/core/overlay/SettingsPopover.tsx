@@ -29,6 +29,7 @@ const EDITOR_OPTIONS = [
   { label: 'IntelliJ IDEA', value: 'idea' },
   { label: 'Sublime Text', value: 'subl' },
   { label: 'Zed', value: 'zed' },
+  { label: 'Antigravity', value: 'antigravity' },
 ]
 
 export function SettingsPopover({
