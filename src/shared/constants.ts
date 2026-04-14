@@ -27,6 +27,7 @@ export const STORAGE_KEYS = {
   FONT_SIZE: 'danendz-devtools:font-size',
   EDITOR: 'danendz-devtools:editor',
   DETAIL_SIZE: 'danendz-devtools:detail-size',
+  SHOW_ELEMENTS: 'danendz-devtools:show-elements',
 } as const
 
 // Server endpoints

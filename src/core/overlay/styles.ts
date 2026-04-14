@@ -493,6 +493,32 @@ export const STYLES = /* css */ `
     color: #52525b;
   }
 
+  .tree-node-name.host-element {
+    color: #71717a;
+  }
+
+  .tree-node-element-toggle {
+    color: #a1a1aa;
+    font-size: 9px;
+    margin-right: 4px;
+    cursor: pointer;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-family: monospace;
+    user-select: none;
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .tree-node-element-toggle:hover {
+    color: #e4e4e7;
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  .tree-node-element-toggle.active {
+    color: var(--accent);
+    background: rgba(var(--accent-rgb), 0.15);
+  }
+
   .tree-node-name.search-match {
     background: rgba(var(--accent-rgb), 0.2);
     border-radius: 2px;

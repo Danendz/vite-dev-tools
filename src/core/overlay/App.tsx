@@ -89,10 +89,14 @@ export function App({ config }: AppProps) {
   const [editor, setEditor] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.EDITOR) ?? ''
   })
+  const [showElements, setShowElements] = useState(() => {
+    return localStorage.getItem(STORAGE_KEYS.SHOW_ELEMENTS) === 'true'
+  })
   const [searchQuery, setSearchQuery] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [isPickerActive, setIsPickerActive] = useState(false)
   const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string> | null>(null)
+  const [elementExpandedNodeIds, setElementExpandedNodeIds] = useState<Set<string> | null>(null)
   const [tree, setTree] = useState<NormalizedNode[]>([])
   const [selectedNode, setSelectedNode] = useState<NormalizedNode | null>(null)
   const reverseMapRef = useRef(new Map<HTMLElement, NormalizedNode>())
@@ -251,7 +255,7 @@ export function App({ config }: AppProps) {
 
     function collectMatches(nodes: NormalizedNode[]) {
       for (const node of nodes) {
-        if (node.name.toLowerCase().includes(query)) {
+        if (!node.isHostElement && node.name.toLowerCase().includes(query)) {
           matching.add(node.id)
         }
         collectMatches(node.children)
@@ -288,7 +292,18 @@ export function App({ config }: AppProps) {
       setSelectedNode(node)
       setActiveTab('inspect')
       const path = findNodePath(tree, node.id)
-      if (path) setExpandedNodeIds(new Set(path))
+      if (path) {
+        setExpandedNodeIds(new Set(path))
+        // If the picked node is a host element, auto-expand component ancestors
+        if (node.isHostElement) {
+          const componentIds = new Set<string>()
+          for (const id of path) {
+            const n = findNodeById(tree, id)
+            if (n && !n.isHostElement) componentIds.add(id)
+          }
+          if (componentIds.size > 0) setElementExpandedNodeIds(new Set(componentIds))
+        }
+      }
     }
 
     function handlePickerMove(e: MouseEvent) {
@@ -344,6 +359,7 @@ export function App({ config }: AppProps) {
   const handlePickerToggle = useCallback(() => {
     setIsPickerActive((prev) => !prev)
     setExpandedNodeIds(null)
+    setElementExpandedNodeIds(null)
   }, [])
 
   const handleSettingsToggle = useCallback(() => {
@@ -364,6 +380,14 @@ export function App({ config }: AppProps) {
       const next = !prev
       localStorage.setItem(STORAGE_KEYS.HIDE_PROVIDERS, String(next))
       window.dispatchEvent(new CustomEvent(EVENTS.REWALK))
+      return next
+    })
+  }, [])
+
+  const handleShowElementsToggle = useCallback(() => {
+    setShowElements((prev) => {
+      const next = !prev
+      localStorage.setItem(STORAGE_KEYS.SHOW_ELEMENTS, String(next))
       return next
     })
   }, [])
@@ -533,6 +557,8 @@ export function App({ config }: AppProps) {
           errorCount={errorCount}
           isPickerActive={isPickerActive}
           expandedNodeIds={expandedNodeIds}
+          elementExpandedNodeIds={elementExpandedNodeIds}
+          showElements={showElements}
           settingsOpen={settingsOpen}
           hideLibrary={hideLibrary}
           hideProviders={hideProviders}
@@ -544,6 +570,7 @@ export function App({ config }: AppProps) {
           onSettingsToggle={handleSettingsToggle}
           onHideLibraryToggle={handleHideLibraryToggle}
           onHideProvidersToggle={handleHideProvidersToggle}
+          onShowElementsToggle={handleShowElementsToggle}
           onEditorChange={handleEditorChange}
           onFontSizeChange={handleFontSizeChange}
           onDockChange={handleDockChange}

@@ -34,6 +34,8 @@ export interface NormalizedNode {
   usageSource?: SourceLocation
   /** Prop names that use dynamic bindings (:prop="expr") — persist-to-source is disabled for these */
   dynamicProps?: string[]
+  /** True for DOM/host elements (div, span, etc.) vs components */
+  isHostElement?: boolean
   /** DOM element references for highlight — multiple when component returns a fragment */
   _domElements?: HTMLElement[]
   /** Joined text content from direct HostText children (for tree row preview) */

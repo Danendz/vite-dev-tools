@@ -3,15 +3,39 @@ import { useState, useRef, useEffect } from 'preact/hooks'
 import type { NormalizedNode } from '../types'
 import { EVENTS } from '../../shared/constants'
 
+/** Flatten past host elements to extract component children when not element-expanded */
+function flattenPastHostElements(children: NormalizedNode[]): NormalizedNode[] {
+  const result: NormalizedNode[] = []
+  for (const child of children) {
+    if (child.isHostElement) {
+      result.push(...flattenPastHostElements(child.children))
+    } else {
+      result.push(child)
+    }
+  }
+  return result
+}
+
+/** Get visible children based on element expand state */
+function getVisibleChildren(node: NormalizedNode, elementExpandedSet: Set<string>, showAllElements: boolean): NormalizedNode[] {
+  if (showAllElements || elementExpandedSet.has(node.id) || node.isHostElement) {
+    return node.children
+  }
+  return flattenPastHostElements(node.children)
+}
+
 interface TreeNodeProps {
   node: NormalizedNode
   depth: number
   selectedId: string | null
   collapsedSet: Set<string>
+  elementExpandedSet: Set<string>
+  showAllElements: boolean
   matchingNodeIds?: Set<string> | null
   editedProps: Map<string, Set<string>>
   expandedPropsSet: Set<string>
   onToggle: (nodeId: string) => void
+  onElementExpandToggle: (nodeId: string) => void
   onPropEdit: (nodeId: string, propKey: string) => void
   onExpandProps: (nodeId: string) => void
   onSelect: (node: NormalizedNode) => void
@@ -89,29 +113,36 @@ export function TreeNode({
   depth,
   selectedId,
   collapsedSet,
+  elementExpandedSet,
+  showAllElements,
   matchingNodeIds,
   editedProps,
   expandedPropsSet,
   onToggle,
+  onElementExpandToggle,
   onPropEdit,
   onExpandProps,
   onSelect,
   onHover,
   onContextMenu,
 }: TreeNodeProps) {
-  const hasChildren = node.children.length > 0
+  const visibleChildren = getVisibleChildren(node, elementExpandedSet, showAllElements)
+  const hasChildren = visibleChildren.length > 0
   const isSelected = selectedId === node.id
   const isSearchMatch = matchingNodeIds?.has(node.id) ?? false
   const collapsed = collapsedSet.has(node.id)
   const isPropsExpanded = expandedPropsSet.has(node.id)
   const editedKeysForNode = editedProps.get(node.id)
+  const isElementExpanded = showAllElements || elementExpandedSet.has(node.id)
+  const hasHostElementChildren = !node.isHostElement && node.children.some(c => c.isHostElement)
 
   const [editingProp, setEditingProp] = useState<string | null>(null)
   const [tooltip, setTooltip] = useState<{ key: string; timer: ReturnType<typeof setTimeout> } | null>(null)
 
   function countCollapsedChildren(n: NormalizedNode): number {
-    let count = n.children.length
-    for (const child of n.children) {
+    const children = getVisibleChildren(n, elementExpandedSet, showAllElements)
+    let count = children.length
+    for (const child of children) {
       count += countCollapsedChildren(child)
     }
     return count
@@ -208,7 +239,16 @@ export function TreeNode({
         <span class="tree-node-toggle" onClick={hasChildren ? handleToggle : undefined}>
           {hasChildren ? (collapsed ? '\u25B6' : '\u25BC') : ''}
         </span>
-        <span class={`tree-node-name${node.isFromNodeModules ? ' from-node-modules' : ''}${isSearchMatch ? ' search-match' : ''}`}>
+        {hasHostElementChildren && (
+          <span
+            class={`tree-node-element-toggle${isElementExpanded ? ' active' : ''}`}
+            onClick={(e: MouseEvent) => { e.stopPropagation(); onElementExpandToggle(node.id) }}
+            title={isElementExpanded ? 'Hide HTML elements' : 'Show HTML elements'}
+          >
+            {'</>'}
+          </span>
+        )}
+        <span class={`tree-node-name${node.isFromNodeModules ? ' from-node-modules' : ''}${node.isHostElement ? ' host-element' : ''}${isSearchMatch ? ' search-match' : ''}`}>
           {'<'}{node.name}
           {shown.map(({ key, value, display }) => {
             const isEdited = editedKeysForNode?.has(key) ?? false
@@ -298,17 +338,20 @@ export function TreeNode({
       </div>
       {!collapsed && hasChildren && (
         <div class="tree-node-children">
-          {node.children.map((child) => (
+          {visibleChildren.map((child) => (
             <TreeNode
               key={child.id}
               node={child}
               depth={depth + 1}
               selectedId={selectedId}
               collapsedSet={collapsedSet}
+              elementExpandedSet={elementExpandedSet}
+              showAllElements={showAllElements}
               matchingNodeIds={matchingNodeIds}
               editedProps={editedProps}
               expandedPropsSet={expandedPropsSet}
               onToggle={onToggle}
+              onElementExpandToggle={onElementExpandToggle}
               onPropEdit={onPropEdit}
               onExpandProps={onExpandProps}
               onSelect={onSelect}

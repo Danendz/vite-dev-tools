@@ -4,11 +4,13 @@ import { useState, useEffect, useRef } from 'preact/hooks'
 interface SettingsPopoverProps {
   hideLibrary: boolean
   hideProviders: boolean
+  showElements: boolean
   editor: string
   fontSize: number
   supportedSettings?: string[]
   onHideLibraryToggle: () => void
   onHideProvidersToggle: () => void
+  onShowElementsToggle: () => void
   onEditorChange: (editor: string) => void
   onFontSizeChange: (size: number) => void
   onClose: () => void
@@ -30,11 +32,13 @@ const EDITOR_OPTIONS = [
 export function SettingsPopover({
   hideLibrary,
   hideProviders,
+  showElements,
   editor,
   fontSize,
   supportedSettings,
   onHideLibraryToggle,
   onHideProvidersToggle,
+  onShowElementsToggle,
   onEditorChange,
   onFontSizeChange,
   onClose,
@@ -77,6 +81,12 @@ export function SettingsPopover({
           <span>Hide providers</span>
         </label>
       )}
+      <label class="settings-item" onClick={onShowElementsToggle}>
+        <span class={`settings-checkbox${showElements ? ' checked' : ''}`}>
+          {showElements ? '\u2713' : ''}
+        </span>
+        <span>Show HTML elements</span>
+      </label>
       <div class="settings-item settings-font-size">
         <span>Font size</span>
         <div class="settings-font-btns">

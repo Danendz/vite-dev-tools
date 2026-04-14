@@ -3,10 +3,33 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'preact/hooks'
 import type { NormalizedNode } from '../types'
 import { TreeNode } from './TreeNode'
 
+/** Flatten past host elements to extract component children when not element-expanded */
+function flattenPastHostElements(children: NormalizedNode[]): NormalizedNode[] {
+  const result: NormalizedNode[] = []
+  for (const child of children) {
+    if (child.isHostElement) {
+      result.push(...flattenPastHostElements(child.children))
+    } else {
+      result.push(child)
+    }
+  }
+  return result
+}
+
+/** Get visible children based on element expand state */
+function getVisibleChildren(node: NormalizedNode, elementExpandedSet: Set<string>, showAllElements: boolean): NormalizedNode[] {
+  if (showAllElements || elementExpandedSet.has(node.id) || node.isHostElement) {
+    return node.children
+  }
+  return flattenPastHostElements(node.children)
+}
+
 interface TreeViewProps {
   tree: NormalizedNode[]
   selectedId: string | null
   expandedNodeIds?: Set<string> | null
+  elementExpandedNodeIds?: Set<string> | null
+  showAllElements: boolean
   searchQuery: string
   matchingNodeIds: Set<string> | null
   searchAncestorIds: Set<string> | null
@@ -21,38 +44,42 @@ interface TreeViewProps {
 }
 
 /** Collect all node IDs where isFromNodeModules is true (default collapsed) */
-function collectDefaultCollapsed(nodes: NormalizedNode[], out: Set<string>) {
+function collectDefaultCollapsed(nodes: NormalizedNode[], out: Set<string>, elementExpandedSet: Set<string>, showAllElements: boolean) {
   for (const node of nodes) {
     if (node.isFromNodeModules) out.add(node.id)
-    collectDefaultCollapsed(node.children, out)
+    const children = getVisibleChildren(node, elementExpandedSet, showAllElements)
+    collectDefaultCollapsed(children, out, elementExpandedSet, showAllElements)
   }
 }
 
 /** Build a map from nodeId to parent nodeId */
-function buildParentMap(nodes: NormalizedNode[], parentId: string | null, out: Map<string, string | null>) {
+function buildParentMap(nodes: NormalizedNode[], parentId: string | null, out: Map<string, string | null>, elementExpandedSet: Set<string>, showAllElements: boolean) {
   for (const node of nodes) {
     out.set(node.id, parentId)
-    buildParentMap(node.children, node.id, out)
+    const children = getVisibleChildren(node, elementExpandedSet, showAllElements)
+    buildParentMap(children, node.id, out, elementExpandedSet, showAllElements)
   }
 }
 
 /** Depth-first list of visible (not hidden by collapse) nodes */
-function flattenVisible(nodes: NormalizedNode[], collapsedSet: Set<string>): NormalizedNode[] {
+function flattenVisible(nodes: NormalizedNode[], collapsedSet: Set<string>, elementExpandedSet: Set<string>, showAllElements: boolean): NormalizedNode[] {
   const result: NormalizedNode[] = []
   for (const node of nodes) {
     result.push(node)
-    if (!collapsedSet.has(node.id) && node.children.length > 0) {
-      result.push(...flattenVisible(node.children, collapsedSet))
+    const children = getVisibleChildren(node, elementExpandedSet, showAllElements)
+    if (!collapsedSet.has(node.id) && children.length > 0) {
+      result.push(...flattenVisible(children, collapsedSet, elementExpandedSet, showAllElements))
     }
   }
   return result
 }
 
 /** Collect all node IDs in the tree */
-function collectAllIds(nodes: NormalizedNode[], out: Set<string>) {
+function collectAllIds(nodes: NormalizedNode[], out: Set<string>, elementExpandedSet: Set<string>, showAllElements: boolean) {
   for (const node of nodes) {
     out.add(node.id)
-    collectAllIds(node.children, out)
+    const children = getVisibleChildren(node, elementExpandedSet, showAllElements)
+    collectAllIds(children, out, elementExpandedSet, showAllElements)
   }
 }
 
@@ -60,6 +87,8 @@ export function TreeView({
   tree,
   selectedId,
   expandedNodeIds,
+  elementExpandedNodeIds,
+  showAllElements,
   searchQuery,
   matchingNodeIds,
   searchAncestorIds,
@@ -74,10 +103,38 @@ export function TreeView({
 }: TreeViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
+  // Element expand state: which component nodes have their host elements expanded
+  const [elementExpandedSet, setElementExpandedSet] = useState<Set<string>>(new Set())
+
+  const handleElementExpandToggle = useCallback((nodeId: string) => {
+    setElementExpandedSet(prev => {
+      const next = new Set(prev)
+      if (next.has(nodeId)) next.delete(nodeId)
+      else next.add(nodeId)
+      return next
+    })
+  }, [])
+
+  // Picker element expand: auto-expand component ancestors of picked host element
+  useEffect(() => {
+    if (!elementExpandedNodeIds) return
+    setElementExpandedSet(prev => {
+      const next = new Set(prev)
+      let changed = false
+      for (const id of elementExpandedNodeIds) {
+        if (!next.has(id)) {
+          next.add(id)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [elementExpandedNodeIds])
+
   // Collapse state: set of node IDs that are collapsed
   const [collapsedSet, setCollapsedSet] = useState<Set<string>>(() => {
     const s = new Set<string>()
-    collectDefaultCollapsed(tree, s)
+    collectDefaultCollapsed(tree, s, elementExpandedSet, showAllElements)
     return s
   })
 
@@ -143,10 +200,10 @@ export function TreeView({
   const handleCollapseAll = useCallback(() => {
     setCollapsedSet(() => {
       const all = new Set<string>()
-      collectAllIds(tree, all)
+      collectAllIds(tree, all, elementExpandedSet, showAllElements)
       return all
     })
-  }, [tree])
+  }, [tree, elementExpandedSet, showAllElements])
 
   const handleExpandAll = useCallback(() => {
     setCollapsedSet(new Set())
@@ -154,16 +211,16 @@ export function TreeView({
 
   // Flat list of visible nodes for keyboard navigation
   const flatVisible = useMemo(
-    () => flattenVisible(tree, collapsedSet),
-    [tree, collapsedSet],
+    () => flattenVisible(tree, collapsedSet, elementExpandedSet, showAllElements),
+    [tree, collapsedSet, elementExpandedSet, showAllElements],
   )
 
   // Parent map for Left-arrow "jump to parent"
   const parentMap = useMemo(() => {
     const m = new Map<string, string | null>()
-    buildParentMap(tree, null, m)
+    buildParentMap(tree, null, m, elementExpandedSet, showAllElements)
     return m
-  }, [tree])
+  }, [tree, elementExpandedSet, showAllElements])
 
   // Find node by ID in flat list
   const nodeById = useMemo(() => {
@@ -198,8 +255,9 @@ export function TreeView({
       if (!selectedId) return
       const node = nodeById.get(selectedId)
       if (!node) return
+      const visChildren = getVisibleChildren(node, elementExpandedSet, showAllElements)
       // If expanded and has children → collapse
-      if (node.children.length > 0 && !collapsedSet.has(selectedId)) {
+      if (visChildren.length > 0 && !collapsedSet.has(selectedId)) {
         handleToggle(selectedId)
       } else {
         // Jump to parent
@@ -213,17 +271,18 @@ export function TreeView({
       if (!selectedId) return
       const node = nodeById.get(selectedId)
       if (!node) return
+      const visChildren = getVisibleChildren(node, elementExpandedSet, showAllElements)
       // If collapsed and has children → expand
-      if (node.children.length > 0 && collapsedSet.has(selectedId)) {
+      if (visChildren.length > 0 && collapsedSet.has(selectedId)) {
         handleToggle(selectedId)
-      } else if (node.children.length > 0) {
+      } else if (visChildren.length > 0) {
         // Jump to first child
-        onSelect(node.children[0])
+        onSelect(visChildren[0])
       }
     } else if (key === 'Enter') {
       // Enter just confirms selection — scrollIntoView handled by TreeNode
     }
-  }, [selectedId, flatVisible, collapsedSet, parentMap, nodeById, onSelect, handleToggle])
+  }, [selectedId, flatVisible, collapsedSet, parentMap, nodeById, onSelect, handleToggle, elementExpandedSet, showAllElements])
 
   // Scroll selected node into view on keyboard navigation
   useEffect(() => {
@@ -278,10 +337,13 @@ export function TreeView({
               depth={0}
               selectedId={selectedId}
               collapsedSet={collapsedSet}
+              elementExpandedSet={elementExpandedSet}
+              showAllElements={showAllElements}
               matchingNodeIds={matchingNodeIds}
               editedProps={editedProps}
               expandedPropsSet={expandedPropsSet}
               onToggle={handleToggle}
+              onElementExpandToggle={handleElementExpandToggle}
               onPropEdit={onPropEdit}
               onExpandProps={onExpandProps}
               onSelect={onSelect}

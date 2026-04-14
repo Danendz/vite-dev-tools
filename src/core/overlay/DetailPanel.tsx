@@ -554,13 +554,13 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
   const propEntries = Object.entries(node.props)
   const hasProps = propEntries.length > 0
 
-  const showUsageSource = node.usageSource && node.source &&
+  const showUsageSource = !node.isHostElement && node.usageSource && node.source &&
     node.usageSource.fileName !== node.source.fileName
 
   return (
     <div>
       <div class="detail-section">
-        <div class="detail-component-name">{node.name}</div>
+        <div class="detail-component-name">{node.isHostElement ? `<${node.name}>` : node.name}</div>
         {node.source && (
           <>
             {showUsageSource && <div class="source-label">Source</div>}
@@ -597,8 +597,16 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
 
       {hasProps && (
         <div class="detail-section">
-          <div class="detail-section-title">Props</div>
+          <div class="detail-section-title">{node.isHostElement ? 'Attributes' : 'Props'}</div>
           {propEntries.map(([key, value]) => {
+            if (node.isHostElement) {
+              return (
+                <div class="detail-row" key={key}>
+                  <span class="detail-key">{key}:</span>
+                  <ValueDisplay value={value} />
+                </div>
+              )
+            }
             const isEdited = editedProps?.get(node.id)?.has(key) ?? false
             return (
               <div class="detail-row" key={key}>

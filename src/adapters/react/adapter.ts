@@ -87,6 +87,137 @@ function findHookNames(code: string, componentLine: number): { varName: string |
   return hooks.length > 0 ? hooks : null
 }
 
+/**
+ * Inject __source="filePath:line:col" prop on lowercase JSX host elements.
+ * Used for React 19+ where _debugSource is no longer available.
+ */
+function injectJSXSourceProps(code: string, relativePath: string): string | null {
+  // Pre-compute line start offsets for fast line/column lookup
+  const lineStarts: number[] = [0]
+  for (let i = 0; i < code.length; i++) {
+    if (code[i] === '\n') lineStarts.push(i + 1)
+  }
+
+  function getLineCol(offset: number): { line: number; col: number } {
+    let lo = 0, hi = lineStarts.length - 1
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1
+      if (lineStarts[mid] <= offset) lo = mid
+      else hi = mid - 1
+    }
+    return { line: lo + 1, col: offset - lineStarts[lo] + 1 }
+  }
+
+  const injections: Array<{ offset: number; attr: string }> = []
+
+  // State machine to track context (skip strings, comments, template literals)
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+
+    // Single-line comment
+    if (ch === '/' && code[i + 1] === '/') {
+      while (i < code.length && code[i] !== '\n') i++
+      continue
+    }
+
+    // Multi-line comment
+    if (ch === '/' && code[i + 1] === '*') {
+      i += 2
+      while (i < code.length - 1 && !(code[i] === '*' && code[i + 1] === '/')) i++
+      i += 2
+      continue
+    }
+
+    // Template literal
+    if (ch === '`') {
+      i++
+      while (i < code.length && code[i] !== '`') {
+        if (code[i] === '\\') i++ // skip escaped char
+        i++
+      }
+      i++ // skip closing backtick
+      continue
+    }
+
+    // String (single or double quote)
+    if (ch === '"' || ch === "'") {
+      const quote = ch
+      i++
+      while (i < code.length && code[i] !== quote) {
+        if (code[i] === '\\') i++ // skip escaped char
+        i++
+      }
+      i++ // skip closing quote
+      continue
+    }
+
+    // JSX opening tag: < followed by lowercase letter
+    if (ch === '<' && i + 1 < code.length) {
+      const next = code[i + 1]
+
+      // Skip closing tags </...>
+      if (next === '/') { i++; continue }
+
+      // Skip fragments <>
+      if (next === '>') { i++; continue }
+
+      // Only match lowercase tags (host elements)
+      if (next >= 'a' && next <= 'z') {
+        const tagStart = i
+        i++ // skip <
+        // Read tag name
+        const nameStart = i
+        while (i < code.length && /[a-zA-Z0-9\-]/.test(code[i])) i++
+        const tagName = code.slice(nameStart, i)
+
+        // Skip if empty tag name
+        if (!tagName) continue
+
+        // The insertion point is right after the tag name
+        const insertOffset = i
+
+        // Check if __source is already present in this tag
+        // Scan forward to find > or /> to get the tag bounds
+        let depth = 0
+        let j = i
+        let hasSource = false
+        while (j < code.length) {
+          if (code[j] === '{') depth++
+          else if (code[j] === '}') depth--
+          else if (depth === 0) {
+            if (code[j] === '>' || (code[j] === '/' && code[j + 1] === '>')) break
+            // Check for __source attribute
+            if (code.slice(j, j + 8) === '__source') hasSource = true
+          }
+          j++
+        }
+
+        if (!hasSource) {
+          const { line, col } = getLineCol(tagStart)
+          const attr = ` __source="${relativePath}:${line}:${col}"`
+          injections.push({ offset: insertOffset, attr })
+        }
+
+        i = j
+        continue
+      }
+    }
+
+    i++
+  }
+
+  if (injections.length === 0) return null
+
+  // Apply injections in reverse order to preserve offsets
+  let result = code
+  for (let k = injections.length - 1; k >= 0; k--) {
+    const { offset, attr } = injections[k]
+    result = result.slice(0, offset) + attr + result.slice(offset)
+  }
+  return result
+}
+
 function rewriteHook(source: string, edit: RewriteEdit): string | null {
   const lines = source.split('\n')
   const targetLine = lines[edit.line - 1]
@@ -153,8 +284,6 @@ export const reactAdapter: FrameworkAdapter = {
 
   transform(code: string, id: string, projectRoot: string) {
     const components = findComponentDeclarations(code)
-    if (components.length === 0) return null
-
     const relativePath = '/' + path.relative(projectRoot, id).replace(/\\/g, '/')
     const annotations: string[] = []
 
@@ -178,8 +307,18 @@ export const reactAdapter: FrameworkAdapter = {
       }
     }
 
-    if (annotations.length === 0) return null
-    return { code: code + '\n' + annotations.join('\n'), map: null }
+    // Inject __source prop on host JSX elements for React 19+
+    let transformedCode = code
+    if (!(reactMajor > 0 && reactMajor < 19)) {
+      const injected = injectJSXSourceProps(code, relativePath)
+      if (injected) transformedCode = injected
+    }
+
+    if (annotations.length === 0 && transformedCode === code) return null
+    const finalCode = annotations.length > 0
+      ? transformedCode + '\n' + annotations.join('\n')
+      : transformedCode
+    return { code: finalCode, map: null }
   },
 
   getHookScript() {

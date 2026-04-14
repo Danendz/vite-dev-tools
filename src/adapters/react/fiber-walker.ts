@@ -267,6 +267,71 @@ function getProps(fiber: any): Record<string, unknown> {
   return result
 }
 
+const HOST_SKIP_KEYS = new Set(['children', '__source', '__self', 'key', 'ref'])
+
+function getHostElementProps(fiber: any): Record<string, unknown> {
+  const props = fiber.memoizedProps
+  if (!props || typeof props !== 'object') return {}
+
+  const result: Record<string, unknown> = {}
+  for (const key of Object.keys(props)) {
+    if (HOST_SKIP_KEYS.has(key)) continue
+    const value = props[key]
+    if (typeof value === 'function') {
+      result[key] = `fn()`
+    } else if (key === 'style' && typeof value === 'object' && value !== null) {
+      try {
+        result[key] = JSON.parse(JSON.stringify(value))
+      } catch {
+        result[key] = `[Style]`
+      }
+    } else if (typeof value === 'object' && value !== null) {
+      try {
+        result[key] = JSON.parse(JSON.stringify(value))
+      } catch {
+        result[key] = `[Object]`
+      }
+    } else {
+      result[key] = value
+    }
+  }
+  return result
+}
+
+/**
+ * Get source location for a HostComponent fiber.
+ * React 18: _debugSource on host fibers.
+ * React 19+: injected __source string prop "fileName:line:col".
+ */
+function getHostElementSource(fiber: any): ReturnType<typeof getReactSource> {
+  if (fiber._debugSource) {
+    return {
+      fileName: fiber._debugSource.fileName,
+      lineNumber: fiber._debugSource.lineNumber ?? 1,
+      columnNumber: fiber._debugSource.columnNumber ?? 1,
+    }
+  }
+
+  const sourceProp = fiber.memoizedProps?.__source
+  if (typeof sourceProp === 'string') {
+    const lastColon = sourceProp.lastIndexOf(':')
+    const secondLastColon = sourceProp.lastIndexOf(':', lastColon - 1)
+    if (secondLastColon > 0) {
+      return {
+        fileName: sourceProp.slice(0, secondLastColon),
+        lineNumber: parseInt(sourceProp.slice(secondLastColon + 1, lastColon), 10),
+        columnNumber: parseInt(sourceProp.slice(lastColon + 1), 10),
+      }
+    }
+  }
+
+  if (fiber._debugStack) {
+    return parseDebugStack(fiber._debugStack)
+  }
+
+  return null
+}
+
 function findDOMElements(fiber: any): HTMLElement[] {
   const elements: HTMLElement[] = []
   collectDOMElements(fiber.child, elements)
@@ -370,6 +435,25 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: bool
         fiberRefMap.set(node.id, child)
         nodes.push(node)
       }
+    } else if (child.tag === HostComponent) {
+      // Include host element as a node in the tree
+      const tagName = child.stateNode?.tagName?.toLowerCase() ?? (typeof child.type === 'string' ? child.type : 'unknown')
+      const { texts } = collectDirectText(child)
+
+      const hostNode: NormalizedNode = {
+        id: `fiber_${nodeIdCounter++}`,
+        name: tagName,
+        source: getHostElementSource(child),
+        props: getHostElementProps(child),
+        sections: [],
+        children: walkFiberChildren(child, hideLibrary, hideProviders),
+        isFromNodeModules: false,
+        isHostElement: true,
+        _domElements: child.stateNode instanceof HTMLElement ? [child.stateNode] : [],
+        textContent: texts.join(' ') || undefined,
+      }
+      fiberRefMap.set(hostNode.id, child)
+      nodes.push(hostNode)
     } else if (child.tag !== 6) {
       nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders))
     }
@@ -378,6 +462,7 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: bool
 
   return nodes
 }
+
 
 export function walkFiberTree(rootFiber: any, hideLibrary = false, hideProviders = false): NormalizedNode[] {
   nodeIdCounter = 0
