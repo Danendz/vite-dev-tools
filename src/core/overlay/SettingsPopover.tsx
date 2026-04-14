@@ -6,6 +6,7 @@ interface SettingsPopoverProps {
   hideProviders: boolean
   editor: string
   fontSize: number
+  supportedSettings?: string[]
   onHideLibraryToggle: () => void
   onHideProvidersToggle: () => void
   onEditorChange: (editor: string) => void
@@ -31,12 +32,14 @@ export function SettingsPopover({
   hideProviders,
   editor,
   fontSize,
+  supportedSettings,
   onHideLibraryToggle,
   onHideProvidersToggle,
   onEditorChange,
   onFontSizeChange,
   onClose,
 }: SettingsPopoverProps) {
+  const showHideProviders = !supportedSettings || supportedSettings.includes('hideProviders')
   const isKnown = EDITOR_OPTIONS.some((o) => o.value === editor)
   const [customMode, setCustomMode] = useState(!isKnown)
   const [customValue, setCustomValue] = useState(isKnown ? '' : editor)
@@ -66,12 +69,14 @@ export function SettingsPopover({
         </span>
         <span>Hide library components</span>
       </label>
-      <label class="settings-item" onClick={onHideProvidersToggle}>
-        <span class={`settings-checkbox${hideProviders ? ' checked' : ''}`}>
-          {hideProviders ? '\u2713' : ''}
-        </span>
-        <span>Hide providers</span>
-      </label>
+      {showHideProviders && (
+        <label class="settings-item" onClick={onHideProvidersToggle}>
+          <span class={`settings-checkbox${hideProviders ? ' checked' : ''}`}>
+            {hideProviders ? '\u2713' : ''}
+          </span>
+          <span>Hide providers</span>
+        </label>
+      )}
       <div class="settings-item settings-font-size">
         <span>Font size</span>
         <div class="settings-font-btns">

@@ -268,7 +268,7 @@ export function TreeView({
       >
         {tree.length === 0 ? (
           <div style={{ padding: '20px', color: '#666', fontStyle: 'italic', textAlign: 'center' }}>
-            {searchQuery ? 'No matching components' : 'No React components detected'}
+            {searchQuery ? 'No matching components' : 'No components detected'}
           </div>
         ) : (
           tree.map((node) => (

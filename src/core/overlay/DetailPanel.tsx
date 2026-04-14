@@ -1,7 +1,7 @@
 import { h } from 'preact'
 import { useState, useRef, useEffect } from 'preact/hooks'
-import type { NormalizedNode, SourceLocation, HookInfo } from '../types'
-import { openInEditor, persistHookValue, persistPropValue, persistTextValue } from '../communication'
+import type { NormalizedNode, SourceLocation, InspectorItem, EditHint } from '../types'
+import { openInEditor, persistEdit, persistPropValue, persistTextValue } from '../communication'
 import { EVENTS } from '../../shared/constants'
 
 function formatPath(source: SourceLocation): string {
@@ -89,18 +89,13 @@ function ValueDisplay({ value }: { value: unknown }) {
   return <span class="detail-value">{String(value)}</span>
 }
 
-function dispatchEdit(nodeId: string, hook: HookInfo, newValue: unknown) {
-  window.dispatchEvent(new CustomEvent(EVENTS.HOOK_EDIT, {
-    detail: {
-      nodeId,
-      hookIndex: hook.hookIndex,
-      newValue,
-      hookType: hook.name as 'useState' | 'useRef',
-    },
+function dispatchSectionEdit(nodeId: string, editHint: EditHint, newValue: unknown) {
+  window.dispatchEvent(new CustomEvent(EVENTS.VALUE_EDIT, {
+    detail: { nodeId, editHint, newValue },
   }))
 }
 
-function EditableValue({ hook, nodeId, source }: { hook: HookInfo; nodeId: string; source: SourceLocation | null }) {
+function EditableValue({ item, nodeId, source }: { item: InspectorItem; nodeId: string; source: SourceLocation | null }) {
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
   const [editError, setEditError] = useState<string | null>(null)
@@ -117,15 +112,15 @@ function EditableValue({ hook, nodeId, source }: { hook: HookInfo; nodeId: strin
     }
   }, [editing])
 
-  const value = hook.value
+  const value = item.value
   const valueType = value === null ? 'null' : typeof value
 
   // Boolean: single click toggles immediately
-  if (valueType === 'boolean') {
+  if (valueType === 'boolean' && item.editHint) {
     return (
       <span
         class="editable-value-wrapper editable edit-boolean-toggle"
-        onClick={() => dispatchEdit(nodeId, hook, !value)}
+        onClick={() => dispatchSectionEdit(nodeId, item.editHint!, !value)}
         title="Click to toggle"
       >
         <span class={`detail-value boolean`}>{String(value)}</span>
@@ -162,7 +157,6 @@ function EditableValue({ hook, nodeId, source }: { hook: HookInfo; nodeId: strin
           return
         }
       } else {
-        // Object, array, null, undefined
         parsed = JSON.parse(editValue)
       }
     } catch {
@@ -170,25 +164,29 @@ function EditableValue({ hook, nodeId, source }: { hook: HookInfo; nodeId: strin
       return
     }
 
-    dispatchEdit(nodeId, hook, parsed)
+    if (item.editHint) {
+      dispatchSectionEdit(nodeId, item.editHint, parsed)
+    }
     setEditing(false)
     setEditError(null)
 
-    // Show persist button for useState with primitive values
+    // Show persist button for persistable items with primitive values
     const isPrimitive = parsed === null || ['string', 'number', 'boolean'].includes(typeof parsed)
-    if (hook.name === 'useState' && isPrimitive && hook.lineNumber != null && source?.fileName) {
+    if (item.persistable && isPrimitive && item.lineNumber != null && source?.fileName) {
       setShowPersist(true)
       setPersistStatus('idle')
     }
   }
 
   const handlePersist = async () => {
-    if (!source?.fileName || hook.lineNumber == null) return
+    if (!source?.fileName || item.lineNumber == null || !item.editHint) return
     setPersistStatus('saving')
-    const result = await persistHookValue({
+    const result = await persistEdit({
+      editHint: item.editHint,
+      value: item.value,
       fileName: source.fileName,
-      lineNumber: hook.lineNumber,
-      newValue: hook.value as string | number | boolean | null,
+      lineNumber: item.lineNumber,
+      componentName: '',
     })
     setPersistStatus(result.ok ? 'saved' : 'error')
     if (result.ok) setTimeout(() => setShowPersist(false), 1500)
@@ -551,8 +549,6 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
 
   const propEntries = Object.entries(node.props)
   const hasProps = propEntries.length > 0
-  const hasHooks = node.hooks.length > 0
-  const hasState = node.state !== null && node.state !== undefined
 
   const showUsageSource = node.usageSource && node.source &&
     node.usageSource.fileName !== node.source.fileName
@@ -633,52 +629,36 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
         </div>
       )}
 
-      {hasState && (
-        <div class="detail-section">
-          <div class="detail-section-title">State</div>
-          {typeof node.state === 'object' && node.state !== null ? (
-            Object.entries(node.state as Record<string, unknown>).map(([key, value]) => (
-              <div class="detail-row" key={key}>
-                <span class="detail-key">{key}:</span>
-                <ValueDisplay value={value} />
-              </div>
-            ))
-          ) : (
-            <div class="detail-row">
-              <ValueDisplay value={node.state} />
-            </div>
-          )}
-        </div>
-      )}
+      {node.sections.map((section) => {
+        if (section.items.length === 0) return null
+        return (
+          <div class="detail-section" key={section.id}>
+            <div class="detail-section-title">{section.label}</div>
+            {section.items.map((item, i) => {
+              const canNavigate = item.lineNumber != null && node.source != null
 
-      {hasHooks && (
-        <div class="detail-section">
-          <div class="detail-section-title">Hooks</div>
-          {node.hooks.map((hook, i) => {
-            const label = hook.varName ?? hook.name
-            const canNavigate = hook.lineNumber != null && node.source != null
-
-            return (
-              <div class="detail-row" key={i}>
-                <span
-                  class={`detail-key${canNavigate ? ' detail-key-clickable' : ''}`}
-                  onClick={canNavigate ? () => openInEditor({
-                    fileName: node.source!.fileName,
-                    lineNumber: hook.lineNumber!,
-                    columnNumber: 1,
-                  }) : undefined}
-                >
-                  {label}:
-                </span>
-                {hook.editable
-                  ? <EditableValue hook={hook} nodeId={node.id} source={node.source} />
-                  : <ValueDisplay value={hook.value} />}
-                {hook.varName && <span class="hook-type-tag">[{hook.name}]</span>}
-              </div>
-            )
-          })}
-        </div>
-      )}
+              return (
+                <div class="detail-row" key={`${section.id}-${i}`}>
+                  <span
+                    class={`detail-key${canNavigate ? ' detail-key-clickable' : ''}`}
+                    onClick={canNavigate ? () => openInEditor({
+                      fileName: node.source!.fileName,
+                      lineNumber: item.lineNumber!,
+                      columnNumber: 1,
+                    }) : undefined}
+                  >
+                    {item.key}:
+                  </span>
+                  {item.editable
+                    ? <EditableValue item={item} nodeId={node.id} source={node.source} />
+                    : <ValueDisplay value={item.value} />}
+                  {item.badge && <span class="hook-type-tag">[{item.badge}]</span>}
+                </div>
+              )
+            })}
+          </div>
+        )
+      })}
     </div>
   )
 }

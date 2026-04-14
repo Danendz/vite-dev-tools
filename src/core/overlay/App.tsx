@@ -108,7 +108,7 @@ export function App({ config }: AppProps) {
   const [toasts, setToasts] = useState<ToastItem[]>([])
   const toastIdRef = useRef(0)
 
-  // Listen for tree updates from the React runtime
+  // Listen for tree updates from the framework runtime
   useEffect(() => {
     function handleTreeUpdate(e: Event) {
       const { tree: newTree } = (e as CustomEvent<TreeUpdateEvent>).detail
@@ -538,6 +538,7 @@ export function App({ config }: AppProps) {
           hideProviders={hideProviders}
           editor={editor}
           fontSize={fontSize}
+          supportedSettings={config.supportedSettings}
           onSearchChange={handleSearchChange}
           onPickerToggle={handlePickerToggle}
           onSettingsToggle={handleSettingsToggle}

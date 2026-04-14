@@ -31,6 +31,7 @@ interface PanelProps {
   hideProviders: boolean
   editor: string
   fontSize: number
+  supportedSettings?: string[]
   onSearchChange: (query: string) => void
   onPickerToggle: () => void
   onSettingsToggle: () => void
@@ -73,6 +74,7 @@ export function Panel({
   hideProviders,
   editor,
   fontSize,
+  supportedSettings,
   onSearchChange,
   onPickerToggle,
   onSettingsToggle,
@@ -270,6 +272,7 @@ export function Panel({
               hideProviders={hideProviders}
               editor={editor}
               fontSize={fontSize}
+              supportedSettings={supportedSettings}
               onHideLibraryToggle={onHideLibraryToggle}
               onHideProvidersToggle={onHideProvidersToggle}
               onEditorChange={onEditorChange}

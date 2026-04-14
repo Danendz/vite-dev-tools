@@ -13,6 +13,7 @@ export const EVENTS = {
   PROP_EDIT: 'devtools:prop-edit',
   PROP_PERSISTED: 'devtools:prop-persisted',
   TEXT_EDIT: 'devtools:text-edit',
+  VALUE_EDIT: 'devtools:value-edit',
   TOAST: 'devtools:toast',
 } as const
 
@@ -31,6 +32,7 @@ export const STORAGE_KEYS = {
 // Server endpoints
 export const ENDPOINTS = {
   OPEN_EDITOR: '/__devtools/open-editor',
+  PERSIST_EDIT: '/__devtools/persist-edit',
   PERSIST_HOOK: '/__devtools/persist-hook',
   PERSIST_PROP: '/__devtools/persist-prop',
   PERSIST_TEXT: '/__devtools/persist-text',

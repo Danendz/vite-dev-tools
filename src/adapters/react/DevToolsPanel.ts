@@ -1,12 +1,12 @@
-import { useEffect, useRef, createElement } from 'react'
-import type { DevToolsConfig } from '../../core/types'
-import { HOOK_SCRIPT } from './hook'
+import { useEffect, useRef, createElement } from "react";
+import type { DevToolsConfig } from "../../core/types";
+import { HOOK_SCRIPT } from "./hook";
 
 // These are replaced by Vite at dev time via the plugin's `config.define`
 // They resolve to /@fs/ URLs that bypass any proxy setup
-declare const __DEVTOOLS_OVERLAY_URL__: string
-declare const __DEVTOOLS_RUNTIME_URL__: string
-declare const __DEVTOOLS_CONFIG__: DevToolsConfig
+declare const __DEVTOOLS_OVERLAY_URL__: string;
+declare const __DEVTOOLS_RUNTIME_URL__: string;
+declare const __DEVTOOLS_CONFIG__: DevToolsConfig;
 
 /**
  * React component that mounts the devtools overlay.
@@ -29,34 +29,39 @@ declare const __DEVTOOLS_CONFIG__: DevToolsConfig
  * ```
  */
 export function DevToolsPanel(props: DevToolsConfig = {}) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const initialized = useRef(false)
+  // In production builds Vite replaces import.meta.env.DEV with false,
+  // making the entire body dead code that the bundler tree-shakes away.
+  if (!import.meta.env.DEV) return null;
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const initialized = useRef(false);
 
   useEffect(() => {
-    if (initialized.current || !containerRef.current) return
-    initialized.current = true
+    if (initialized.current || !containerRef.current) return;
+    initialized.current = true;
 
-    const container = containerRef.current
-    const config = { ...__DEVTOOLS_CONFIG__, ...props }
+    const container = containerRef.current;
+    const config = { ...__DEVTOOLS_CONFIG__, ...props };
 
     // 1. Inject hook script (wraps existing __REACT_DEVTOOLS_GLOBAL_HOOK__)
-    const script = document.createElement('script')
-    script.textContent = HOOK_SCRIPT
-    document.head.prepend(script)
+    const script = document.createElement("script");
+    script.textContent = HOOK_SCRIPT;
+    document.head.prepend(script);
 
     // 2. Load runtime (fiber walker + commit listener)
-    import(/* @vite-ignore */ __DEVTOOLS_RUNTIME_URL__)
+    import(/* @vite-ignore */ __DEVTOOLS_RUNTIME_URL__);
 
     // 3. Load and mount overlay inside this component's container
     import(/* @vite-ignore */ __DEVTOOLS_OVERLAY_URL__).then((mod) => {
-      mod.mountOverlay(config, container)
-    })
+      mod.mountOverlay(config, container);
+    });
 
     return () => {
-      const host = container.querySelector('#danendz-devtools')
-      if (host) host.remove()
-    }
-  }, [])
+      const host = container.querySelector("#danendz-devtools");
+      if (host) host.remove();
+      initialized.current = false;
+    };
+  }, []);
 
-  return createElement('div', { ref: containerRef })
+  return createElement("div", { ref: containerRef });
 }

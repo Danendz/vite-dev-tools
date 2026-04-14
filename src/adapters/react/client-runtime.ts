@@ -52,9 +52,7 @@ function reapplyPendingEdits(nodes: import('../../core/types').NormalizedNode[])
     if (edits) {
       const fiber = fiberRefMap.get(node.id)
       for (const [propKey, value] of edits) {
-        // Update the normalized node so the overlay shows the edited value
         node.props[propKey] = value
-        // Re-apply to fiber only if value differs (avoids infinite commit loop)
         if (fiber?.memoizedProps && fiber.memoizedProps[propKey] !== value) {
           const renderer = (window as any).__DANENDZ_DEVTOOLS_RENDERER__
           if (renderer?.overrideProps) {
@@ -74,7 +72,6 @@ function walkAndDispatch() {
   if (!lastFiberRoot) return
   const tree = walkFiberTree(lastFiberRoot, getHideLibrary(), getHideProviders())
 
-  // Re-apply unsaved edits that may have been lost due to HMR
   if (pendingPropEdits.size > 0 || pendingTextEdits.size > 0) {
     reapplyPendingEdits(tree)
   }
@@ -87,7 +84,6 @@ function walkAndDispatch() {
 function handleCommit(event: Event) {
   const { root } = (event as CustomEvent).detail
 
-  // Debounce: React can commit multiple times in quick succession
   if (debounceTimer) clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => {
     const fiberRoot = root.current
@@ -110,7 +106,6 @@ window.addEventListener(EVENTS.REWALK, () => {
 window.addEventListener(EVENTS.PROP_EDIT, (event: Event) => {
   const { nodeId, propKey, newValue } = (event as CustomEvent).detail
 
-  // Track the edit so it survives HMR-triggered tree re-walks
   if (!pendingPropEdits.has(nodeId)) pendingPropEdits.set(nodeId, new Map())
   pendingPropEdits.get(nodeId)!.set(propKey, newValue)
 
@@ -126,7 +121,6 @@ window.addEventListener(EVENTS.PROP_EDIT, (event: Event) => {
   if (renderer?.overrideProps) {
     renderer.overrideProps(fiber, [propKey], newValue)
   } else {
-    // Fallback: direct mutation
     if (fiber.pendingProps) fiber.pendingProps[propKey] = newValue
     if (fiber.memoizedProps) fiber.memoizedProps[propKey] = newValue
     walkAndDispatch()
@@ -143,9 +137,13 @@ window.addEventListener(EVENTS.PROP_PERSISTED, (event: Event) => {
   }
 })
 
-// Listen for hook edit requests from the overlay
-window.addEventListener(EVENTS.HOOK_EDIT, (event: Event) => {
-  const { nodeId, hookIndex, newValue, hookType } = (event as CustomEvent).detail
+// Listen for VALUE_EDIT (generic section edits with editHint)
+window.addEventListener(EVENTS.VALUE_EDIT, (event: Event) => {
+  const { nodeId, editHint, newValue } = (event as CustomEvent).detail
+
+  if (editHint?.kind !== 'react-hook') return
+
+  const { hookIndex, hookType } = editHint
 
   const fiber = fiberRefMap.get(nodeId)
   if (!fiber) {
@@ -187,12 +185,8 @@ window.addEventListener(EVENTS.HOOK_EDIT, (event: Event) => {
 window.addEventListener(EVENTS.TEXT_EDIT, (event: Event) => {
   const { nodeId, fragmentIndex, newValue } = (event as CustomEvent).detail
 
-  // Track the edit so it survives HMR-triggered tree re-walks
   if (!pendingTextEdits.has(nodeId)) pendingTextEdits.set(nodeId, new Map())
   pendingTextEdits.get(nodeId)!.set(fragmentIndex, newValue)
 
-  // Find the parent component's fiber, then access _textFibers via the tree
-  // We need to walk the current tree to find the node and its _textFibers
-  // For immediate mutation, dispatch a rewalk which will reapply pending edits
   walkAndDispatch()
 })

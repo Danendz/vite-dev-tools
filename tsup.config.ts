@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsup'
 
 export default defineConfig([
-  // Server plugin (Node.js, imported in vite.config.ts)
+  // React server plugin (Node.js, imported in vite.config.ts)
   {
     entry: { react: 'src/adapters/react/index.ts' },
     format: ['esm'],
@@ -16,11 +16,26 @@ export default defineConfig([
     dts: true,
     external: ['react'],
   },
-  // Client overlay (browser, served by Vite dev server)
+  // Vue server plugin (Node.js, imported in vite.config.ts)
+  {
+    entry: { vue: 'src/adapters/vue/index.ts' },
+    format: ['esm'],
+    dts: true,
+    external: ['vite', 'launch-editor', 'unplugin-vue-source'],
+  },
+  // Vue component (browser, imported in app code)
+  {
+    entry: { 'vue-devtools': 'src/adapters/vue/devtools-entry.ts' },
+    format: ['esm'],
+    dts: true,
+    external: ['vue'],
+  },
+  // Client bundles (browser, served by Vite dev server)
   {
     entry: {
       overlay: 'src/core/client.ts',
       'react-runtime': 'src/adapters/react/client-runtime.ts',
+      'vue-runtime': 'src/adapters/vue/client-runtime.ts',
     },
     format: ['esm'],
     outExtension: () => ({ js: '.mjs' }),

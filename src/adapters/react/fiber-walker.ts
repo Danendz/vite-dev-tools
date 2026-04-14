@@ -1,4 +1,4 @@
-import type { NormalizedNode, HookInfo } from '../../core/types'
+import type { NormalizedNode, InspectorSection, InspectorItem } from '../../core/types'
 
 // React fiber tag constants
 const FunctionComponent = 0
@@ -96,11 +96,8 @@ function parseDebugStack(stack: Error | string): ParsedStack {
   if (!stackStr) return null
 
   // Parse stack frames — look for the first frame that points to user source code
-  // Stack format: "    at ComponentName (http://localhost:5173/src/App.tsx?t=123:15:3)"
-  // Or:           "    at http://localhost:5173/src/App.tsx:15:3"
   const lines = stackStr.split('\n')
   for (const line of lines) {
-    // Skip non-frame lines, React internals, and Vite pre-bundled deps
     if (!line.includes('at ')) continue
     if (line.includes('node_modules/')) continue
     if (line.includes('.vite/deps/')) continue
@@ -108,7 +105,6 @@ function parseDebugStack(stack: Error | string): ParsedStack {
     if (line.includes('react-stack-top-frame')) continue
     if (line.includes('chunk-')) continue
 
-    // Match: "at Name (url:line:col)" or "at url:line:col"
     const match = line.match(/(?:https?:\/\/[^/]+)?(\/[^:?]+)(?:\?[^:]*)?:(\d+):(\d+)/)
     if (match) {
       const result = {
@@ -151,7 +147,6 @@ function inferHookType(hook: any): { name: string; value: unknown } {
     'create' in memoizedState &&
     'destroy' in memoizedState
   ) {
-    // tag flags: HookInsertion=2, HookLayout=4, HookPassive=8
     const tag = memoizedState.tag
     const name = tag & 4 ? 'useLayoutEffect' : tag & 2 ? 'useInsertionEffect' : 'useEffect'
     return { name, value: memoizedState.deps }
@@ -179,12 +174,11 @@ function inferHookType(hook: any): { name: string; value: unknown } {
   return { name: 'hook', value: memoizedState }
 }
 
-function getHooks(fiber: any): HookInfo[] {
-  const hooks: HookInfo[] = []
-
+function getHooksSection(fiber: any): InspectorSection | null {
   // Only function components have hooks in memoizedState as linked list
-  if (fiber.tag !== FunctionComponent) return hooks
+  if (fiber.tag !== FunctionComponent) return null
 
+  const items: InspectorItem[] = []
   const rawHookData: unknown[] | undefined = fiber.type?.__devtools_hooks
   let hookIndex = 0
   let hook = fiber.memoizedState
@@ -196,11 +190,9 @@ function getHooks(fiber: any): HookInfo[] {
     let lineNumber: number | undefined
 
     if (Array.isArray(entry)) {
-      // New format: [varName, lineNumber]
       varName = entry[0] ?? undefined
       lineNumber = entry[1]
     } else if (typeof entry === 'string') {
-      // Old format: just the variable name
       varName = entry
     }
 
@@ -208,18 +200,48 @@ function getHooks(fiber: any): HookInfo[] {
       (inferred.name === 'useState' && typeof inferred.value !== 'function' && typeof hook.queue?.dispatch === 'function') ||
       inferred.name === 'useRef'
 
-    hooks.push({
-      name: inferred.name,
+    const persistable = inferred.name === 'useState' && editable
+
+    items.push({
+      key: varName ?? inferred.name,
       value: inferred.value,
-      varName,
-      lineNumber,
-      hookIndex,
       editable,
+      persistable,
+      editHint: editable ? {
+        kind: 'react-hook',
+        hookIndex,
+        hookType: inferred.name as 'useState' | 'useRef',
+      } : undefined,
+      badge: varName ? inferred.name : undefined,
+      lineNumber,
     })
     hookIndex++
     hook = hook.next
   }
-  return hooks
+
+  return items.length > 0 ? { id: 'hooks', label: 'Hooks', items } : null
+}
+
+function getStateSection(fiber: any): InspectorSection | null {
+  if (fiber.tag !== ClassComponent || !fiber.stateNode?.state) return null
+
+  const state = fiber.stateNode.state
+  if (typeof state !== 'object' || state === null) {
+    return {
+      id: 'state',
+      label: 'State',
+      items: [{ key: 'state', value: state, editable: false, persistable: false }],
+    }
+  }
+
+  const items: InspectorItem[] = Object.entries(state).map(([key, value]) => ({
+    key,
+    value,
+    editable: false,
+    persistable: false,
+  }))
+
+  return items.length > 0 ? { id: 'state', label: 'State', items } : null
 }
 
 function getProps(fiber: any): Record<string, unknown> {
@@ -228,14 +250,12 @@ function getProps(fiber: any): Record<string, unknown> {
 
   const result: Record<string, unknown> = {}
   for (const key of Object.keys(props)) {
-    if (key === 'children') continue // skip children prop for cleaner display
+    if (key === 'children') continue
     const value = props[key]
-    // Only include serializable values
     if (typeof value === 'function') {
       result[key] = `fn()`
     } else if (typeof value === 'object' && value !== null) {
       try {
-        // Shallow representation to avoid circular refs
         result[key] = JSON.parse(JSON.stringify(value))
       } catch {
         result[key] = `[Object]`
@@ -247,13 +267,6 @@ function getProps(fiber: any): Record<string, unknown> {
   return result
 }
 
-function getState(fiber: any): unknown {
-  if (fiber.tag === ClassComponent && fiber.stateNode) {
-    return fiber.stateNode.state
-  }
-  return null
-}
-
 function findDOMElements(fiber: any): HTMLElement[] {
   const elements: HTMLElement[] = []
   collectDOMElements(fiber.child, elements)
@@ -263,10 +276,8 @@ function findDOMElements(fiber: any): HTMLElement[] {
 function collectDOMElements(fiber: any, elements: HTMLElement[]): void {
   while (fiber) {
     if (fiber.tag === HostComponent && fiber.stateNode instanceof HTMLElement) {
-      // DOM element — add it (no need to recurse, it visually contains its children)
       elements.push(fiber.stateNode)
     } else {
-      // Component, fragment, or other non-DOM fiber — recurse into children
       collectDOMElements(fiber.child, elements)
     }
     fiber = fiber.sibling
@@ -294,20 +305,17 @@ function collectDirectText(fiber: any): { texts: string[]; fibers: any[] } {
         fibers.push(child)
       }
     } else if (isComponentFiber(child)) {
-      // Traverse through library components — they're internal wrappers
       if (isFromNodeModules(child)) {
         const sub = collectDirectText(child)
         texts.push(...sub.texts)
         fibers.push(...sub.fibers)
       }
     } else {
-      // HostComponent — check children first, fall back to DOM textContent
       const sub = collectDirectText(child)
       if (sub.texts.length > 0) {
         texts.push(...sub.texts)
         fibers.push(...sub.fibers)
       } else if (!child.child && child.stateNode) {
-        // Leaf HostComponent with no fiber children — read text from DOM
         const domText = child.stateNode.textContent
         if (typeof domText === 'string' && domText.trim() !== '') {
           texts.push(domText)
@@ -327,21 +335,23 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: bool
   while (child) {
     if (isComponentFiber(child)) {
       const name = getComponentName(child)
-      // Skip devtools own components
       if (name.startsWith('__DevTools')) {
-        // skip entirely
+        // skip devtools own components
       } else if (hideLibrary && isFromNodeModules(child)) {
-        // Hide library components — re-parent their children to this level
         nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders))
       } else if (hideProviders && name.endsWith('Provider')) {
-        // Hide provider wrappers — re-parent their children
         nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders))
       } else {
         const locations = getSourceLocations(child)
         const children = walkFiberChildren(child, hideLibrary, hideProviders)
 
-        // Collect text directly from the fiber subtree
         const { texts, fibers: textFibers } = collectDirectText(child)
+
+        const sections: InspectorSection[] = []
+        const hooksSection = getHooksSection(child)
+        if (hooksSection) sections.push(hooksSection)
+        const stateSection = getStateSection(child)
+        if (stateSection) sections.push(stateSection)
 
         const node: NormalizedNode = {
           id: `fiber_${nodeIdCounter++}`,
@@ -349,8 +359,7 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: bool
           source: locations.source,
           usageSource: locations.usageSource ?? undefined,
           props: getProps(child),
-          hooks: getHooks(child),
-          state: getState(child),
+          sections,
           children,
           isFromNodeModules: isFromNodeModules(child),
           _domElements: findDOMElements(child),
@@ -362,10 +371,8 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: bool
         nodes.push(node)
       }
     } else if (child.tag !== 6) {
-      // Not a component fiber and not HostText — skip it but walk its children
       nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders))
     }
-    // HostText (tag 6) fibers are collected via collectDirectText, skip here
     child = child.sibling
   }
 
@@ -377,4 +384,3 @@ export function walkFiberTree(rootFiber: any, hideLibrary = false, hideProviders
   fiberRefMap.clear()
   return walkFiberChildren(rootFiber, hideLibrary, hideProviders)
 }
-

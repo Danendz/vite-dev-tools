@@ -1,10 +1,37 @@
-import type { SourceLocation } from './types'
+import type { SourceLocation, EditHint } from './types'
 import { ENDPOINTS, EVENTS, STORAGE_KEYS } from '../shared/constants'
 
 type PersistResult = { ok: true } | { ok: false; error: string }
 
 function dispatchToast(message: string, type: 'error' | 'warning' = 'error') {
   window.dispatchEvent(new CustomEvent(EVENTS.TOAST, { detail: { type, message } }))
+}
+
+export function persistEdit(params: {
+  editHint: EditHint
+  value: unknown
+  fileName: string
+  lineNumber: number
+  componentName: string
+}): Promise<PersistResult> {
+  return fetch(ENDPOINTS.PERSIST_EDIT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  })
+    .then(async (res) => {
+      const body = await res.json().catch(() => null)
+      if (!res.ok || (body && !body.ok)) {
+        const error = body?.error ?? res.statusText
+        dispatchToast(`Failed to persist edit: ${error}`)
+        return { ok: false as const, error }
+      }
+      return { ok: true as const }
+    })
+    .catch(() => {
+      dispatchToast('Failed to persist edit: network error')
+      return { ok: false as const, error: 'Network error' }
+    })
 }
 
 export function persistHookValue(params: {

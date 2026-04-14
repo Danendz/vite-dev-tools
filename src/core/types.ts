@@ -1,10 +1,33 @@
+import type { EditHint } from './adapter'
+
+export type { EditHint } from './adapter'
+
+export interface InspectorItem {
+  key: string
+  value: unknown
+  editable: boolean
+  persistable: boolean
+  editHint?: EditHint
+  /** Display adornment, e.g. "[useState]", "ref" */
+  badge?: string
+  /** Line number for click-to-navigate */
+  lineNumber?: number
+}
+
+export interface InspectorSection {
+  id: string
+  label: string
+  items: InspectorItem[]
+}
+
 export interface NormalizedNode {
   id: string
   name: string
   source: SourceLocation | null
+  /** Props — kept top-level for tree row preview */
   props: Record<string, unknown>
-  hooks: HookInfo[]
-  state: unknown
+  /** Generic inspector sections (replaces hooks/state) */
+  sections: InspectorSection[]
   children: NormalizedNode[]
   isFromNodeModules: boolean
   /** Usage-site source location (where component is rendered in parent JSX) */
@@ -15,7 +38,7 @@ export interface NormalizedNode {
   textContent?: string
   /** Individual text fragments from direct HostText children (for DetailPanel editing) */
   textFragments?: string[]
-  /** Live HostText fiber references for runtime text editing */
+  /** Live HostText fiber references for runtime text editing (React-only) */
   _textFibers?: any[]
 }
 
@@ -23,15 +46,6 @@ export interface SourceLocation {
   fileName: string
   lineNumber: number
   columnNumber: number
-}
-
-export interface HookInfo {
-  name: string
-  value: unknown
-  varName?: string
-  lineNumber?: number
-  hookIndex: number
-  editable: boolean
 }
 
 export type DockPosition = 'bottom' | 'left' | 'right'
@@ -43,6 +57,8 @@ export interface DevToolsConfig {
   shortcut?: string
   /** Primary accent color hex — set by each framework adapter (default: '#8b5cf6') */
   accentColor?: string
+  /** Which settings toggles are supported by the current adapter */
+  supportedSettings?: string[]
 }
 
 export interface TreeUpdateEvent {
