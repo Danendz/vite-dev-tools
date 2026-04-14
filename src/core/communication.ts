@@ -86,24 +86,27 @@ export function persistTextValue(params: {
   return sendPersist(ENDPOINTS.PERSIST_TEXT, params, 'text', preview)
 }
 
-export function undoEdit(params: { fileName: string }): Promise<PersistResult> {
+export function undoEdit(params: { fileName: string }, preview?: boolean): Promise<PersistResult | PreviewResult> {
   return fetch(ENDPOINTS.UNDO_EDIT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
+    body: JSON.stringify(preview ? { ...params, preview: true } : params),
   })
     .then(async (res) => {
       const body = await res.json().catch(() => null)
       if (!res.ok || (body && !body.ok)) {
         const error = body?.error ?? res.statusText
-        dispatchToast(`Failed to undo: ${error}`)
+        if (!preview) dispatchToast(`Failed to undo: ${error}`)
         return { ok: false as const, error }
+      }
+      if (body?.preview) {
+        return { ok: true as const, preview: true as const, diff: body.diff as DiffData }
       }
       dispatchToast('Reverted to previous version', 'warning')
       return { ok: true as const }
     })
     .catch(() => {
-      dispatchToast('Failed to undo: network error')
+      if (!preview) dispatchToast('Failed to undo: network error')
       return { ok: false as const, error: 'Network error' }
     })
 }

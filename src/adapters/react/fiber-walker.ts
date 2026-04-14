@@ -45,8 +45,47 @@ function getComponentName(fiber: any): string {
 }
 
 /**
+ * Look up usage-site source from the compile-time usage map (__DEVTOOLS_USAGE_MAP__).
+ * Walks up the fiber tree to find the parent component's file, then looks up
+ * the current component name in that file's usage map.
+ * Populated by the Vite transform for React 19+ (where _debugSource is unavailable).
+ */
+function parseUsageSourceFromMap(fiber: any): { fileName: string; lineNumber: number; columnNumber: number } | null {
+  const map = (globalThis as any).__DEVTOOLS_USAGE_MAP__
+  if (!map) return null
+
+  const componentName = getComponentName(fiber)
+
+  // Walk up fiber tree — skip library components (no __devtools_source) until
+  // we find an ancestor whose file has a matching usage entry
+  let parent = fiber.return
+  while (parent) {
+    if (COMPONENT_TAGS.has(parent.tag)) {
+      const parentFile = parent.type?.__devtools_source?.fileName
+      if (parentFile) {
+        for (const [filePath, fileUsages] of Object.entries(map)) {
+          if (!parentFile.endsWith(filePath)) continue
+
+          const locations = (fileUsages as any)[componentName]
+          if (locations && locations.length > 0) {
+            return {
+              fileName: filePath.startsWith('/') ? filePath : `/${filePath}`,
+              lineNumber: locations[0].line,
+              columnNumber: locations[0].col,
+            }
+          }
+        }
+      }
+    }
+    parent = parent.return
+  }
+
+  return null
+}
+
+/**
  * Get the React-provided usage-site source (where component is rendered in parent JSX).
- * Returns from _debugSource (React 18) or _debugStack (React 19+).
+ * Returns from _debugSource (React 18), compile-time usage map, or _debugStack (React 19+).
  */
 function getReactSource(fiber: any) {
   if (fiber._debugSource) {
@@ -56,6 +95,10 @@ function getReactSource(fiber: any) {
       columnNumber: fiber._debugSource.columnNumber ?? 1,
     }
   }
+
+  // Try compile-time usage map (accurate source positions for React 19+)
+  const mapSource = parseUsageSourceFromMap(fiber)
+  if (mapSource) return mapSource
 
   if (fiber._debugStack) {
     const parsed = parseDebugStack(fiber._debugStack)

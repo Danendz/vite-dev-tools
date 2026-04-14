@@ -188,7 +188,7 @@ export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevTool
         req.on('end', () => {
           res.setHeader('Content-Type', 'application/json')
           try {
-            const { fileName } = JSON.parse(body)
+            const { fileName, preview } = JSON.parse(body)
 
             let filePath = path.resolve(projectRoot, fileName.replace(/^\//, ''))
             if (!fs.existsSync(filePath)) {
@@ -199,6 +199,12 @@ export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevTool
             if (!backup) {
               res.statusCode = 400
               res.end(JSON.stringify({ ok: false, error: 'No undo available for this file' }))
+              return
+            }
+
+            if (preview) {
+              const current = fs.readFileSync(filePath, 'utf-8')
+              res.end(JSON.stringify({ ok: true, preview: true, diff: buildDiff(current, backup.previousContent, fileName, 1) }))
               return
             }
 

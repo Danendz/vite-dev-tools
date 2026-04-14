@@ -1478,6 +1478,13 @@ export const STYLES = /* css */ `
     color: #d4d4d8;
   }
 
+  /* ---- Saved text ---- */
+
+  .saved-text {
+    font-size: 11px;
+    color: #4ade80;
+  }
+
   /* ---- Undo button ---- */
 
   .undo-btn {

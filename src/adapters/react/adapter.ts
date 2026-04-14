@@ -480,6 +480,26 @@ export const reactAdapter: FrameworkAdapter = {
       }
     }
 
+    // For React 19+, inject a usage map with component JSX element locations
+    // so the fiber walker can find accurate usage-site source without _debugStack
+    if (!(reactMajor > 0 && reactMajor < 19) && program && lineStarts) {
+      const componentUsages = findJSXOpeningElements(
+        program,
+        name => /^[A-Z]/.test(name),
+        lineStarts,
+      )
+      if (componentUsages.length > 0) {
+        const usageMap: Record<string, Array<{ line: number; col: number }>> = {}
+        for (const el of componentUsages) {
+          if (!usageMap[el.tagName]) usageMap[el.tagName] = []
+          usageMap[el.tagName].push({ line: el.line, col: el.col })
+        }
+        annotations.push(
+          `;(globalThis.__DEVTOOLS_USAGE_MAP__||(globalThis.__DEVTOOLS_USAGE_MAP__={}))["${relativePath}"]=${JSON.stringify(usageMap)}`
+        )
+      }
+    }
+
     // Inject __source prop on host JSX elements for React 19+ when the JSX transformer
     // doesn't already do it (e.g. esbuild in Vite < 6 doesn't inject __source).
     // OXC (Vite 6+) and SWC already inject __source, so we skip to avoid duplicates.
