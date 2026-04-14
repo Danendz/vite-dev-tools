@@ -13,6 +13,10 @@ let appInstance: any = null
  */
 const pendingPropEdits = new Map<string, Map<string, unknown>>()
 
+/** Stores unsaved text edits so they survive HMR-triggered tree re-walks.
+ *  Key: nodeId, Value: Map of fragmentIndex → edited text */
+const pendingTextEdits = new Map<string, Map<number, string>>()
+
 function getHideLibrary(): boolean {
   return localStorage.getItem(STORAGE_KEYS.HIDE_LIBRARY) !== 'false'
 }
@@ -35,6 +39,26 @@ function reapplyPendingEdits(nodes: import('../../core/types').NormalizedNode[])
       }
       if (edits.size === 0) pendingPropEdits.delete(node.id)
     }
+
+    // Re-apply text fragment edits
+    const textEdits = pendingTextEdits.get(node.id)
+    if (textEdits && node.textFragments && node._domElements?.[0]) {
+      for (const [idx, newValue] of textEdits) {
+        if (idx < node.textFragments.length) {
+          node.textFragments[idx] = newValue
+          // Update the actual DOM text
+          const el = node._domElements[0]
+          for (const child of Array.from(el.childNodes)) {
+            if (child.nodeType === 3) { // Text node
+              child.textContent = newValue
+              break
+            }
+          }
+        }
+      }
+      node.textContent = node.textFragments.join('')
+    }
+
     reverted.push(...reapplyPendingEdits(node.children))
   }
 
@@ -51,7 +75,7 @@ function walkAndDispatch() {
   const tree = walkInstanceTree(appInstance, getHideLibrary())
 
   let reverted: Array<{nodeId: string, propKey: string}> = []
-  if (pendingPropEdits.size > 0) {
+  if (pendingPropEdits.size > 0 || pendingTextEdits.size > 0) {
     reverted = reapplyPendingEdits(tree)
   }
 
@@ -144,6 +168,16 @@ window.addEventListener(EVENTS.PROP_PERSISTED, (event: Event) => {
     nodeEdits.delete(propKey)
     if (nodeEdits.size === 0) pendingPropEdits.delete(nodeId)
   }
+})
+
+// Listen for text edit requests from the overlay
+window.addEventListener(EVENTS.TEXT_EDIT, (event: Event) => {
+  const { nodeId, fragmentIndex, newValue } = (event as CustomEvent).detail
+
+  if (!pendingTextEdits.has(nodeId)) pendingTextEdits.set(nodeId, new Map())
+  pendingTextEdits.get(nodeId)!.set(fragmentIndex, newValue)
+
+  walkAndDispatch()
 })
 
 // Listen for VALUE_EDIT (generic section edits with editHint)

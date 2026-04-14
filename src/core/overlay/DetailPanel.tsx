@@ -864,6 +864,15 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
             </div>
           </>
         )}
+        {node.slotOwner && (
+          <div
+            class="slot-indicator"
+            onClick={() => openInEditor(node.slotOwner!.source)}
+            title={`Open slot definition in ${formatPath(node.slotOwner!.source)}`}
+          >
+            slot in {node.slotOwner.componentName}
+          </div>
+        )}
         {showUsageSource && (
           <>
             <div class="source-label">Used in</div>

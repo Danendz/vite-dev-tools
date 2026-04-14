@@ -92,10 +92,26 @@ function isFromNodeModules(instance: any): boolean {
   return file.includes('node_modules') || file.includes('.vite/deps/')
 }
 
+interface SlotInfo {
+  parentFile: string
+  componentName: string
+  slotName: string
+  slotCounters: Map<string, number>
+  slotSource: SourceLocation | null
+}
+
 interface WalkContext {
   parentFile: string | null
   elementCounters: Map<string, number>
   parentUsageSource?: SourceLocation
+  /** The component instance whose subTree we're currently walking */
+  currentInstance?: any
+  /** Slot element counters shared across slot Fragments within a parent scope */
+  parentSlotCounters?: Map<string, number>
+  /** The parent component's __file — where slot content was authored */
+  parentComponentFile?: string | null
+  /** Active slot context when walking inside a slot Fragment */
+  slotInfo?: SlotInfo
 }
 
 /**
@@ -121,6 +137,81 @@ function getElementSource(tagName: string, ctx: WalkContext): SourceLocation | n
     const clampedIndex = Math.min(index, locations.length - 1)
     const loc = locations[clampedIndex]
 
+    return {
+      fileName: filePath.startsWith('/') ? filePath : `/${filePath}`,
+      lineNumber: loc.line,
+      columnNumber: loc.col,
+    }
+  }
+
+  return null
+}
+
+/**
+ * Resolve source location for a slot content element from __DEVTOOLS_USAGE_MAP__.__slots__.
+ * Uses the slot-specific counter keyed by "componentName:slotName:tagName".
+ */
+function getSlotElementSource(tagName: string, slotInfo: SlotInfo): SourceLocation | null {
+  const map = (globalThis as any).__DEVTOOLS_USAGE_MAP__
+  if (!map) return null
+
+  const normalized = slotInfo.componentName.toLowerCase().replace(/-/g, '')
+
+  for (const [filePath, fileUsages] of Object.entries(map)) {
+    if (!slotInfo.parentFile.endsWith(filePath)) continue
+
+    const slots = (fileUsages as any).__slots__
+    if (!slots) return null
+
+    // Find the component entry using normalized name matching
+    let componentSlots: any = null
+    for (const key of Object.keys(slots)) {
+      if (key.toLowerCase().replace(/-/g, '') === normalized) {
+        componentSlots = slots[key]
+        break
+      }
+    }
+    if (!componentSlots) return null
+
+    const slotGroup = componentSlots[slotInfo.slotName]
+    if (!slotGroup) return null
+
+    const locations = slotGroup[tagName]
+    if (!locations || locations.length === 0) return null
+
+    const counterKey = `${normalized}:${slotInfo.slotName}:${tagName}`
+    const index = slotInfo.slotCounters.get(counterKey) ?? 0
+    slotInfo.slotCounters.set(counterKey, index + 1)
+
+    const clampedIndex = Math.min(index, locations.length - 1)
+    const loc = locations[clampedIndex]
+
+    return {
+      fileName: filePath.startsWith('/') ? filePath : `/${filePath}`,
+      lineNumber: loc.line,
+      columnNumber: loc.col,
+    }
+  }
+
+  return null
+}
+
+/**
+ * Resolve the <slot /> definition source from __DEVTOOLS_USAGE_MAP__.__slotDefs__.
+ */
+function getSlotDefinitionSource(componentFile: string | null, slotName: string): SourceLocation | null {
+  if (!componentFile) return null
+
+  const map = (globalThis as any).__DEVTOOLS_USAGE_MAP__
+  if (!map) return null
+
+  for (const [filePath, fileUsages] of Object.entries(map)) {
+    if (!componentFile.endsWith(filePath)) continue
+
+    const slotDefs = (fileUsages as any).__slotDefs__
+    if (!slotDefs || !slotDefs[slotName]) return null
+
+    const loc = slotDefs[slotName]
     return {
       fileName: filePath.startsWith('/') ? filePath : `/${filePath}`,
       lineNumber: loc.line,
@@ -321,6 +412,9 @@ function walkVNodeChildren(vnode: any, hideLibrary: boolean, ctx: WalkContext): 
       parentFile: instance.type?.__file ?? null,
       elementCounters: new Map(),
       parentUsageSource: usage?.source ?? source ?? undefined,
+      currentInstance: instance,
+      parentSlotCounters: new Map(),
+      parentComponentFile: ctx.parentFile,
     }
 
     if (hideLibrary && isFromNodeModules(instance)) {
@@ -350,7 +444,24 @@ function walkVNodeChildren(vnode: any, hideLibrary: boolean, ctx: WalkContext): 
   // Element vnode — include as host element node
   if (vnode.shapeFlag & ELEMENT && typeof vnode.type === 'string') {
     const tagName = vnode.type
-    const source = getElementSource(tagName, ctx)
+
+    // Resolve source — prefer slot-aware lookup when inside a slot Fragment
+    let source: SourceLocation | null = null
+    let slotOwner: NormalizedNode['slotOwner'] | undefined
+
+    if (ctx.slotInfo) {
+      source = getSlotElementSource(tagName, ctx.slotInfo)
+      if (source && ctx.slotInfo.slotSource) {
+        slotOwner = {
+          componentName: ctx.slotInfo.componentName,
+          source: ctx.slotInfo.slotSource,
+        }
+      }
+    }
+
+    if (!source) {
+      source = getElementSource(tagName, ctx)
+    }
 
     let textContent: string | undefined
     if (typeof vnode.children === 'string' && vnode.children.trim() !== '') {
@@ -369,6 +480,7 @@ function walkVNodeChildren(vnode: any, hideLibrary: boolean, ctx: WalkContext): 
       name: tagName,
       source,
       _parentSource: !source && ctx.parentUsageSource ? ctx.parentUsageSource : undefined,
+      slotOwner,
       props: getHostElementProps(vnode.props),
       sections: [],
       children,
@@ -398,6 +510,46 @@ function walkVNodeChildren(vnode: any, hideLibrary: boolean, ctx: WalkContext): 
       nodes.push(...walkVNodeChildren(vnode.ssContent, hideLibrary, ctx))
     } else if (vnode.ssFallback) {
       nodes.push(...walkVNodeChildren(vnode.ssFallback, hideLibrary, ctx))
+    }
+    return nodes
+  }
+
+  // Slot Fragment — renderSlot() creates Fragments with key like "_default", "_header"
+  if (typeof vnode.type === 'symbol' &&
+      typeof vnode.key === 'string' &&
+      vnode.key.startsWith('_') &&
+      vnode.shapeFlag & ARRAY_CHILDREN &&
+      Array.isArray(vnode.children)) {
+    let slotName = vnode.key.slice(1)
+    if (slotName.endsWith('_fb')) slotName = slotName.slice(0, -3)
+
+    const instance = ctx.currentInstance
+    if (instance?.parent) {
+      const parentFile = instance.parent.type?.__file
+      const componentName = getComponentName(instance)
+      const componentFile = instance.type?.__file
+
+      if (parentFile) {
+        const slotSource = getSlotDefinitionSource(componentFile, slotName)
+        const slotCtx: WalkContext = {
+          ...ctx,
+          slotInfo: {
+            parentFile,
+            componentName,
+            slotName,
+            slotCounters: ctx.parentSlotCounters ?? new Map(),
+            slotSource,
+          },
+        }
+        for (const child of vnode.children) {
+          nodes.push(...walkVNodeChildren(child, hideLibrary, slotCtx))
+        }
+        return nodes
+      }
+    }
+    // Fallback: walk as regular Fragment
+    for (const child of vnode.children) {
+      nodes.push(...walkVNodeChildren(child, hideLibrary, ctx))
     }
     return nodes
   }
@@ -439,6 +591,8 @@ export function walkInstanceTree(appInstance: any, hideLibrary = false): Normali
     parentFile: appInstance.type?.__file ?? null,
     elementCounters: new Map(),
     parentUsageSource: usage?.source ?? source ?? undefined,
+    currentInstance: appInstance,
+    parentSlotCounters: new Map(),
   }
   const children = walkVNodeChildren(appInstance.subTree, hideLibrary, rootCtx)
 

@@ -395,6 +395,18 @@ export const STYLES = /* css */ `
     background: rgba(255, 255, 255, 0.06);
   }
 
+  .slot-indicator {
+    color: #71717a;
+    font-size: 10px;
+    cursor: pointer;
+    margin-top: 1px;
+    margin-bottom: 2px;
+    transition: color 0.15s;
+  }
+  .slot-indicator:hover {
+    color: var(--accent);
+  }
+
   /* ── Search bar ── */
 
   .search-bar {

@@ -49,12 +49,30 @@ function tryLoadVueCompiler(projectRoot: string): ((code: string) => any) | null
 
 /**
  * Walk a Vue template AST, collecting tag usages and dynamic prop info in one pass.
+ * When inside a component's children (slot content), routes elements to __slots__ sub-structure.
  */
 function walkTemplateAST(
   node: any,
-  usages: Record<string, Array<{ line: number; col: number; dynamicProps?: string[] }>>,
+  usages: Record<string, any>,
+  slotContext?: { componentTag: string; slotName: string },
 ): void {
   if (!node) return
+
+  // Track <slot> definitions for slot source mapping
+  if (node.type === 1 && node.tag === 'slot') {
+    let slotDefName = 'default'
+    if (node.props) {
+      for (const prop of node.props) {
+        if (prop.type === 6 && prop.name === 'name' && prop.value) {
+          slotDefName = prop.value.content
+        }
+      }
+    }
+    const line = node.loc?.start?.line
+    const col = node.loc?.start?.column != null ? node.loc.start.column + 1 : 1
+    if (!usages.__slotDefs__) usages.__slotDefs__ = {}
+    usages.__slotDefs__[slotDefName] = { line, col }
+  }
 
   // Element node (type 1)
   if (node.type === 1 && node.tag) {
@@ -66,9 +84,20 @@ function walkTemplateAST(
       const line = node.loc?.start?.line
       const col = node.loc?.start?.column != null ? node.loc.start.column + 1 : 1
 
-      if (!usages[tagName]) usages[tagName] = []
       const entry = { line, col, dynamicProps: undefined as string[] | undefined }
-      usages[tagName].push(entry)
+
+      if (slotContext && isTrackable) {
+        // Route slot content elements to __slots__ sub-structure
+        if (!usages.__slots__) usages.__slots__ = {}
+        const compSlots = usages.__slots__[slotContext.componentTag] ??= {}
+        const slotGroup = compSlots[slotContext.slotName] ??= {}
+        if (!slotGroup[tagName]) slotGroup[tagName] = []
+        slotGroup[tagName].push(entry)
+      } else {
+        // Direct template elements (components always go top-level for usage tracking)
+        if (!usages[tagName]) usages[tagName] = []
+        usages[tagName].push(entry)
+      }
 
       // Collect dynamic props from this element
       if (node.props) {
@@ -91,8 +120,36 @@ function walkTemplateAST(
   }
 
   if (node.children) {
-    for (const child of node.children) {
-      walkTemplateAST(child, usages)
+    // When current node is a component, its children are slot content
+    const isComponent = node.type === 1 && node.tag && (/[A-Z]/.test(node.tag) || node.tag.includes('-'))
+      && !VUE_BUILTIN_ELEMENTS.has(node.tag)
+
+    if (isComponent) {
+      for (const child of node.children) {
+        // <template #slotName> — named slot wrapper
+        if (child.type === 1 && child.tag === 'template' && child.props) {
+          let slotName = 'default'
+          for (const prop of child.props) {
+            if (prop.type === 7 && prop.name === 'slot') {
+              slotName = prop.arg?.content ?? 'default'
+              break
+            }
+          }
+          // Recurse into template children with the slot context
+          if (child.children) {
+            for (const grandchild of child.children) {
+              walkTemplateAST(grandchild, usages, { componentTag: node.tag, slotName })
+            }
+          }
+        } else {
+          // Direct children are default slot content
+          walkTemplateAST(child, usages, { componentTag: node.tag, slotName: 'default' })
+        }
+      }
+    } else {
+      for (const child of node.children) {
+        walkTemplateAST(child, usages, slotContext)
+      }
     }
   }
 }

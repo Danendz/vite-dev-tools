@@ -46,6 +46,11 @@ export interface NormalizedNode {
   textFragments?: string[]
   /** Live HostText fiber references for runtime text editing (React-only) */
   _textFibers?: any[]
+  /** When this node is slot content, identifies the component that owns the <slot /> */
+  slotOwner?: {
+    componentName: string
+    source: SourceLocation
+  }
 }
 
 export interface SourceLocation {
