@@ -1,8 +1,10 @@
 import { h } from 'preact'
 import { useState, useRef, useEffect } from 'preact/hooks'
-import type { NormalizedNode, SourceLocation, HookInfo } from '../types'
-import { openInEditor, persistHookValue, persistPropValue, persistTextValue } from '../communication'
-import { EVENTS } from '../../shared/constants'
+import type { NormalizedNode, SourceLocation, InspectorItem, EditHint } from '../types'
+import { openInEditor, persistEdit, persistPropValue, persistTextValue, persistHookValue, undoEdit } from '../communication'
+import type { DiffData, PreviewResult } from '../communication'
+import { EVENTS, STORAGE_KEYS } from '../../shared/constants'
+import { PreviewModal } from './PreviewModal'
 
 function formatPath(source: SourceLocation): string {
   return `${source.fileName.replace(/^.*\/src\//, 'src/')}:${source.lineNumber}`
@@ -89,23 +91,20 @@ function ValueDisplay({ value }: { value: unknown }) {
   return <span class="detail-value">{String(value)}</span>
 }
 
-function dispatchEdit(nodeId: string, hook: HookInfo, newValue: unknown) {
-  window.dispatchEvent(new CustomEvent(EVENTS.HOOK_EDIT, {
-    detail: {
-      nodeId,
-      hookIndex: hook.hookIndex,
-      newValue,
-      hookType: hook.name as 'useState' | 'useRef',
-    },
+function dispatchSectionEdit(nodeId: string, editHint: EditHint, newValue: unknown) {
+  window.dispatchEvent(new CustomEvent(EVENTS.VALUE_EDIT, {
+    detail: { nodeId, editHint, newValue },
   }))
 }
 
-function EditableValue({ hook, nodeId, source }: { hook: HookInfo; nodeId: string; source: SourceLocation | null }) {
+function EditableValue({ item, nodeId, source }: { item: InspectorItem; nodeId: string; source: SourceLocation | null }) {
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
   const [editError, setEditError] = useState<string | null>(null)
   const [showPersist, setShowPersist] = useState(false)
   const [persistStatus, setPersistStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const previewConfirmRef = useRef<(() => Promise<void>) | null>(null)
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -117,15 +116,17 @@ function EditableValue({ hook, nodeId, source }: { hook: HookInfo; nodeId: strin
     }
   }, [editing])
 
-  const value = hook.value
+  useEffect(() => () => { if (resetTimerRef.current) clearTimeout(resetTimerRef.current) }, [])
+
+  const value = item.value
   const valueType = value === null ? 'null' : typeof value
 
   // Boolean: single click toggles immediately
-  if (valueType === 'boolean') {
+  if (valueType === 'boolean' && item.editHint) {
     return (
       <span
         class="editable-value-wrapper editable edit-boolean-toggle"
-        onClick={() => dispatchEdit(nodeId, hook, !value)}
+        onClick={() => dispatchSectionEdit(nodeId, item.editHint!, !value)}
         title="Click to toggle"
       >
         <span class={`detail-value boolean`}>{String(value)}</span>
@@ -134,7 +135,13 @@ function EditableValue({ hook, nodeId, source }: { hook: HookInfo; nodeId: strin
   }
 
   const enterEditMode = () => {
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current)
+      resetTimerRef.current = null
+    }
     setEditError(null)
+    setUndoFile(null)
+    setPersistStatus('idle')
     if (valueType === 'object' || Array.isArray(value)) {
       setEditValue(JSON.stringify(value, null, 2))
     } else if (valueType === 'null') {
@@ -162,7 +169,6 @@ function EditableValue({ hook, nodeId, source }: { hook: HookInfo; nodeId: strin
           return
         }
       } else {
-        // Object, array, null, undefined
         parsed = JSON.parse(editValue)
       }
     } catch {
@@ -170,28 +176,97 @@ function EditableValue({ hook, nodeId, source }: { hook: HookInfo; nodeId: strin
       return
     }
 
-    dispatchEdit(nodeId, hook, parsed)
+    if (item.editHint) {
+      dispatchSectionEdit(nodeId, item.editHint, parsed)
+    }
     setEditing(false)
     setEditError(null)
 
-    // Show persist button for useState with primitive values
+    // Show persist button for persistable items with primitive values
     const isPrimitive = parsed === null || ['string', 'number', 'boolean'].includes(typeof parsed)
-    if (hook.name === 'useState' && isPrimitive && hook.lineNumber != null && source?.fileName) {
+    if (item.persistable && isPrimitive && item.lineNumber != null && source?.fileName) {
       setShowPersist(true)
       setPersistStatus('idle')
     }
   }
 
-  const handlePersist = async () => {
-    if (!source?.fileName || hook.lineNumber == null) return
+  const [previewDiff, setPreviewDiff] = useState<DiffData | null>(null)
+  const [undoFile, setUndoFile] = useState<string | null>(null)
+
+  const doActualPersist = async () => {
+    if (!source?.fileName || item.lineNumber == null || !item.editHint) return
     setPersistStatus('saving')
-    const result = await persistHookValue({
+    const result = await persistEdit({
+      editHint: item.editHint,
+      value: item.value,
       fileName: source.fileName,
-      lineNumber: hook.lineNumber,
-      newValue: hook.value as string | number | boolean | null,
+      lineNumber: item.lineNumber,
+      componentName: '',
     })
     setPersistStatus(result.ok ? 'saved' : 'error')
-    if (result.ok) setTimeout(() => setShowPersist(false), 1500)
+    if (result.ok) {
+      setUndoFile(source.fileName)
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current)
+      resetTimerRef.current = setTimeout(() => {
+        setShowPersist(false)
+        setPersistStatus('idle')
+        setUndoFile(null)
+        resetTimerRef.current = null
+      }, 30000)
+    }
+  }
+
+  const handlePersist = async () => {
+    if (!source?.fileName || item.lineNumber == null || !item.editHint) return
+
+    const showPreview = localStorage.getItem(STORAGE_KEYS.SHOW_PREVIEW) !== 'false'
+    if (showPreview) {
+      setPersistStatus('saving')
+      const result = await persistEdit({
+        editHint: item.editHint,
+        value: item.value,
+        fileName: source.fileName,
+        lineNumber: item.lineNumber,
+        componentName: '',
+      }, true) as PreviewResult
+      setPersistStatus('idle')
+      if (result.ok && 'diff' in result) {
+        previewConfirmRef.current = doActualPersist
+        setPreviewDiff(result.diff)
+      }
+      return
+    }
+
+    await doActualPersist()
+  }
+
+  const handlePreviewConfirm = async () => {
+    setPreviewDiff(null)
+    const action = previewConfirmRef.current
+    previewConfirmRef.current = null
+    if (action) await action()
+  }
+
+  const doActualUndo = async () => {
+    if (!undoFile) return
+    await undoEdit({ fileName: undoFile })
+    setUndoFile(null)
+    setPersistStatus('idle')
+    setShowPersist(false)
+  }
+
+  const handleUndo = async () => {
+    if (!undoFile) return
+    const showPreview = localStorage.getItem(STORAGE_KEYS.SHOW_PREVIEW) !== 'false'
+    if (showPreview) {
+      const result = await undoEdit({ fileName: undoFile }, true) as PreviewResult
+      if (result.ok && 'diff' in result) {
+        previewConfirmRef.current = doActualUndo
+        setPreviewDiff(result.diff)
+        return
+      }
+    }
+    await doActualUndo()
   }
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -211,9 +286,25 @@ function EditableValue({ hook, nodeId, source }: { hook: HookInfo; nodeId: strin
       <span class="editable-value-wrapper editable" onDblClick={enterEditMode}>
         <ValueDisplay value={value} />
         {showPersist && (
-          <button class="persist-btn" onClick={handlePersist} disabled={persistStatus === 'saving'}>
-            {persistStatus === 'saving' ? '...' : persistStatus === 'saved' ? '✓' : persistStatus === 'error' ? '✕ failed' : 'Persist'}
-          </button>
+          <>
+            {persistStatus === 'saved' ? (
+              <span class="saved-text">{'\u2713'}</span>
+            ) : (
+              <button class="persist-btn" onClick={handlePersist} disabled={persistStatus === 'saving'}>
+                {persistStatus === 'saving' ? '...' : persistStatus === 'error' ? '\u2715 failed' : 'Persist'}
+              </button>
+            )}
+            {undoFile && persistStatus === 'saved' && (
+              <button class="undo-btn" onClick={handleUndo}>Undo</button>
+            )}
+          </>
+        )}
+        {previewDiff && (
+          <PreviewModal
+            diff={previewDiff}
+            onConfirm={handlePreviewConfirm}
+            onCancel={() => setPreviewDiff(null)}
+          />
         )}
       </span>
     )
@@ -261,6 +352,7 @@ function EditablePropValue({
   value,
   nodeId,
   usageSource,
+  dynamicProps,
   isEdited,
   onPropEdit,
   onPropPersisted,
@@ -269,6 +361,7 @@ function EditablePropValue({
   value: unknown
   nodeId: string
   usageSource?: SourceLocation
+  dynamicProps?: string[]
   isEdited: boolean
   onPropEdit?: (nodeId: string, propKey: string) => void
   onPropPersisted?: (nodeId: string, propKey: string) => void
@@ -278,7 +371,36 @@ function EditablePropValue({
   const [editError, setEditError] = useState<string | null>(null)
   const [showPersist, setShowPersist] = useState(false)
   const [persistStatus, setPersistStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [previewDiff, setPreviewDiff] = useState<DiffData | null>(null)
+  const [undoFile, setUndoFile] = useState<string | null>(null)
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const previewConfirmRef = useRef<(() => Promise<void>) | null>(null)
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
+
+  // Reset all local state when the selected node changes
+  useEffect(() => {
+    setEditing(false)
+    setShowPersist(false)
+    setPersistStatus('idle')
+    setPreviewDiff(null)
+    setUndoFile(null)
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current)
+      resetTimerRef.current = null
+    }
+  }, [nodeId])
+
+  // Reset persist state when a new external edit arrives (e.g. inline tree edit)
+  useEffect(() => {
+    if (isEdited && persistStatus === 'saved') {
+      if (resetTimerRef.current) {
+        clearTimeout(resetTimerRef.current)
+        resetTimerRef.current = null
+      }
+      setPersistStatus('idle')
+      setUndoFile(null)
+    }
+  }, [isEdited])
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -289,6 +411,8 @@ function EditablePropValue({
     }
   }, [editing])
 
+  useEffect(() => () => { if (resetTimerRef.current) clearTimeout(resetTimerRef.current) }, [])
+
   const valueType = value === null ? 'null' : typeof value
   const isFunction = value === 'fn()'
 
@@ -296,7 +420,7 @@ function EditablePropValue({
     return <span class="detail-value">{String(value)}</span>
   }
 
-  const handlePersist = async () => {
+  const doActualPersist = async () => {
     if (!usageSource?.fileName || !usageSource?.lineNumber) return
     setPersistStatus('saving')
     const result = await persistPropValue({
@@ -307,25 +431,99 @@ function EditablePropValue({
     })
     setPersistStatus(result.ok ? 'saved' : 'error')
     if (result.ok) {
+      setShowPersist(true) // Keep persist row visible for undo (inline edits never set showPersist)
       onPropPersisted?.(nodeId, propKey)
-      setTimeout(() => {
+      setUndoFile(usageSource.fileName)
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current)
+      resetTimerRef.current = setTimeout(() => {
         setShowPersist(false)
         setPersistStatus('idle')
-      }, 1500)
+        setUndoFile(null)
+        resetTimerRef.current = null
+      }, 30000)
     }
   }
 
+  const handlePersist = async () => {
+    if (!usageSource?.fileName || !usageSource?.lineNumber) return
+
+    const showPreview = localStorage.getItem(STORAGE_KEYS.SHOW_PREVIEW) !== 'false'
+    if (showPreview) {
+      setPersistStatus('saving')
+      const result = await persistPropValue({
+        fileName: usageSource.fileName,
+        lineNumber: usageSource.lineNumber,
+        propKey,
+        newValue: value as string | number | boolean | null,
+      }, true) as PreviewResult
+      setPersistStatus('idle')
+      if (result.ok && 'diff' in result) {
+        previewConfirmRef.current = doActualPersist
+        setPreviewDiff(result.diff)
+      }
+      return
+    }
+
+    await doActualPersist()
+  }
+
+  const handlePreviewConfirm = async () => {
+    setPreviewDiff(null)
+    const action = previewConfirmRef.current
+    previewConfirmRef.current = null
+    if (action) await action()
+  }
+
+  const doActualUndo = async () => {
+    if (!undoFile) return
+    await undoEdit({ fileName: undoFile })
+    setUndoFile(null)
+    setPersistStatus('idle')
+    setShowPersist(false)
+  }
+
+  const handleUndo = async () => {
+    if (!undoFile) return
+    const showPreview = localStorage.getItem(STORAGE_KEYS.SHOW_PREVIEW) !== 'false'
+    if (showPreview) {
+      const result = await undoEdit({ fileName: undoFile }, true) as PreviewResult
+      if (result.ok && 'diff' in result) {
+        previewConfirmRef.current = doActualUndo
+        setPreviewDiff(result.diff)
+        return
+      }
+    }
+    await doActualUndo()
+  }
+
   // Show persist when: local edit confirmed OR prop was edited externally (e.g. inline tree edit)
-  const canPersist = usageSource?.fileName && usageSource?.lineNumber &&
+  // Dynamic bindings (:prop="expr") cannot be persisted to source
+  const isDynamic = dynamicProps?.includes(propKey)
+  const canPersist = !isDynamic && usageSource?.fileName && usageSource?.lineNumber &&
     (value === null || ['string', 'number', 'boolean'].includes(typeof value))
   const shouldShowPersist = showPersist || (isEdited && canPersist && persistStatus !== 'saved')
 
   const persistButton = shouldShowPersist && (
     <div class="persist-row">
-      <button class="persist-btn-lg" onClick={handlePersist} disabled={persistStatus === 'saving'}>
-        {persistStatus === 'saving' ? 'Saving...' : persistStatus === 'saved' ? '\u2713 Saved' : persistStatus === 'error' ? '\u2715 Failed' : 'Save to source'}
-      </button>
+      {persistStatus === 'saved' ? (
+        <span class="saved-text">{'\u2713'} Saved</span>
+      ) : (
+        <button class="persist-btn-lg" onClick={handlePersist} disabled={persistStatus === 'saving'}>
+          {persistStatus === 'saving' ? 'Saving...' : persistStatus === 'error' ? '\u2715 Failed' : 'Save to source'}
+        </button>
+      )}
+      {undoFile && persistStatus === 'saved' && (
+        <button class="undo-btn" onClick={handleUndo}>Undo</button>
+      )}
     </div>
+  )
+
+  const previewModal = previewDiff && (
+    <PreviewModal
+      diff={previewDiff}
+      onConfirm={handlePreviewConfirm}
+      onCancel={() => setPreviewDiff(null)}
+    />
   )
 
   // Boolean: single click toggles immediately
@@ -343,12 +541,20 @@ function EditablePropValue({
           <span class="detail-value boolean">{String(value)}</span>
         </span>
         {persistButton}
+        {previewModal}
       </>
     )
   }
 
   const enterEditMode = () => {
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current)
+      resetTimerRef.current = null
+    }
     setEditError(null)
+    setUndoFile(null)
+    setPersistStatus('idle')
+    previewConfirmRef.current = null
     if (isExpandableObject(value)) {
       setEditValue(JSON.stringify(value, null, 2))
     } else if (valueType === 'null') {
@@ -388,11 +594,17 @@ function EditablePropValue({
     setEditing(false)
     setEditError(null)
 
-    // Show persist button for primitive values when usageSource is available
+    // Show persist button for primitive values when usageSource is available (not for dynamic bindings)
     const isPrimitive = parsed === null || ['string', 'number', 'boolean'].includes(typeof parsed)
-    if (isPrimitive && usageSource?.fileName && usageSource?.lineNumber) {
+    if (isPrimitive && !isDynamic && usageSource?.fileName && usageSource?.lineNumber) {
+      // Clear any pending reset timer from a previous save
+      if (resetTimerRef.current) {
+        clearTimeout(resetTimerRef.current)
+        resetTimerRef.current = null
+      }
       setShowPersist(true)
       setPersistStatus('idle')
+      setUndoFile(null)
     }
   }
 
@@ -415,6 +627,7 @@ function EditablePropValue({
           <ValueDisplay value={value} />
         </span>
         {persistButton}
+        {previewModal}
       </>
     )
   }
@@ -461,6 +674,10 @@ function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
   const [originalText, setOriginalText] = useState('')
   const [showPersist, setShowPersist] = useState(false)
   const [persistStatus, setPersistStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [previewDiff, setPreviewDiff] = useState<DiffData | null>(null)
+  const [undoFile, setUndoFile] = useState<string | null>(null)
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const previewConfirmRef = useRef<(() => Promise<void>) | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -470,10 +687,19 @@ function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
     }
   }, [editing])
 
+  useEffect(() => () => { if (resetTimerRef.current) clearTimeout(resetTimerRef.current) }, [])
+
   const enterEditMode = () => {
+    // Clear any pending reset timer from a previous save
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current)
+      resetTimerRef.current = null
+    }
     setOriginalText(text)
     setEditValue(text)
     setEditing(true)
+    setUndoFile(null)
+    setPersistStatus('idle')
   }
 
   const cancelEdit = () => {
@@ -489,7 +715,7 @@ function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
     setPersistStatus('idle')
   }
 
-  const handlePersist = async () => {
+  const doActualPersist = async () => {
     if (!source?.fileName || !source?.lineNumber) return
     setPersistStatus('saving')
     const result = await persistTextValue({
@@ -499,7 +725,68 @@ function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
       newText: editValue,
     })
     setPersistStatus(result.ok ? 'saved' : 'error')
-    if (result.ok) setTimeout(() => setShowPersist(false), 1500)
+    if (result.ok) {
+      setUndoFile(source.fileName)
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current)
+      resetTimerRef.current = setTimeout(() => {
+        setShowPersist(false)
+        setPersistStatus('idle')
+        setUndoFile(null)
+        resetTimerRef.current = null
+      }, 30000)
+    }
+  }
+
+  const handlePersist = async () => {
+    if (!source?.fileName || !source?.lineNumber) return
+
+    const showPreview = localStorage.getItem(STORAGE_KEYS.SHOW_PREVIEW) !== 'false'
+    if (showPreview) {
+      setPersistStatus('saving')
+      const result = await persistTextValue({
+        fileName: source.fileName,
+        lineNumber: source.lineNumber,
+        oldText: originalText,
+        newText: editValue,
+      }, true) as PreviewResult
+      setPersistStatus('idle')
+      if (result.ok && 'diff' in result) {
+        previewConfirmRef.current = doActualPersist
+        setPreviewDiff(result.diff)
+      }
+      return
+    }
+
+    await doActualPersist()
+  }
+
+  const handlePreviewConfirm = async () => {
+    setPreviewDiff(null)
+    const action = previewConfirmRef.current
+    previewConfirmRef.current = null
+    if (action) await action()
+  }
+
+  const doActualUndo = async () => {
+    if (!undoFile) return
+    await undoEdit({ fileName: undoFile })
+    setUndoFile(null)
+    setPersistStatus('idle')
+    setShowPersist(false)
+  }
+
+  const handleUndo = async () => {
+    if (!undoFile) return
+    const showPreview = localStorage.getItem(STORAGE_KEYS.SHOW_PREVIEW) !== 'false'
+    if (showPreview) {
+      const result = await undoEdit({ fileName: undoFile }, true) as PreviewResult
+      if (result.ok && 'diff' in result) {
+        previewConfirmRef.current = doActualUndo
+        setPreviewDiff(result.diff)
+        return
+      }
+    }
+    await doActualUndo()
   }
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -535,10 +822,24 @@ function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
       </span>
       {showPersist && source?.fileName && (
         <div class="persist-row">
-          <button class="persist-btn-lg" onClick={handlePersist} disabled={persistStatus === 'saving'}>
-            {persistStatus === 'saving' ? 'Saving...' : persistStatus === 'saved' ? '\u2713 Saved' : persistStatus === 'error' ? '\u2715 Failed' : 'Save to source'}
-          </button>
+          {persistStatus === 'saved' ? (
+            <span class="saved-text">{'\u2713'} Saved</span>
+          ) : (
+            <button class="persist-btn-lg" onClick={handlePersist} disabled={persistStatus === 'saving'}>
+              {persistStatus === 'saving' ? 'Saving...' : persistStatus === 'error' ? '\u2715 Failed' : 'Save to source'}
+            </button>
+          )}
+          {undoFile && persistStatus === 'saved' && (
+            <button class="undo-btn" onClick={handleUndo}>Undo</button>
+          )}
         </div>
+      )}
+      {previewDiff && (
+        <PreviewModal
+          diff={previewDiff}
+          onConfirm={handlePreviewConfirm}
+          onCancel={() => setPreviewDiff(null)}
+        />
       )}
     </div>
   )
@@ -551,24 +852,23 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
 
   const propEntries = Object.entries(node.props)
   const hasProps = propEntries.length > 0
-  const hasHooks = node.hooks.length > 0
-  const hasState = node.state !== null && node.state !== undefined
 
-  const showUsageSource = node.usageSource && node.source &&
+  const effectiveSource = node.source ?? node._parentSource ?? null
+  const showUsageSource = !node.isHostElement && node.usageSource && node.source &&
     node.usageSource.fileName !== node.source.fileName
 
   return (
     <div>
       <div class="detail-section">
-        <div class="detail-component-name">{node.name}</div>
-        {node.source && (
+        <div class="detail-component-name">{node.isHostElement ? `<${node.name}>` : node.name}</div>
+        {effectiveSource && (
           <>
             {showUsageSource && <div class="source-label">Source</div>}
             <div class="source-link-row">
-              <div class="source-link" onClick={() => openInEditor(node.source!)}>
-                {formatPath(node.source)}
+              <div class="source-link" onClick={() => openInEditor(effectiveSource)}>
+                {formatPath(effectiveSource)}
               </div>
-              <button class="source-copy-btn" onClick={(e) => copyPath(node.source!, e)} title="Copy path">
+              <button class="source-copy-btn" onClick={(e) => copyPath(effectiveSource, e)} title="Copy path">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
                   <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
@@ -576,6 +876,15 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
               </button>
             </div>
           </>
+        )}
+        {node.slotOwner && (
+          <div
+            class="slot-indicator"
+            onClick={() => openInEditor(node.slotOwner!.source)}
+            title={`Open slot definition in ${formatPath(node.slotOwner!.source)}`}
+          >
+            slot in {node.slotOwner.componentName}
+          </div>
         )}
         {showUsageSource && (
           <>
@@ -597,17 +906,29 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
 
       {hasProps && (
         <div class="detail-section">
-          <div class="detail-section-title">Props</div>
+          <div class="detail-section-title">{node.isHostElement ? 'Attributes' : 'Props'}</div>
           {propEntries.map(([key, value]) => {
+            const valueType = typeof value
+            const isPrimitive = value === null || valueType === 'string' || valueType === 'number' || valueType === 'boolean'
+            // Host elements: editable only when source exists and value is primitive
+            if (node.isHostElement && (!node.source || !isPrimitive)) {
+              return (
+                <div class="detail-row" key={`${node.id}-${key}`}>
+                  <span class="detail-key">{key}:</span>
+                  <ValueDisplay value={value} />
+                </div>
+              )
+            }
             const isEdited = editedProps?.get(node.id)?.has(key) ?? false
             return (
-              <div class="detail-row" key={key}>
+              <div class="detail-row" key={`${node.id}-${key}`}>
                 <span class="detail-key">{key}:</span>
                 <EditablePropValue
                   propKey={key}
                   value={value}
                   nodeId={node.id}
-                  usageSource={node.usageSource ?? node.source ?? undefined}
+                  usageSource={node.isHostElement ? (node.source ?? undefined) : (node.usageSource ?? node.source ?? undefined)}
+                  dynamicProps={node.dynamicProps}
                   isEdited={isEdited}
                   onPropEdit={onPropEdit}
                   onPropPersisted={onPropPersisted}
@@ -627,58 +948,42 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
               text={text}
               nodeId={node.id}
               fragmentIndex={i}
-              source={node.usageSource ?? node.source}
+              source={node.isHostElement ? (node.source ?? node._parentSource ?? null) : (node.usageSource ?? node.source)}
             />
           ))}
         </div>
       )}
 
-      {hasState && (
-        <div class="detail-section">
-          <div class="detail-section-title">State</div>
-          {typeof node.state === 'object' && node.state !== null ? (
-            Object.entries(node.state as Record<string, unknown>).map(([key, value]) => (
-              <div class="detail-row" key={key}>
-                <span class="detail-key">{key}:</span>
-                <ValueDisplay value={value} />
-              </div>
-            ))
-          ) : (
-            <div class="detail-row">
-              <ValueDisplay value={node.state} />
-            </div>
-          )}
-        </div>
-      )}
+      {node.sections.map((section) => {
+        if (section.items.length === 0) return null
+        return (
+          <div class="detail-section" key={section.id}>
+            <div class="detail-section-title">{section.label}</div>
+            {section.items.map((item, i) => {
+              const canNavigate = item.lineNumber != null && node.source != null
 
-      {hasHooks && (
-        <div class="detail-section">
-          <div class="detail-section-title">Hooks</div>
-          {node.hooks.map((hook, i) => {
-            const label = hook.varName ?? hook.name
-            const canNavigate = hook.lineNumber != null && node.source != null
-
-            return (
-              <div class="detail-row" key={i}>
-                <span
-                  class={`detail-key${canNavigate ? ' detail-key-clickable' : ''}`}
-                  onClick={canNavigate ? () => openInEditor({
-                    fileName: node.source!.fileName,
-                    lineNumber: hook.lineNumber!,
-                    columnNumber: 1,
-                  }) : undefined}
-                >
-                  {label}:
-                </span>
-                {hook.editable
-                  ? <EditableValue hook={hook} nodeId={node.id} source={node.source} />
-                  : <ValueDisplay value={hook.value} />}
-                {hook.varName && <span class="hook-type-tag">[{hook.name}]</span>}
-              </div>
-            )
-          })}
-        </div>
-      )}
+              return (
+                <div class="detail-row" key={`${section.id}-${i}`}>
+                  <span
+                    class={`detail-key${canNavigate ? ' detail-key-clickable' : ''}`}
+                    onClick={canNavigate ? () => openInEditor({
+                      fileName: node.source!.fileName,
+                      lineNumber: item.lineNumber!,
+                      columnNumber: 1,
+                    }) : undefined}
+                  >
+                    {item.key}:
+                  </span>
+                  {item.editable
+                    ? <EditableValue item={item} nodeId={node.id} source={node.source} />
+                    : <ValueDisplay value={item.value} />}
+                  {item.badge && <span class="hook-type-tag">[{item.badge}]</span>}
+                </div>
+              )
+            })}
+          </div>
+        )
+      })}
     </div>
   )
 }

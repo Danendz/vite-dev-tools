@@ -17,7 +17,7 @@ function stringifyArg(a: unknown): string {
 }
 
 function formatArgs(args: unknown[]): string {
-  // Handle printf-style format strings (used by React: console.warn('%s\n\n%s', msg1, msg2))
+  // Handle printf-style format strings (e.g. console.warn('%s\n\n%s', msg1, msg2))
   if (typeof args[0] === 'string' && args.length > 1 && /%[sdoOif%]/.test(args[0])) {
     let i = 1
     const formatted = args[0].replace(/%[sdoOif]/g, () => {
@@ -33,7 +33,7 @@ function formatArgs(args: unknown[]): string {
 }
 
 /**
- * Clean stack trace: strip React/Vite internals, remove origin URLs, strip query strings.
+ * Clean stack trace: strip framework/Vite internals, remove origin URLs, strip query strings.
  */
 function cleanStack(stack: string): string {
   return stack

@@ -26,16 +26,22 @@ interface PanelProps {
   errorCount: number
   isPickerActive: boolean
   expandedNodeIds: Set<string> | null
+  elementExpandedNodeIds: Set<string> | null
+  showElements: boolean
   settingsOpen: boolean
   hideLibrary: boolean
   hideProviders: boolean
+  showPreview: boolean
   editor: string
   fontSize: number
+  supportedSettings?: string[]
   onSearchChange: (query: string) => void
   onPickerToggle: () => void
   onSettingsToggle: () => void
   onHideLibraryToggle: () => void
   onHideProvidersToggle: () => void
+  onShowElementsToggle: () => void
+  onShowPreviewToggle: () => void
   onEditorChange: (editor: string) => void
   onFontSizeChange: (size: number) => void
   onDockChange: (pos: DockPosition) => void
@@ -68,16 +74,22 @@ export function Panel({
   errorCount,
   isPickerActive,
   expandedNodeIds,
+  elementExpandedNodeIds,
+  showElements,
   settingsOpen,
   hideLibrary,
   hideProviders,
+  showPreview,
   editor,
   fontSize,
+  supportedSettings,
   onSearchChange,
   onPickerToggle,
   onSettingsToggle,
   onHideLibraryToggle,
   onHideProvidersToggle,
+  onShowElementsToggle,
+  onShowPreviewToggle,
   onEditorChange,
   onFontSizeChange,
   onDockChange,
@@ -268,10 +280,15 @@ export function Panel({
             <SettingsPopover
               hideLibrary={hideLibrary}
               hideProviders={hideProviders}
+              showElements={showElements}
+              showPreview={showPreview}
               editor={editor}
               fontSize={fontSize}
+              supportedSettings={supportedSettings}
               onHideLibraryToggle={onHideLibraryToggle}
               onHideProvidersToggle={onHideProvidersToggle}
+              onShowElementsToggle={onShowElementsToggle}
+              onShowPreviewToggle={onShowPreviewToggle}
               onEditorChange={onEditorChange}
               onFontSizeChange={onFontSizeChange}
               onClose={onSettingsToggle}
@@ -302,6 +319,8 @@ export function Panel({
                 tree={tree}
                 selectedId={selectedNode?.id ?? null}
                 expandedNodeIds={expandedNodeIds}
+                elementExpandedNodeIds={elementExpandedNodeIds}
+                showAllElements={showElements}
                 searchQuery={searchQuery}
                 matchingNodeIds={matchingNodeIds}
                 searchAncestorIds={searchAncestorIds}

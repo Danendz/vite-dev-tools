@@ -13,6 +13,7 @@ export const EVENTS = {
   PROP_EDIT: 'devtools:prop-edit',
   PROP_PERSISTED: 'devtools:prop-persisted',
   TEXT_EDIT: 'devtools:text-edit',
+  VALUE_EDIT: 'devtools:value-edit',
   TOAST: 'devtools:toast',
 } as const
 
@@ -26,14 +27,18 @@ export const STORAGE_KEYS = {
   FONT_SIZE: 'danendz-devtools:font-size',
   EDITOR: 'danendz-devtools:editor',
   DETAIL_SIZE: 'danendz-devtools:detail-size',
+  SHOW_ELEMENTS: 'danendz-devtools:show-elements',
+  SHOW_PREVIEW: 'danendz-devtools:show-preview',
 } as const
 
 // Server endpoints
 export const ENDPOINTS = {
   OPEN_EDITOR: '/__devtools/open-editor',
+  PERSIST_EDIT: '/__devtools/persist-edit',
   PERSIST_HOOK: '/__devtools/persist-hook',
   PERSIST_PROP: '/__devtools/persist-prop',
   PERSIST_TEXT: '/__devtools/persist-text',
+  UNDO_EDIT: '/__devtools/undo-edit',
 } as const
 
 // Default config
