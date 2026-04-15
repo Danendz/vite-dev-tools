@@ -33,11 +33,21 @@ function reapplyPendingEdits(nodes: import('../../core/types').NormalizedNode[])
     if (textEdits && node._textFibers && node.textFragments) {
       for (const [idx, newValue] of textEdits) {
         const fiber = node._textFibers[idx]
-        if (fiber && fiber.memoizedProps !== newValue) {
-          fiber.memoizedProps = newValue
-          fiber.pendingProps = newValue
-          if (fiber.stateNode && fiber.stateNode.textContent !== undefined) {
-            fiber.stateNode.textContent = newValue
+        if (fiber) {
+          if (fiber.tag === 5 && typeof fiber.memoizedProps === 'object' && fiber.memoizedProps) {
+            // Host element with React's optimized inline text child —
+            // replace memoizedProps with a new object to preserve prop structure
+            const newProps = { ...fiber.memoizedProps, children: newValue }
+            fiber.memoizedProps = newProps
+            fiber.pendingProps = newProps
+            if (fiber.stateNode) fiber.stateNode.textContent = newValue
+          } else if (fiber.memoizedProps !== newValue) {
+            // Regular HostText fiber (tag 6)
+            fiber.memoizedProps = newValue
+            fiber.pendingProps = newValue
+            if (fiber.stateNode && fiber.stateNode.textContent !== undefined) {
+              fiber.stateNode.textContent = newValue
+            }
           }
         }
         if (node.textFragments[idx] !== undefined) {

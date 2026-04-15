@@ -318,7 +318,7 @@ function getHostElementProps(fiber: any): Record<string, unknown> {
 
   const result: Record<string, unknown> = {}
   for (const key of Object.keys(props)) {
-    if (HOST_SKIP_KEYS.has(key)) continue
+    if (HOST_SKIP_KEYS.has(key) || /^\d+$/.test(key)) continue
     const value = props[key]
     if (typeof value === 'function') {
       result[key] = `fn()`
@@ -357,6 +357,10 @@ function getHostElementSource(fiber: any): ReturnType<typeof getReactSource> {
 
   const sourceProp = fiber.memoizedProps?.__source
   if (sourceProp) {
+    // Clean up __source from DOM — React 19 passes unknown JSX props through
+    if (fiber.stateNode instanceof HTMLElement && fiber.stateNode.hasAttribute('__source')) {
+      fiber.stateNode.removeAttribute('__source')
+    }
     if (typeof sourceProp === 'object' && sourceProp.fileName) {
       return {
         fileName: sourceProp.fileName,

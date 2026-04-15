@@ -913,7 +913,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
             // Host elements: editable only when source exists and value is primitive
             if (node.isHostElement && (!node.source || !isPrimitive)) {
               return (
-                <div class="detail-row" key={key}>
+                <div class="detail-row" key={`${node.id}-${key}`}>
                   <span class="detail-key">{key}:</span>
                   <ValueDisplay value={value} />
                 </div>
@@ -921,7 +921,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
             }
             const isEdited = editedProps?.get(node.id)?.has(key) ?? false
             return (
-              <div class="detail-row" key={key}>
+              <div class="detail-row" key={`${node.id}-${key}`}>
                 <span class="detail-key">{key}:</span>
                 <EditablePropValue
                   propKey={key}
