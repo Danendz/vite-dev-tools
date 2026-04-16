@@ -215,7 +215,7 @@ export function Panel({
       />
       <div class="panel">
         <div class="panel-header">
-          <span class="panel-title">DevTools</span>
+          <span class="panel-title">vite-devtools</span>
           <div class="panel-header-controls">
             {/* Element picker */}
             <button

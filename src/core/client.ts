@@ -32,6 +32,7 @@ export function mountOverlay(config: DevToolsConfig, container?: HTMLElement) {
 
   // Mount Preact app into shadow DOM
   const mountPoint = document.createElement('div')
+  mountPoint.className = 'devtools-root'
   shadow.appendChild(mountPoint)
 
   render(h(App, { config }), mountPoint)

@@ -7,6 +7,13 @@ export const STYLES = /* css */ `
     line-height: 1.5;
   }
 
+  .devtools-root {
+    font-family: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
+    font-size: 12px;
+    color: #d4d4d8;
+    line-height: 1.5;
+  }
+
   * {
     box-sizing: border-box;
     margin: 0;
@@ -123,7 +130,6 @@ export const STYLES = /* css */ `
     font-weight: 600;
     color: var(--accent);
     letter-spacing: 0.5px;
-    text-transform: uppercase;
   }
 
   .panel-close {
