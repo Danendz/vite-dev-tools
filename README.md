@@ -11,7 +11,7 @@ Supports **React** and **Vue 3**.
 - Edit a value in the overlay → writes it back to your source file
 - Hover any element → instantly find which component owns it
 - See only what renders — strips away providers, wrappers, and internals to show your actual UI tree
-- AI agents can inspect your component tree, read props/state, and highlight elements via MCP
+- AI agents can inspect your component tree, read props/state, highlight elements, and interact with the UI (click, type, select) via MCP
 
 Console capture with AI-ready copy · Dockable & resizable panel · Hover-to-highlight · Keyboard shortcut toggle · Framework-themed UI · MCP server for AI agents
 
@@ -107,7 +107,7 @@ devtools({
 
 ## MCP Server
 
-The built-in MCP server lets AI coding agents inspect and interact with your running app. It exposes 11 tools over Streamable HTTP at `/__devtools/mcp`.
+The built-in MCP server lets AI coding agents inspect and interact with your running app. It exposes 16 tools over Streamable HTTP at `/__devtools/mcp`.
 
 ### Connecting your AI agent
 
@@ -139,6 +139,8 @@ Replace `5173` with your Vite dev server port.
 
 ### Available tools
 
+**Query tools:**
+
 | Tool | Description |
 |------|-------------|
 | `listConnectedTabs` | List all browser tabs connected to devtools |
@@ -148,10 +150,32 @@ Replace `5173` with your Vite dev server port.
 | `getSourceLocation` | Get where a component is defined and where it's used |
 | `searchComponents` | Search components by name |
 | `getConsoleErrors` | Get captured console errors and warnings |
+
+**Action tools:**
+
+| Tool | Description |
+|------|-------------|
 | `selectComponent` | Select a component in the devtools panel |
 | `highlightDom` | Highlight a component's DOM elements in the browser |
 | `clearHighlight` | Clear any active AI highlight |
 | `openInEditor` | Open a component's source file in your editor |
+
+**Interaction tools** — for AI-driven testing and automation:
+
+| Tool | Description |
+|------|-------------|
+| `click` | Click a DOM element by component nodeId, CSS selector, or visible text |
+| `type` | Type text into an input or textarea (works with React controlled inputs and Vue `v-model`) |
+| `keypress` | Press a keyboard key (Enter, Escape, Tab, etc.) on a targeted element |
+| `selectOption` | Select an option from a `<select>` dropdown |
+| `getElementInfo` | Get element details: text content, visibility, attributes, and bounding rect |
+
+Interaction tools support three targeting methods (at least one required):
+- **`nodeId`** — component node ID from the tree, scopes to that component's DOM subtree
+- **`selector`** — CSS selector, scoped to component if `nodeId` is also given
+- **`text`** — find element by visible text content (e.g., click the "Submit" button)
+
+Action responses include whether the DOM settled after the interaction, how many elements matched, and any console errors that occurred during the action.
 
 ### Multi-tab support
 
