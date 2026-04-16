@@ -29,6 +29,9 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "prepublishOnly": "tsup"
   },
   "peerDependencies": {
@@ -45,7 +48,7 @@
     "@modelcontextprotocol/node": "2.0.0-alpha.2",
     "@modelcontextprotocol/server": "2.0.0-alpha.2",
     "launch-editor": "^2.9.1",
-    "oxc-parser": "^0.125.0",
+    "oxc-parser": "^0.126.0",
     "preact": "^10.25.4",
     "unplugin-vue-source": "^0.0.7",
     "zod": "^4.3.6"
@@ -53,9 +56,12 @@
   "devDependencies": {
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
+    "@vitest/coverage-v8": "^4.1.4",
+    "happy-dom": "^20.9.0",
     "tsup": "^8.3.5",
     "typescript": "^6.0.2",
-    "vite": "^8.0.8"
+    "vite": "^8.0.8",
+    "vitest": "^4.1.4"
   },
   "engines": {
     "node": ">=18"
