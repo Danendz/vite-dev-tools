@@ -70,6 +70,8 @@ export interface DevToolsConfig {
   accentColor?: string
   /** Which settings toggles are supported by the current adapter */
   supportedSettings?: string[]
+  /** Enable MCP server for AI agent integration (default: false) */
+  mcp?: boolean
 }
 
 export interface TreeUpdateEvent {
@@ -94,3 +96,43 @@ export interface ToastItem {
 }
 
 export type ActiveTab = 'inspect' | 'console'
+
+// MCP bridge types
+
+export interface BridgeRequest {
+  id: string
+  method: string
+  params?: Record<string, unknown>
+}
+
+export interface BridgeResponse {
+  id: string
+  result?: unknown
+  error?: string
+}
+
+export interface ConnectedTab {
+  tabId: string
+  path: string
+  title?: string
+  lastFocused: number
+}
+
+export interface CompactNode {
+  id: string
+  name: string
+  children: CompactNode[]
+  isFromNodeModules: boolean
+  source: { fileName: string } | null
+}
+
+export type ActionSource = 'ai' | 'user'
+
+export interface HighlightEntry {
+  id: string
+  rect: DOMRect
+  name: string
+  source: ActionSource
+  domElements: HTMLElement[]
+  persist: boolean
+}

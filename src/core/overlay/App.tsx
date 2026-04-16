@@ -1,6 +1,6 @@
 import { h } from 'preact'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'preact/hooks'
-import type { NormalizedNode, DevToolsConfig, TreeUpdateEvent, DockPosition, ActiveTab, ConsoleEntry, ToastItem } from '../types'
+import type { NormalizedNode, DevToolsConfig, TreeUpdateEvent, DockPosition, ActiveTab, ConsoleEntry, ToastItem, ActionSource, HighlightEntry } from '../types'
 import { FloatingIcon } from './FloatingIcon'
 import { Panel } from './Panel'
 import { Highlight } from './Highlight'
@@ -8,6 +8,7 @@ import { ContextMenu } from './ContextMenu'
 import { ToastContainer } from './ToastContainer'
 import { startCapture } from '../console-capture'
 import { EVENTS, STORAGE_KEYS } from '../../shared/constants'
+import { devtoolsState } from './state-store'
 
 function findNodeById(nodes: NormalizedNode[], id: string): NormalizedNode | null {
   for (const node of nodes) {
@@ -45,6 +46,20 @@ function findNodePath(nodes: NormalizedNode[], targetId: string): string[] | nul
     if (childPath) return [node.id, ...childPath]
   }
   return null
+}
+
+function computeUnionRect(elements: HTMLElement[]): DOMRect | null {
+  let top = Infinity, left = Infinity, bottom = -Infinity, right = -Infinity
+  for (const el of elements) {
+    const r = el.getBoundingClientRect()
+    if (r.width === 0 && r.height === 0) continue
+    top = Math.min(top, r.top)
+    left = Math.min(left, r.left)
+    bottom = Math.max(bottom, r.bottom)
+    right = Math.max(right, r.right)
+  }
+  if (top === Infinity) return null
+  return new DOMRect(left, top, right - left, bottom - top)
 }
 
 interface AppProps {
@@ -103,8 +118,7 @@ export function App({ config }: AppProps) {
   const [tree, setTree] = useState<NormalizedNode[]>([])
   const [selectedNode, setSelectedNode] = useState<NormalizedNode | null>(null)
   const reverseMapRef = useRef(new Map<HTMLElement, NormalizedNode>())
-  const [highlightRect, setHighlightRect] = useState<DOMRect | null>(null)
-  const [highlightName, setHighlightName] = useState<string | null>(null)
+  const [highlights, setHighlights] = useState<Map<string, HighlightEntry>>(new Map())
   const [contextMenu, setContextMenu] = useState<{
     x: number
     y: number
@@ -114,12 +128,20 @@ export function App({ config }: AppProps) {
   const [expandedPropsSet, setExpandedPropsSet] = useState<Set<string>>(new Set())
   const [toasts, setToasts] = useState<ToastItem[]>([])
   const toastIdRef = useRef(0)
+  const [aiSelectedNodeIds, setAiSelectedNodeIds] = useState<Set<string>>(new Set())
+  const [showAiActions, setShowAiActions] = useState(() => {
+    return localStorage.getItem(STORAGE_KEYS.SHOW_AI_ACTIONS) !== 'false'
+  })
+  const [mcpPaused, setMcpPaused] = useState(() => {
+    return localStorage.getItem(STORAGE_KEYS.MCP_PAUSED) !== 'false'
+  })
 
   // Listen for tree updates from the framework runtime
   useEffect(() => {
     function handleTreeUpdate(e: Event) {
       const { tree: newTree } = (e as CustomEvent<TreeUpdateEvent>).detail
       setTree(newTree)
+      devtoolsState.setTree(newTree)
       // Rebuild reverse DOM → node map
       const map = new Map<HTMLElement, NormalizedNode>()
       buildReverseMap(newTree, map)
@@ -127,7 +149,9 @@ export function App({ config }: AppProps) {
       // Re-find the selected node in the new tree to get fresh props/hooks/state
       setSelectedNode((prev) => {
         if (!prev) return null
-        return findNodeById(newTree, prev.id) ?? null
+        const found = findNodeById(newTree, prev.id) ?? null
+        devtoolsState.setSelectedNode(found)
+        return found
       })
     }
     window.addEventListener(EVENTS.TREE_UPDATE, handleTreeUpdate)
@@ -167,6 +191,12 @@ export function App({ config }: AppProps) {
       })
     })
   }, [])
+
+  // Sync selected node to shared state store (for MCP bridge)
+  useEffect(() => { devtoolsState.setSelectedNode(selectedNode) }, [selectedNode])
+
+  // Sync console entries to shared state store (for MCP bridge)
+  useEffect(() => { devtoolsState.setConsoleEntries(consoleEntries) }, [consoleEntries])
 
   // Listen for toast events from communication/runtime layers
   const MAX_TOASTS = 5
@@ -355,7 +385,7 @@ export function App({ config }: AppProps) {
       document.removeEventListener('mousemove', handlePickerMove, true)
       document.removeEventListener('click', handlePickerClick, true)
       document.removeEventListener('keydown', handlePickerKey, true)
-      handleHover(null)
+      handleUserHover(null)
     }
   }, [isPickerActive, tree])
 
@@ -501,29 +531,108 @@ export function App({ config }: AppProps) {
   }, [])
 
   const handleHover = useCallback((node: NormalizedNode | null) => {
-    if (!node || !node._domElements || node._domElements.length === 0) {
-      setHighlightRect(null)
-      setHighlightName(null)
-      return
-    }
-    // Compute union bounding rect across all DOM elements (handles fragments)
-    let top = Infinity, left = Infinity, bottom = -Infinity, right = -Infinity
-    for (const el of node._domElements) {
-      const r = el.getBoundingClientRect()
-      if (r.width === 0 && r.height === 0) continue
-      top = Math.min(top, r.top)
-      left = Math.min(left, r.left)
-      bottom = Math.max(bottom, r.bottom)
-      right = Math.max(right, r.right)
-    }
-    if (top === Infinity) {
-      setHighlightRect(null)
-      setHighlightName(null)
-      return
-    }
-    setHighlightRect(new DOMRect(left, top, right - left, bottom - top))
-    setHighlightName(node.name)
+    setHighlights(prev => {
+      const next = new Map(prev)
+      if (!node || !node._domElements?.length) {
+        next.delete('user')
+      } else {
+        const rect = computeUnionRect(node._domElements)
+        if (!rect) { next.delete('user'); return next }
+        next.set('user', { id: 'user', rect, name: node.name, source: 'user', domElements: node._domElements, persist: false })
+      }
+      return next
+    })
   }, [])
+
+  const handleClearAiHighlight = useCallback(() => {
+    setHighlights(prev => {
+      if (!prev.has('ai')) return prev
+      const next = new Map(prev)
+      next.delete('ai')
+      return next
+    })
+  }, [])
+
+  // Register MCP action callbacks (must be after handleSelect/handleHover declarations)
+  useEffect(() => {
+    devtoolsState.onSelectNode = (node: NormalizedNode) => {
+      handleSelect(node)
+      setActiveTab('inspect')
+      const path = findNodePath(devtoolsState.tree, node.id)
+      if (path) setExpandedNodeIds(new Set(path))
+      setAiSelectedNodeIds(prev => new Set(prev).add(node.id))
+      setTimeout(() => {
+        setAiSelectedNodeIds(prev => {
+          const next = new Set(prev)
+          next.delete(node.id)
+          return next
+        })
+      }, 5000)
+    }
+    devtoolsState.onHighlight = (node: NormalizedNode | null, source?: ActionSource, persist?: boolean) => {
+      setHighlights(prev => {
+        const next = new Map(prev)
+        if (!node) {
+          next.delete('ai')
+          return next
+        }
+        if (!node._domElements?.length) return prev
+        // Scroll into view for AI highlights
+        if (source === 'ai') {
+          node._domElements[0].scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }
+        const rect = computeUnionRect(node._domElements)
+        if (!rect) return prev
+        next.set('ai', { id: 'ai', rect, name: node.name, source: source ?? 'ai', domElements: node._domElements, persist: !!persist })
+        return next
+      })
+      // Auto-clear non-persistent AI highlights
+      if (node && !persist) {
+        setTimeout(() => {
+          setHighlights(prev => {
+            const entry = prev.get('ai')
+            if (!entry || entry.persist) return prev
+            const next = new Map(prev)
+            next.delete('ai')
+            return next
+          })
+        }, 3000)
+      }
+    }
+    return () => {
+      devtoolsState.onSelectNode = null
+      devtoolsState.onHighlight = null
+    }
+  }, [handleSelect])
+
+  // rAF live-tracking: recompute highlight rects each frame while any highlights exist
+  const hasHighlights = highlights.size > 0
+  useEffect(() => {
+    if (!hasHighlights) return
+    let rafId: number
+    function tick() {
+      setHighlights(prev => {
+        let changed = false
+        const next = new Map(prev)
+        for (const [id, entry] of next) {
+          if (!entry.domElements.length) continue
+          const rect = computeUnionRect(entry.domElements)
+          if (!rect) {
+            next.delete(id)
+            changed = true
+          } else if (rect.top !== entry.rect.top || rect.left !== entry.rect.left
+            || rect.width !== entry.rect.width || rect.height !== entry.rect.height) {
+            next.set(id, { ...entry, rect })
+            changed = true
+          }
+        }
+        return changed ? next : prev
+      })
+      rafId = requestAnimationFrame(tick)
+    }
+    rafId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(rafId)
+  }, [hasHighlights])
 
   const handleContextMenu = useCallback((e: MouseEvent, node: NormalizedNode) => {
     if (!node.source) return
@@ -547,9 +656,25 @@ export function App({ config }: AppProps) {
     })
   }, [])
 
+  const handleMcpPausedToggle = useCallback(() => {
+    setMcpPaused((prev) => {
+      const next = !prev
+      localStorage.setItem(STORAGE_KEYS.MCP_PAUSED, String(next))
+      return next
+    })
+  }, [])
+
+  const handleShowAiActionsToggle = useCallback(() => {
+    setShowAiActions((prev) => {
+      const next = !prev
+      localStorage.setItem(STORAGE_KEYS.SHOW_AI_ACTIONS, String(next))
+      return next
+    })
+  }, [])
+
   return (
     <div>
-      <Highlight rect={highlightRect} name={highlightName} />
+      <Highlight highlights={Array.from(highlights.values())} showAiActions={showAiActions} />
 
       {!isOpen && <FloatingIcon onClick={togglePanel} />}
 
@@ -593,6 +718,14 @@ export function App({ config }: AppProps) {
           onClearConsole={handleClearConsole}
           editedProps={editedProps}
           expandedPropsSet={expandedPropsSet}
+          mcpEnabled={config.mcp ?? false}
+          mcpPaused={mcpPaused}
+          aiHighlightActive={highlights.has('ai')}
+          aiSelectedNodeIds={aiSelectedNodeIds}
+          showAiActions={showAiActions}
+          onClearAiHighlight={handleClearAiHighlight}
+          onMcpPausedToggle={handleMcpPausedToggle}
+          onShowAiActionsToggle={handleShowAiActionsToggle}
           onPropEdit={handlePropEdit}
           onPropPersisted={handlePropPersisted}
           onExpandProps={handleExpandProps}

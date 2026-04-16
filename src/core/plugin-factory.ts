@@ -93,7 +93,7 @@ export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevTool
       return adapter.transform(code, id, projectRoot)
     },
 
-    configureServer(server) {
+    async configureServer(server) {
       // Extend Vite's fs.allow to include the plugin's dist directory
       server.config.server.fs.allow.push(DIR)
 
@@ -281,6 +281,21 @@ export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevTool
           }
         })
       })
+
+      // MCP server (opt-in via config.mcp)
+      if (mergedConfig.mcp) {
+        const { BridgeServer, createMcpTools, createMcpMiddleware } = await import('./mcp/index.js')
+        const bridge = new BridgeServer()
+        bridge.attach(server)
+        const mcp = createMcpTools(bridge)
+        server.middlewares.use(createMcpMiddleware(mcp))
+
+        server.httpServer?.once('listening', () => {
+          const addr = server.httpServer?.address()
+          const port = typeof addr === 'object' && addr ? addr.port : 5173
+          console.log(`[devtools] MCP server ready at http://localhost:${port}${ENDPOINTS.MCP}`)
+        })
+      }
 
       // Let adapter register additional middlewares (e.g. legacy persist endpoints)
       if ((adapter as any).configureServer) {

@@ -2,6 +2,7 @@ import { h, render } from 'preact'
 import type { DevToolsConfig } from './types'
 import { App } from './overlay/App'
 import { STYLES } from './overlay/styles'
+import { initBridgeClient } from './mcp/bridge-client'
 
 function hexToRgb(hex: string): string {
   const h = hex.replace('#', '')
@@ -35,4 +36,9 @@ export function mountOverlay(config: DevToolsConfig, container?: HTMLElement) {
   shadow.appendChild(mountPoint)
 
   render(h(App, { config }), mountPoint)
+
+  // Initialize MCP bridge if enabled
+  if (config.mcp) {
+    initBridgeClient()
+  }
 }

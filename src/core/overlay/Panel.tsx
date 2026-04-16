@@ -4,7 +4,7 @@ import type { NormalizedNode, DockPosition, ActiveTab, ConsoleEntry } from '../t
 import { TreeView } from './TreeView'
 import { DetailPanel } from './DetailPanel'
 import { ConsolePane } from './ConsolePane'
-import { SettingsPopover } from './SettingsPopover'
+import { SettingsModal } from './SettingsModal'
 import { STORAGE_KEYS } from '../../shared/constants'
 
 const MIN_HEIGHT = 150
@@ -54,6 +54,14 @@ interface PanelProps {
   onPropEdit: (nodeId: string, propKey: string) => void
   onPropPersisted: (nodeId: string, propKey: string) => void
   onExpandProps: (nodeId: string) => void
+  mcpEnabled: boolean
+  mcpPaused: boolean
+  aiHighlightActive: boolean
+  aiSelectedNodeIds?: Set<string>
+  showAiActions: boolean
+  onClearAiHighlight: () => void
+  onMcpPausedToggle: () => void
+  onShowAiActionsToggle: () => void
   onSelect: (node: NormalizedNode) => void
   onHover: (node: NormalizedNode | null) => void
   onContextMenu: (e: MouseEvent, node: NormalizedNode) => void
@@ -99,6 +107,14 @@ export function Panel({
   onClearConsole,
   editedProps,
   expandedPropsSet,
+  mcpEnabled,
+  mcpPaused,
+  aiHighlightActive,
+  aiSelectedNodeIds,
+  showAiActions,
+  onClearAiHighlight,
+  onMcpPausedToggle,
+  onShowAiActionsToggle,
   onPropEdit,
   onPropPersisted,
   onExpandProps,
@@ -228,6 +244,16 @@ export function Panel({
                 <line x1="10" y1="10" x2="14" y2="14" />
               </svg>
             </button>
+            {/* Clear AI highlight */}
+            {aiHighlightActive && (
+              <button
+                class="ai-highlight-clear-btn"
+                onClick={onClearAiHighlight}
+                title="Clear AI highlight"
+              >
+                AI {'\u00d7'}
+              </button>
+            )}
             {/* Settings */}
             <button
               class={`dock-btn${settingsOpen ? ' active' : ''}`}
@@ -277,13 +303,16 @@ export function Panel({
             </button>
           </div>
           {settingsOpen && (
-            <SettingsPopover
+            <SettingsModal
               hideLibrary={hideLibrary}
               hideProviders={hideProviders}
               showElements={showElements}
               showPreview={showPreview}
               editor={editor}
               fontSize={fontSize}
+              mcpEnabled={mcpEnabled}
+              mcpPaused={mcpPaused}
+              showAiActions={showAiActions}
               supportedSettings={supportedSettings}
               onHideLibraryToggle={onHideLibraryToggle}
               onHideProvidersToggle={onHideProvidersToggle}
@@ -291,6 +320,8 @@ export function Panel({
               onShowPreviewToggle={onShowPreviewToggle}
               onEditorChange={onEditorChange}
               onFontSizeChange={onFontSizeChange}
+              onMcpPausedToggle={onMcpPausedToggle}
+              onShowAiActionsToggle={onShowAiActionsToggle}
               onClose={onSettingsToggle}
             />
           )}
@@ -326,6 +357,8 @@ export function Panel({
                 searchAncestorIds={searchAncestorIds}
                 editedProps={editedProps}
                 expandedPropsSet={expandedPropsSet}
+                aiSelectedNodeIds={aiSelectedNodeIds}
+                showAiActions={showAiActions}
                 onSearchChange={onSearchChange}
                 onPropEdit={onPropEdit}
                 onExpandProps={onExpandProps}
