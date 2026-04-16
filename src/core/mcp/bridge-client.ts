@@ -1,20 +1,12 @@
 import type { NormalizedNode, CompactNode, BridgeRequest, BridgeResponse } from '../types'
 import { BRIDGE_EVENTS, STORAGE_KEYS } from '../../shared/constants'
 import { devtoolsState } from '../overlay/state-store'
+import { findNodeById } from './tree-utils'
 
 const TAB_ID = `tab_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 
 type Handler = (params: Record<string, unknown>) => Promise<unknown>
 const handlers = new Map<string, Handler>()
-
-function findNodeById(nodes: NormalizedNode[], id: string): NormalizedNode | null {
-  for (const node of nodes) {
-    if (node.id === id) return node
-    const found = findNodeById(node.children, id)
-    if (found) return found
-  }
-  return null
-}
 
 function toCompact(node: NormalizedNode, maxDepth?: number, current = 0): CompactNode {
   const atLimit = maxDepth !== undefined && current >= maxDepth
@@ -129,6 +121,114 @@ handlers.set('openInEditor', async (params) => {
   const { openInEditor } = await import('../communication')
   openInEditor(node.source)
   return { ok: true, file: node.source.fileName, line: node.source.lineNumber }
+})
+
+// --- Interaction handlers ---
+
+handlers.set('click', async (params) => {
+  const { resolveElements, dispatchClick, waitForSettle, startErrorCapture, buildActionResponse } = await import('./interaction')
+  const { elements, matchCount, error } = resolveElements({
+    nodeId: params.nodeId as string | undefined,
+    selector: params.selector as string | undefined,
+    text: params.text as string | undefined,
+  })
+  if (error) return { success: false, settled: false, matchCount: 0, consoleErrors: [], error }
+  if (elements.length === 0) return { success: false, settled: false, matchCount: 0, consoleErrors: [], error: 'No matching element found' }
+
+  const stopCapture = startErrorCapture()
+  dispatchClick(elements[0])
+  const { settled } = await waitForSettle()
+  const errors = stopCapture()
+
+  return buildActionResponse({ success: true, settled, matchCount, errors, nodeId: params.nodeId as string | undefined })
+})
+
+handlers.set('type', async (params) => {
+  const { resolveElements, dispatchType, waitForSettle, startErrorCapture, buildActionResponse } = await import('./interaction')
+  const { elements, matchCount, error } = resolveElements({
+    nodeId: params.nodeId as string | undefined,
+    selector: params.selector as string | undefined,
+  })
+  if (error) return { success: false, settled: false, matchCount: 0, consoleErrors: [], error }
+  if (elements.length === 0) return { success: false, settled: false, matchCount: 0, consoleErrors: [], error: 'No matching element found' }
+
+  const stopCapture = startErrorCapture()
+  dispatchType(elements[0], params.value as string, !!(params.clear))
+  const { settled } = await waitForSettle()
+  const errors = stopCapture()
+
+  return buildActionResponse({ success: true, settled, matchCount, errors, nodeId: params.nodeId as string | undefined })
+})
+
+handlers.set('keypress', async (params) => {
+  const { resolveElements, dispatchKeypress, waitForSettle, startErrorCapture, buildActionResponse } = await import('./interaction')
+  const { elements, matchCount, error } = resolveElements({
+    nodeId: params.nodeId as string | undefined,
+    selector: params.selector as string | undefined,
+  })
+  if (error) return { success: false, settled: false, matchCount: 0, consoleErrors: [], error }
+  if (elements.length === 0) return { success: false, settled: false, matchCount: 0, consoleErrors: [], error: 'No matching element found' }
+
+  const stopCapture = startErrorCapture()
+  dispatchKeypress(elements[0], params.key as string)
+  const { settled } = await waitForSettle()
+  const errors = stopCapture()
+
+  return buildActionResponse({ success: true, settled, matchCount, errors, nodeId: params.nodeId as string | undefined })
+})
+
+handlers.set('selectOption', async (params) => {
+  const { resolveElements, dispatchSelectOption, waitForSettle, startErrorCapture, buildActionResponse } = await import('./interaction')
+  const { elements, matchCount, error } = resolveElements({
+    nodeId: params.nodeId as string | undefined,
+    selector: params.selector as string | undefined,
+  })
+  if (error) return { success: false, settled: false, matchCount: 0, consoleErrors: [], error }
+  if (elements.length === 0) return { success: false, settled: false, matchCount: 0, consoleErrors: [], error: 'No matching element found' }
+
+  const el = elements[0]
+  if (el.tagName !== 'SELECT') return { success: false, settled: false, matchCount, consoleErrors: [], error: `Expected <select> but found <${el.tagName.toLowerCase()}>` }
+
+  const stopCapture = startErrorCapture()
+  dispatchSelectOption(el as HTMLSelectElement, params.value as string)
+  const { settled } = await waitForSettle()
+  const errors = stopCapture()
+
+  return buildActionResponse({ success: true, settled, matchCount, errors, nodeId: params.nodeId as string | undefined })
+})
+
+handlers.set('getElementInfo', async (params) => {
+  const { resolveElements } = await import('./interaction')
+  const { elements, matchCount, error } = resolveElements({
+    nodeId: params.nodeId as string | undefined,
+    selector: params.selector as string | undefined,
+    text: params.text as string | undefined,
+  })
+  if (error) return { matchCount: 0, error }
+  if (elements.length === 0) return { matchCount: 0, error: 'No matching element found' }
+
+  const el = elements[0]
+  const rect = el.getBoundingClientRect()
+  const style = getComputedStyle(el)
+
+  return {
+    matchCount,
+    tagName: el.tagName.toLowerCase(),
+    textContent: (el.textContent?.trim() ?? '').slice(0, 500),
+    visible: rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none',
+    attributes: {
+      value: (el as HTMLInputElement).value ?? undefined,
+      disabled: (el as HTMLInputElement).disabled ?? undefined,
+      checked: (el as HTMLInputElement).checked ?? undefined,
+      className: el.className || undefined,
+      href: (el as HTMLAnchorElement).href ?? undefined,
+      type: el.getAttribute('type') ?? undefined,
+      placeholder: el.getAttribute('placeholder') ?? undefined,
+      role: el.getAttribute('role') ?? undefined,
+      'aria-label': el.getAttribute('aria-label') ?? undefined,
+    },
+    boundingRect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height },
+  }
 })
 
 /** Initialize the HMR bridge client */

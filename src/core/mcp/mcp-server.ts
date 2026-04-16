@@ -128,5 +128,80 @@ export function createMcpTools(bridge: BridgeServer): McpServer {
     return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
   })
 
+  // --- Interaction tools ---
+
+  const interactionTargetDesc = {
+    nodeId: 'Component node ID from the tree — scopes targeting to that component\'s DOM subtree',
+    selector: 'CSS selector. Scoped to component if nodeId is given, otherwise queries the full document',
+    text: 'Find element by its visible text content. Matches the first leaf element with matching trimmed textContent',
+    tab: 'Target tab ID. Auto-selects if omitted.',
+  }
+
+  mcp.registerTool('click', {
+    description: 'Click a DOM element in the running app. Target by component nodeId, CSS selector, or visible text. When multiple elements match, clicks the first in DOM order. Returns whether DOM settled after click, match count, any console errors, and optionally the targeted component\'s current state.',
+    inputSchema: z.object({
+      nodeId: z.string().optional().describe(interactionTargetDesc.nodeId),
+      selector: z.string().optional().describe(interactionTargetDesc.selector),
+      text: z.string().optional().describe(interactionTargetDesc.text),
+      tab: z.string().optional().describe(interactionTargetDesc.tab),
+    }),
+  }, async ({ nodeId, selector, text, tab }) => {
+    const result = await bridge.request('click', { nodeId, selector, text }, tab)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  })
+
+  mcp.registerTool('type', {
+    description: 'Type text into an input or textarea element. Target by component nodeId or CSS selector. Uses native value setter to work with React controlled inputs and Vue v-model. Set clear=true to clear existing value first.',
+    inputSchema: z.object({
+      nodeId: z.string().optional().describe(interactionTargetDesc.nodeId),
+      selector: z.string().optional().describe(interactionTargetDesc.selector),
+      value: z.string().describe('The text value to type into the element'),
+      clear: z.boolean().optional().describe('Clear existing value before typing (default: false)'),
+      tab: z.string().optional().describe(interactionTargetDesc.tab),
+    }),
+  }, async ({ nodeId, selector, value, clear, tab }) => {
+    const result = await bridge.request('type', { nodeId, selector, value, clear }, tab)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  })
+
+  mcp.registerTool('keypress', {
+    description: 'Press a keyboard key on a targeted element. Dispatches keydown and keyup events. Common keys: "Enter", "Escape", "Tab", "Backspace", "ArrowDown", or single characters like "a".',
+    inputSchema: z.object({
+      nodeId: z.string().optional().describe(interactionTargetDesc.nodeId),
+      selector: z.string().optional().describe(interactionTargetDesc.selector),
+      key: z.string().describe('Key to press, e.g. "Enter", "Escape", "Tab", "a"'),
+      tab: z.string().optional().describe(interactionTargetDesc.tab),
+    }),
+  }, async ({ nodeId, selector, key, tab }) => {
+    const result = await bridge.request('keypress', { nodeId, selector, key }, tab)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  })
+
+  mcp.registerTool('selectOption', {
+    description: 'Select an option from a <select> dropdown element. Target by component nodeId or CSS selector. Sets the value and dispatches change events for React/Vue reactivity.',
+    inputSchema: z.object({
+      nodeId: z.string().optional().describe(interactionTargetDesc.nodeId),
+      selector: z.string().optional().describe(interactionTargetDesc.selector),
+      value: z.string().describe('The option value to select'),
+      tab: z.string().optional().describe(interactionTargetDesc.tab),
+    }),
+  }, async ({ nodeId, selector, value, tab }) => {
+    const result = await bridge.request('selectOption', { nodeId, selector, value }, tab)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  })
+
+  mcp.registerTool('getElementInfo', {
+    description: 'Get information about a DOM element: tag name, text content, visibility, attributes (value, disabled, checked, className, href, type, placeholder, role, aria-label), and bounding rect. Target by component nodeId, CSS selector, or visible text.',
+    inputSchema: z.object({
+      nodeId: z.string().optional().describe(interactionTargetDesc.nodeId),
+      selector: z.string().optional().describe(interactionTargetDesc.selector),
+      text: z.string().optional().describe(interactionTargetDesc.text),
+      tab: z.string().optional().describe(interactionTargetDesc.tab),
+    }),
+  }, async ({ nodeId, selector, text, tab }) => {
+    const result = await bridge.request('getElementInfo', { nodeId, selector, text }, tab)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  })
+
   return mcp
 }
