@@ -135,4 +135,5 @@ export interface HighlightEntry {
   source: ActionSource
   domElements: HTMLElement[]
   persist: boolean
+  _gen?: number
 }

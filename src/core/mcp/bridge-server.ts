@@ -15,46 +15,64 @@ export class BridgeServer {
   private pending = new Map<string, PendingRequest>()
   private server: ViteDevServer | null = null
 
+  // Store bound handlers for cleanup
+  private _onRegister = (data: { tabId: string; path: string; title?: string }) => {
+    this.tabs.set(data.tabId, {
+      tabId: data.tabId,
+      path: data.path,
+      title: data.title,
+      lastFocused: Date.now(),
+    })
+  }
+  private _onFocus = (data: { tabId: string }) => {
+    const tab = this.tabs.get(data.tabId)
+    if (tab) tab.lastFocused = Date.now()
+  }
+  private _onUnload = (data: { tabId: string }) => {
+    this.tabs.delete(data.tabId)
+    for (const [id, pending] of this.pending) {
+      if (pending.tabId === data.tabId) {
+        clearTimeout(pending.timer)
+        this.pending.delete(id)
+        pending.reject(new Error('Tab disconnected.'))
+      }
+    }
+  }
+  private _onResponse = (data: BridgeResponse) => {
+    const pending = this.pending.get(data.id)
+    if (!pending) return
+    this.pending.delete(data.id)
+    clearTimeout(pending.timer)
+    if (data.error) {
+      pending.reject(new Error(data.error))
+    } else {
+      pending.resolve(data.result)
+    }
+  }
+
   attach(server: ViteDevServer) {
+    if (this.server) this.detach()
     this.server = server
 
-    server.hot.on(BRIDGE_EVENTS.TAB_REGISTER, (data: { tabId: string; path: string; title?: string }) => {
-      this.tabs.set(data.tabId, {
-        tabId: data.tabId,
-        path: data.path,
-        title: data.title,
-        lastFocused: Date.now(),
-      })
-    })
+    server.hot.on(BRIDGE_EVENTS.TAB_REGISTER, this._onRegister)
+    server.hot.on(BRIDGE_EVENTS.TAB_FOCUS, this._onFocus)
+    server.hot.on(BRIDGE_EVENTS.TAB_UNLOAD, this._onUnload)
+    server.hot.on(BRIDGE_EVENTS.RESPONSE, this._onResponse)
+  }
 
-    server.hot.on(BRIDGE_EVENTS.TAB_FOCUS, (data: { tabId: string }) => {
-      const tab = this.tabs.get(data.tabId)
-      if (tab) tab.lastFocused = Date.now()
-    })
-
-    server.hot.on(BRIDGE_EVENTS.TAB_UNLOAD, (data: { tabId: string }) => {
-      this.tabs.delete(data.tabId)
-      // Flush pending requests for this tab
-      for (const [id, pending] of this.pending) {
-        if (pending.tabId === data.tabId) {
-          clearTimeout(pending.timer)
-          this.pending.delete(id)
-          pending.reject(new Error('Tab disconnected.'))
-        }
-      }
-    })
-
-    server.hot.on(BRIDGE_EVENTS.RESPONSE, (data: BridgeResponse) => {
-      const pending = this.pending.get(data.id)
-      if (!pending) return
-      this.pending.delete(data.id)
+  detach() {
+    if (!this.server) return
+    this.server.hot.off(BRIDGE_EVENTS.TAB_REGISTER, this._onRegister)
+    this.server.hot.off(BRIDGE_EVENTS.TAB_FOCUS, this._onFocus)
+    this.server.hot.off(BRIDGE_EVENTS.TAB_UNLOAD, this._onUnload)
+    this.server.hot.off(BRIDGE_EVENTS.RESPONSE, this._onResponse)
+    // Flush all pending requests
+    for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer)
-      if (data.error) {
-        pending.reject(new Error(data.error))
-      } else {
-        pending.resolve(data.result)
-      }
-    })
+      pending.reject(new Error('Bridge detached.'))
+    }
+    this.pending.clear()
+    this.server = null
   }
 
   getConnectedTabs(): ConnectedTab[] {

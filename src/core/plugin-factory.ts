@@ -13,6 +13,20 @@ const DIR = path.dirname(fileURLToPath(import.meta.url))
 
 const SOURCE_FILE_RE = /\.([jt]sx?|vue)$/
 
+/** Resolve a user-supplied fileName to an absolute path within the project root. Returns null if path escapes root. */
+function safeResolve(projectRoot: string, fileName: string): string | null {
+  const resolved = path.resolve(projectRoot, fileName.replace(/^\//, ''))
+  const root = path.resolve(projectRoot) + path.sep
+  if (!resolved.startsWith(root) && resolved !== path.resolve(projectRoot)) return null
+  if (fs.existsSync(resolved)) return resolved
+  // Try as absolute path but still check containment
+  if (fs.existsSync(fileName)) {
+    const abs = path.resolve(fileName)
+    if (abs.startsWith(root) || abs === path.resolve(projectRoot)) return abs
+  }
+  return null
+}
+
 export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevToolsConfig): Plugin {
   const mergedConfig: DevToolsConfig = {
     ...DEFAULT_CONFIG,
@@ -131,20 +145,22 @@ export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevTool
           if (req.method !== 'POST' || req.url !== ENDPOINTS.PERSIST_EDIT) return next()
 
           let body = ''
-          req.on('data', (chunk: string) => { body += chunk })
+          let aborted = false
+          req.on('data', (chunk: string) => {
+            body += chunk
+            if (body.length > 1024 * 1024) { aborted = true; res.statusCode = 413; res.end(JSON.stringify({ ok: false, error: 'Payload too large' })); req.destroy() }
+          })
           req.on('end', () => {
+            if (aborted) return
             res.setHeader('Content-Type', 'application/json')
             try {
               const { editHint, value, fileName, lineNumber, componentName, preview } = JSON.parse(body)
 
-              let filePath = path.resolve(projectRoot, fileName.replace(/^\//, ''))
-              if (!fs.existsSync(filePath)) {
-                filePath = fileName
-                if (!fs.existsSync(filePath)) {
-                  res.statusCode = 400
-                  res.end(JSON.stringify({ ok: false, error: 'File not found' }))
-                  return
-                }
+              const filePath = safeResolve(projectRoot, fileName)
+              if (!filePath) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, error: 'File not found or outside project' }))
+                return
               }
 
               const source = fs.readFileSync(filePath, 'utf-8')
@@ -184,15 +200,22 @@ export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevTool
         if (req.method !== 'POST' || req.url !== ENDPOINTS.UNDO_EDIT) return next()
 
         let body = ''
-        req.on('data', (chunk: string) => { body += chunk })
+        let aborted = false
+        req.on('data', (chunk: string) => {
+          body += chunk
+          if (body.length > 1024 * 1024) { aborted = true; res.statusCode = 413; res.end(JSON.stringify({ ok: false, error: 'Payload too large' })); req.destroy() }
+        })
         req.on('end', () => {
+          if (aborted) return
           res.setHeader('Content-Type', 'application/json')
           try {
             const { fileName, preview } = JSON.parse(body)
 
-            let filePath = path.resolve(projectRoot, fileName.replace(/^\//, ''))
-            if (!fs.existsSync(filePath)) {
-              filePath = fileName
+            const filePath = safeResolve(projectRoot, fileName)
+            if (!filePath) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, error: 'File not found or outside project' }))
+              return
             }
 
             const backup = undoStore.get(filePath)
@@ -223,8 +246,13 @@ export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevTool
         if (req.method !== 'POST' || req.url !== ENDPOINTS.PERSIST_TEXT) return next()
 
         let body = ''
-        req.on('data', (chunk: string) => { body += chunk })
+        let aborted = false
+        req.on('data', (chunk: string) => {
+          body += chunk
+          if (body.length > 1024 * 1024) { aborted = true; res.statusCode = 413; res.end(JSON.stringify({ ok: false, error: 'Payload too large' })); req.destroy() }
+        })
         req.on('end', () => {
+          if (aborted) return
           res.setHeader('Content-Type', 'application/json')
           try {
             const { fileName, lineNumber, oldText, newText, preview } = JSON.parse(body)
@@ -235,14 +263,11 @@ export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevTool
               return
             }
 
-            let filePath = path.resolve(projectRoot, fileName.replace(/^\//, ''))
-            if (!fs.existsSync(filePath)) {
-              filePath = fileName
-              if (!fs.existsSync(filePath)) {
-                res.statusCode = 400
-                res.end(JSON.stringify({ ok: false, error: 'File not found' }))
-                return
-              }
+            const filePath = safeResolve(projectRoot, fileName)
+            if (!filePath) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, error: 'File not found or outside project' }))
+              return
             }
 
             const content = fs.readFileSync(filePath, 'utf-8')

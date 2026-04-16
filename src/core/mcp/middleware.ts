@@ -13,8 +13,19 @@ export function createMcpMiddleware(mcpServer: McpServer) {
     if (req.method === 'POST') {
       req.setEncoding('utf8')
       let body = ''
-      req.on('data', (chunk: string) => { body += chunk })
+      let aborted = false
+      req.on('data', (chunk: string) => {
+        body += chunk
+        if (body.length > 10 * 1024 * 1024) {
+          aborted = true
+          res.statusCode = 413
+          res.setHeader('Content-Type', 'application/json')
+          res.end(JSON.stringify({ error: 'Payload too large' }))
+          req.destroy()
+        }
+      })
       req.on('end', async () => {
+        if (aborted) return
         try {
           const parsed = JSON.parse(body)
           const sessionId = req.headers['mcp-session-id'] as string | undefined
@@ -22,9 +33,9 @@ export function createMcpMiddleware(mcpServer: McpServer) {
           if (sessionId && transports.has(sessionId)) {
             await transports.get(sessionId)!.handleRequest(req, res, parsed)
           } else if (!sessionId && isInitializeRequest(parsed)) {
-            const transport = new NodeStreamableHTTPServerTransport({
+            const transport: NodeStreamableHTTPServerTransport = new NodeStreamableHTTPServerTransport({
               sessionIdGenerator: () => randomUUID(),
-              onsessioninitialized: (sid: string) => transports.set(sid, transport),
+              onsessioninitialized: (sid: string): void => { transports.set(sid, transport) },
             })
             transport.onclose = () => {
               if (transport.sessionId) transports.delete(transport.sessionId)

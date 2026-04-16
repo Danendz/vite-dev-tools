@@ -133,7 +133,7 @@ export function App({ config }: AppProps) {
     return localStorage.getItem(STORAGE_KEYS.SHOW_AI_ACTIONS) !== 'false'
   })
   const [mcpPaused, setMcpPaused] = useState(() => {
-    return localStorage.getItem(STORAGE_KEYS.MCP_PAUSED) !== 'false'
+    return localStorage.getItem(STORAGE_KEYS.MCP_PAUSED) === 'true'
   })
 
   // Listen for tree updates from the framework runtime
@@ -385,7 +385,7 @@ export function App({ config }: AppProps) {
       document.removeEventListener('mousemove', handlePickerMove, true)
       document.removeEventListener('click', handlePickerClick, true)
       document.removeEventListener('keydown', handlePickerKey, true)
-      handleUserHover(null)
+      handleHover(null)
     }
   }, [isPickerActive, tree])
 
@@ -583,15 +583,17 @@ export function App({ config }: AppProps) {
         }
         const rect = computeUnionRect(node._domElements)
         if (!rect) return prev
-        next.set('ai', { id: 'ai', rect, name: node.name, source: source ?? 'ai', domElements: node._domElements, persist: !!persist })
+        const gen = Date.now()
+        next.set('ai', { id: 'ai', rect, name: node.name, source: source ?? 'ai', domElements: node._domElements, persist: !!persist, _gen: gen })
         return next
       })
       // Auto-clear non-persistent AI highlights
       if (node && !persist) {
+        const gen = Date.now()
         setTimeout(() => {
           setHighlights(prev => {
             const entry = prev.get('ai')
-            if (!entry || entry.persist) return prev
+            if (!entry || entry.persist || entry._gen !== gen) return prev
             const next = new Map(prev)
             next.delete('ai')
             return next
