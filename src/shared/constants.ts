@@ -29,6 +29,8 @@ export const STORAGE_KEYS = {
   DETAIL_SIZE: 'danendz-devtools:detail-size',
   SHOW_ELEMENTS: 'danendz-devtools:show-elements',
   SHOW_PREVIEW: 'danendz-devtools:show-preview',
+  SHOW_AI_ACTIONS: 'danendz-devtools:show-ai-actions',
+  MCP_PAUSED: 'danendz-devtools:mcp-paused',
 } as const
 
 // Server endpoints
@@ -39,10 +41,21 @@ export const ENDPOINTS = {
   PERSIST_PROP: '/__devtools/persist-prop',
   PERSIST_TEXT: '/__devtools/persist-text',
   UNDO_EDIT: '/__devtools/undo-edit',
+  MCP: '/__devtools/mcp',
+} as const
+
+// MCP bridge events (over Vite HMR WebSocket)
+export const BRIDGE_EVENTS = {
+  REQUEST: 'devtools:bridge-request',
+  RESPONSE: 'devtools:bridge-response',
+  TAB_REGISTER: 'devtools:tab-register',
+  TAB_FOCUS: 'devtools:tab-focus',
+  TAB_UNLOAD: 'devtools:tab-unload',
 } as const
 
 // Default config
 export const DEFAULT_CONFIG = {
   open: false,
   shortcut: 'ctrl+shift+d',
+  mcp: true,
 } as const

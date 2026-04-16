@@ -1,6 +1,6 @@
 {
   "name": "@danendz/vite-dev-tools",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Vite dev tools with smart component tree, auto-collapsing, and IDE integration",
   "license": "MIT",
   "type": "module",
@@ -41,10 +41,14 @@
     }
   },
   "dependencies": {
+    "@cfworker/json-schema": "^4.1.1",
+    "@modelcontextprotocol/node": "2.0.0-alpha.2",
+    "@modelcontextprotocol/server": "2.0.0-alpha.2",
     "launch-editor": "^2.9.1",
     "oxc-parser": "^0.125.0",
     "preact": "^10.25.4",
-    "unplugin-vue-source": "^0.0.7"
+    "unplugin-vue-source": "^0.0.7",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",

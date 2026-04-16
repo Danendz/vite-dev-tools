@@ -1,24 +1,35 @@
 import { h } from 'preact'
+import type { HighlightEntry } from '../types'
 
 interface HighlightProps {
-  rect: DOMRect | null
-  name: string | null
+  highlights: HighlightEntry[]
+  showAiActions: boolean
 }
 
-export function Highlight({ rect, name }: HighlightProps) {
-  if (!rect) return null
+export function Highlight({ highlights, showAiActions }: HighlightProps) {
+  if (highlights.length === 0) return null
 
   return (
-    <div
-      class="highlight-overlay"
-      style={{
-        top: `${rect.top}px`,
-        left: `${rect.left}px`,
-        width: `${rect.width}px`,
-        height: `${rect.height}px`,
-      }}
-    >
-      {name && <div class="highlight-label">{name}</div>}
-    </div>
+    <>
+      {highlights.map(entry => {
+        const aiClass = showAiActions && entry.source === 'ai' ? ' ai-source' : ''
+        return (
+          <div
+            key={entry.id}
+            class={`highlight-overlay${aiClass}`}
+            style={{
+              top: `${entry.rect.top}px`,
+              left: `${entry.rect.left}px`,
+              width: `${entry.rect.width}px`,
+              height: `${entry.rect.height}px`,
+            }}
+          >
+            <div class={`highlight-label${aiClass}`}>
+              {entry.source === 'ai' ? `AI \u2022 ${entry.name}` : entry.name}
+            </div>
+          </div>
+        )
+      })}
+    </>
   )
 }

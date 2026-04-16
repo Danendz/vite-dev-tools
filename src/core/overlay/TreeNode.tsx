@@ -34,6 +34,8 @@ interface TreeNodeProps {
   matchingNodeIds?: Set<string> | null
   editedProps: Map<string, Set<string>>
   expandedPropsSet: Set<string>
+  aiSelectedNodeIds?: Set<string>
+  showAiActions?: boolean
   onToggle: (nodeId: string) => void
   onElementExpandToggle: (nodeId: string) => void
   onPropEdit: (nodeId: string, propKey: string) => void
@@ -118,6 +120,8 @@ export function TreeNode({
   matchingNodeIds,
   editedProps,
   expandedPropsSet,
+  aiSelectedNodeIds,
+  showAiActions,
   onToggle,
   onElementExpandToggle,
   onPropEdit,
@@ -135,6 +139,7 @@ export function TreeNode({
   const editedKeysForNode = editedProps.get(node.id)
   const isElementExpanded = showAllElements || elementExpandedSet.has(node.id)
   const hasHostElementChildren = !node.isHostElement && node.children.some(c => c.isHostElement)
+  const isAiSelected = showAiActions && aiSelectedNodeIds?.has(node.id)
 
   const [editingProp, setEditingProp] = useState<string | null>(null)
   const [tooltip, setTooltip] = useState<{ key: string; timer: ReturnType<typeof setTimeout> } | null>(null)
@@ -321,6 +326,7 @@ export function TreeNode({
           )}
           {'>'}
         </span>
+        {isAiSelected && <span class="tree-node-ai-badge">AI</span>}
         {node.textContent && !(isElementExpanded && hasHostElementChildren) && (
           <span class="tree-node-text">
             {' "'}
@@ -350,6 +356,8 @@ export function TreeNode({
               matchingNodeIds={matchingNodeIds}
               editedProps={editedProps}
               expandedPropsSet={expandedPropsSet}
+              aiSelectedNodeIds={aiSelectedNodeIds}
+              showAiActions={showAiActions}
               onToggle={onToggle}
               onElementExpandToggle={onElementExpandToggle}
               onPropEdit={onPropEdit}

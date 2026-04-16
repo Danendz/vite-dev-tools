@@ -35,6 +35,8 @@ interface TreeViewProps {
   searchAncestorIds: Set<string> | null
   editedProps: Map<string, Set<string>>
   expandedPropsSet: Set<string>
+  aiSelectedNodeIds?: Set<string>
+  showAiActions?: boolean
   onSearchChange: (query: string) => void
   onPropEdit: (nodeId: string, propKey: string) => void
   onExpandProps: (nodeId: string) => void
@@ -94,6 +96,8 @@ export function TreeView({
   searchAncestorIds,
   editedProps,
   expandedPropsSet,
+  aiSelectedNodeIds,
+  showAiActions,
   onSearchChange,
   onPropEdit,
   onExpandProps,
@@ -342,6 +346,8 @@ export function TreeView({
               matchingNodeIds={matchingNodeIds}
               editedProps={editedProps}
               expandedPropsSet={expandedPropsSet}
+              aiSelectedNodeIds={aiSelectedNodeIds}
+              showAiActions={showAiActions}
               onToggle={handleToggle}
               onElementExpandToggle={handleElementExpandToggle}
               onPropEdit={onPropEdit}

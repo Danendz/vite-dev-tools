@@ -7,7 +7,7 @@ export default defineConfig([
     format: ['esm'],
     dts: true,
     clean: true,
-    external: ['vite', 'launch-editor', 'oxc-parser'],
+    external: ['vite', 'launch-editor', 'oxc-parser', '@modelcontextprotocol/server', '@modelcontextprotocol/node', '@cfworker/json-schema', 'zod'],
   },
   // React component (browser, imported in app code)
   {
@@ -21,7 +21,7 @@ export default defineConfig([
     entry: { vue: 'src/adapters/vue/index.ts' },
     format: ['esm'],
     dts: true,
-    external: ['vite', 'launch-editor', 'unplugin-vue-source', 'oxc-parser'],
+    external: ['vite', 'launch-editor', 'unplugin-vue-source', 'oxc-parser', '@modelcontextprotocol/server', '@modelcontextprotocol/node', '@cfworker/json-schema', 'zod'],
   },
   // Vue component (browser, imported in app code)
   {
