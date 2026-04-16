@@ -185,6 +185,19 @@ When multiple browser tabs are open, the MCP server auto-targets the most recent
 
 **Requires** Vite 5+ · React 18+ or Vue 3.3+ · Node 18+
 
+## Development
+
+```bash
+pnpm build        # one-time build
+pnpm dev          # watch mode
+pnpm typecheck    # type check
+pnpm test         # run tests
+pnpm test:watch   # run tests in watch mode
+pnpm test:coverage # tests with coverage report
+```
+
+Tests use Vitest with happy-dom. CI runs typecheck → test → build on every pull request.
+
 ## Contributing
 
 PRs welcome — open an issue first to discuss.

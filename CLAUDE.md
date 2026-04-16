@@ -38,7 +38,7 @@ Built with **Preact** (not React) inside **Shadow DOM** for isolation.
 
 Full Model Context Protocol support for AI agents to query/control the overlay. Enabled by default (`mcp: true` in config).
 
-- `mcp-server.ts` — Defines 12 MCP tools: query tools (`listConnectedTabs`, `getComponentTree`, `getSelectedComponent`, `getConsoleErrors`, `getPropsOf`, `getSourceLocation`, `searchComponents`) and action tools (`selectComponent`, `highlightDom`, `clearHighlight`, `openInEditor`).
+- `mcp-server.ts` — Defines 16 MCP tools: query tools (`listConnectedTabs`, `getComponentTree`, `getSelectedComponent`, `getConsoleErrors`, `getPropsOf`, `getSourceLocation`, `searchComponents`), action tools (`selectComponent`, `highlightDom`, `clearHighlight`, `openInEditor`), and interaction tools (`click`, `type`, `keypress`, `selectOption`, `getElementInfo`).
 - `bridge-server.ts` — Vite-server side. Manages browser tab registry and routes RPC requests/responses over Vite HMR WebSocket. Auto-selects most recently focused tab.
 - `bridge-client.ts` — Browser side. Registers tab via HMR, handles incoming MCP requests by reading/mutating `devtoolsState`.
 - `middleware.ts` — HTTP transport at `/__devtools/mcp`. Handles POST/GET/DELETE for Streamable HTTP MCP sessions.
@@ -79,9 +79,38 @@ Full Model Context Protocol support for AI agents to query/control the overlay. 
 pnpm build        # one-time build
 pnpm dev          # watch mode
 pnpm typecheck    # run tsc --noEmit
+pnpm test         # run tests once
+pnpm test:watch   # run tests in watch mode
+pnpm test:coverage # run tests with coverage report
 ```
 
 Always run `pnpm typecheck` after changes to catch type errors.
+
+## Testing
+
+Tests use **Vitest** with **happy-dom** for DOM-dependent tests. Test files live in `tests/` mirroring the `src/` structure.
+
+Path aliases: `@/` → `src/`, `@helpers/` → `tests/helpers/` (configured in `vitest.config.ts`).
+
+### What's tested
+
+| Layer | Files | What |
+|-------|-------|------|
+| Pure utilities | `diff`, `ast-utils`, `tree-utils`, `console-format` | Pure functions, no mocking |
+| DOM interaction | `dispatch-events`, `resolve-element`, `settle`, `action-response`, `console-capture` | happy-dom environment |
+| MCP server/bridge | `bridge-server`, `mcp-server`, `bridge-client`, `middleware` | Mock HMR + HTTP |
+| Framework walkers | `fiber-walker`, `instance-walker`, `state-extractor` | Hand-crafted fake fibers/instances |
+| Adapter transforms | `react/adapter`, `vue/adapter` | Assertion-based (no snapshots) |
+
+### What's NOT tested
+
+- **Overlay UI components** (Preact `.tsx` files) — low ROI for devtools visual correctness
+- **`plugin-factory.ts`** — would require full Vite server mock
+- **`client-runtime.ts`** — tightly coupled to React/Vue runtime internals
+
+### CI
+
+GitHub Actions runs on every PR to `main`: `typecheck` → `test` → `build`. See `.github/workflows/ci.yml`.
 
 tsup produces 7 outputs across 5 entries:
 
