@@ -5,6 +5,7 @@ import { TreeView } from './TreeView'
 import { DetailPanel } from './DetailPanel'
 import { ConsolePane } from './ConsolePane'
 import { SettingsModal } from './SettingsModal'
+import { Tooltip } from './Tooltip'
 import { STORAGE_KEYS } from '../../shared/constants'
 
 const MIN_HEIGHT = 150
@@ -231,76 +232,84 @@ export function Panel({
       />
       <div class="panel">
         <div class="panel-header">
-          <span class="panel-title">DevTools</span>
+          <span class="panel-title">vite-devtools</span>
           <div class="panel-header-controls">
             {/* Element picker */}
-            <button
-              class={`dock-btn${isPickerActive ? ' active' : ''}`}
-              onClick={onPickerToggle}
-              title="Select element on page"
-            >
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-                <circle cx="6.5" cy="6.5" r="4" />
-                <line x1="10" y1="10" x2="14" y2="14" />
-              </svg>
-            </button>
+            <Tooltip text="Select element">
+              <button
+                class={`dock-btn${isPickerActive ? ' active' : ''}`}
+                onClick={onPickerToggle}
+              >
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <circle cx="6.5" cy="6.5" r="4" />
+                  <line x1="10" y1="10" x2="14" y2="14" />
+                </svg>
+              </button>
+            </Tooltip>
             {/* Clear AI highlight */}
             {aiHighlightActive && (
-              <button
-                class="ai-highlight-clear-btn"
-                onClick={onClearAiHighlight}
-                title="Clear AI highlight"
-              >
-                AI {'\u00d7'}
-              </button>
+              <Tooltip text="Clear AI highlight">
+                <button
+                  class="ai-highlight-clear-btn"
+                  onClick={onClearAiHighlight}
+                >
+                  AI {'\u00d7'}
+                </button>
+              </Tooltip>
             )}
             {/* Settings */}
-            <button
-              class={`dock-btn${settingsOpen ? ' active' : ''}`}
-              onClick={onSettingsToggle}
-              title="Settings"
-            >
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-                <circle cx="8" cy="8" r="2" />
-                <path d="M13.5 8a5.5 5.5 0 0 1-.15 1.2l1.4 1.1a.3.3 0 0 1 .07.4l-1.3 2.3a.3.3 0 0 1-.38.13l-1.65-.67a5.2 5.2 0 0 1-1.04.6l-.25 1.75a.3.3 0 0 1-.3.25H7.6a.3.3 0 0 1-.3-.25l-.25-1.75a5 5 0 0 1-1.04-.6l-1.65.67a.3.3 0 0 1-.38-.13l-1.3-2.3a.3.3 0 0 1 .07-.4l1.4-1.1A5.4 5.4 0 0 1 4 8c0-.4.05-.8.15-1.2l-1.4-1.1a.3.3 0 0 1-.07-.4l1.3-2.3a.3.3 0 0 1 .38-.13l1.65.67a5.2 5.2 0 0 1 1.04-.6L7.3 1.2a.3.3 0 0 1 .3-.25h2.6a.3.3 0 0 1 .3.25l.25 1.75a5 5 0 0 1 1.04.6l1.65-.67a.3.3 0 0 1 .38.13l1.3 2.3a.3.3 0 0 1-.07.4l-1.4 1.1c.1.4.15.8.15 1.2z" transform="scale(0.85) translate(1.4, 1.4)" />
-              </svg>
-            </button>
+            <Tooltip text="Settings">
+              <button
+                class={`dock-btn${settingsOpen ? ' active' : ''}`}
+                onClick={onSettingsToggle}
+              >
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <circle cx="8" cy="8" r="2" />
+                  <path d="M13.5 8a5.5 5.5 0 0 1-.15 1.2l1.4 1.1a.3.3 0 0 1 .07.4l-1.3 2.3a.3.3 0 0 1-.38.13l-1.65-.67a5.2 5.2 0 0 1-1.04.6l-.25 1.75a.3.3 0 0 1-.3.25H7.6a.3.3 0 0 1-.3-.25l-.25-1.75a5 5 0 0 1-1.04-.6l-1.65.67a.3.3 0 0 1-.38-.13l-1.3-2.3a.3.3 0 0 1 .07-.4l1.4-1.1A5.4 5.4 0 0 1 4 8c0-.4.05-.8.15-1.2l-1.4-1.1a.3.3 0 0 1-.07-.4l1.3-2.3a.3.3 0 0 1 .38-.13l1.65.67a5.2 5.2 0 0 1 1.04-.6L7.3 1.2a.3.3 0 0 1 .3-.25h2.6a.3.3 0 0 1 .3.25l.25 1.75a5 5 0 0 1 1.04.6l1.65-.67a.3.3 0 0 1 .38.13l1.3 2.3a.3.3 0 0 1-.07.4l-1.4 1.1c.1.4.15.8.15 1.2z" transform="scale(0.85) translate(1.4, 1.4)" />
+                </svg>
+              </button>
+            </Tooltip>
             {/* Dock left */}
-            <button
-              class={`dock-btn${dockPosition === 'left' ? ' active' : ''}`}
-              onClick={() => onDockChange('left')}
-              title="Dock to left"
-            >
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-                <rect x="2" y="2" width="12" height="12" rx="1" />
-                <line x1="7" y1="2" x2="7" y2="14" />
-              </svg>
-            </button>
+            <Tooltip text="Dock left">
+              <button
+                class={`dock-btn${dockPosition === 'left' ? ' active' : ''}`}
+                onClick={() => onDockChange('left')}
+              >
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <rect x="2" y="2" width="12" height="12" rx="1" />
+                  <line x1="7" y1="2" x2="7" y2="14" />
+                </svg>
+              </button>
+            </Tooltip>
             {/* Dock bottom */}
-            <button
-              class={`dock-btn${dockPosition === 'bottom' ? ' active' : ''}`}
-              onClick={() => onDockChange('bottom')}
-              title="Dock to bottom"
-            >
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-                <rect x="2" y="2" width="12" height="12" rx="1" />
-                <line x1="2" y1="10" x2="14" y2="10" />
-              </svg>
-            </button>
+            <Tooltip text="Dock bottom">
+              <button
+                class={`dock-btn${dockPosition === 'bottom' ? ' active' : ''}`}
+                onClick={() => onDockChange('bottom')}
+              >
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <rect x="2" y="2" width="12" height="12" rx="1" />
+                  <line x1="2" y1="10" x2="14" y2="10" />
+                </svg>
+              </button>
+            </Tooltip>
             {/* Dock right */}
-            <button
-              class={`dock-btn${dockPosition === 'right' ? ' active' : ''}`}
-              onClick={() => onDockChange('right')}
-              title="Dock to right"
-            >
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-                <rect x="2" y="2" width="12" height="12" rx="1" />
-                <line x1="9" y1="2" x2="9" y2="14" />
-              </svg>
-            </button>
-            <button class="panel-close" onClick={onClose} title="Close (Ctrl+Shift+D)">
-              ×
-            </button>
+            <Tooltip text="Dock right">
+              <button
+                class={`dock-btn${dockPosition === 'right' ? ' active' : ''}`}
+                onClick={() => onDockChange('right')}
+              >
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <rect x="2" y="2" width="12" height="12" rx="1" />
+                  <line x1="9" y1="2" x2="9" y2="14" />
+                </svg>
+              </button>
+            </Tooltip>
+            <Tooltip text="Close" shortcut="Ctrl+Shift+D">
+              <button class="panel-close" onClick={onClose}>
+                ×
+              </button>
+            </Tooltip>
           </div>
           {settingsOpen && (
             <SettingsModal

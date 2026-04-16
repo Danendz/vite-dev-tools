@@ -2,6 +2,7 @@ import { h } from 'preact'
 import { useState, useRef, useEffect } from 'preact/hooks'
 import type { NormalizedNode } from '../types'
 import { EVENTS } from '../../shared/constants'
+import { Tooltip } from './Tooltip'
 
 /** Flatten past host elements to extract component children when not element-expanded */
 function flattenPastHostElements(children: NormalizedNode[]): NormalizedNode[] {
@@ -245,13 +246,14 @@ export function TreeNode({
           {hasChildren ? (collapsed ? '\u25B6' : '\u25BC') : ''}
         </span>
         {hasHostElementChildren && (
-          <span
-            class={`tree-node-element-toggle${isElementExpanded ? ' active' : ''}`}
-            onClick={(e: MouseEvent) => { e.stopPropagation(); onElementExpandToggle(node.id) }}
-            title={isElementExpanded ? 'Hide HTML elements' : 'Show HTML elements'}
-          >
-            {'</>'}
-          </span>
+          <Tooltip text={isElementExpanded ? 'Hide HTML elements' : 'Show HTML elements'}>
+            <span
+              class={`tree-node-element-toggle${isElementExpanded ? ' active' : ''}`}
+              onClick={(e: MouseEvent) => { e.stopPropagation(); onElementExpandToggle(node.id) }}
+            >
+              {'</>'}
+            </span>
+          </Tooltip>
         )}
         <span class={`tree-node-name${node.isFromNodeModules ? ' from-node-modules' : ''}${node.isHostElement ? ' host-element' : ''}${isSearchMatch ? ' search-match' : ''}`}>
           {'<'}{node.name}
@@ -279,13 +281,14 @@ export function TreeNode({
                 <span key={key}>
                   {' '}<span class="tree-node-prop-name">{key}</span>
                   <span class="tree-node-prop-eq">=</span>
-                  <span
-                    class={`tree-node-prop-value tree-node-prop-clickable${isEdited ? ' tree-node-prop-value-edited' : ''}`}
-                    onClick={(e) => handleBooleanClick(e, key, value)}
-                    title="Click to toggle"
-                  >
-                    {display}
-                  </span>
+                  <Tooltip text="Click to toggle">
+                    <span
+                      class={`tree-node-prop-value tree-node-prop-clickable${isEdited ? ' tree-node-prop-value-edited' : ''}`}
+                      onClick={(e) => handleBooleanClick(e, key, value)}
+                    >
+                      {display}
+                    </span>
+                  </Tooltip>
                 </span>
               )
             }
@@ -307,22 +310,24 @@ export function TreeNode({
             )
           })}
           {remaining > 0 && (
-            <span
-              class="tree-node-prop-overflow clickable"
-              onClick={(e) => { e.stopPropagation(); onExpandProps(node.id) }}
-              title="Show all props"
-            >
-              {' '}...+{remaining}
-            </span>
+            <Tooltip text="Show all props">
+              <span
+                class="tree-node-prop-overflow clickable"
+                onClick={(e) => { e.stopPropagation(); onExpandProps(node.id) }}
+              >
+                {' '}...+{remaining}
+              </span>
+            </Tooltip>
           )}
           {isPropsExpanded && displayable.length > 3 && (
-            <span
-              class="tree-node-prop-overflow clickable"
-              onClick={(e) => { e.stopPropagation(); onExpandProps(node.id) }}
-              title="Collapse props"
-            >
-              {' '}\u2212
-            </span>
+            <Tooltip text="Collapse props">
+              <span
+                class="tree-node-prop-overflow clickable"
+                onClick={(e) => { e.stopPropagation(); onExpandProps(node.id) }}
+              >
+                {' '}\u2212
+              </span>
+            </Tooltip>
           )}
           {'>'}
         </span>

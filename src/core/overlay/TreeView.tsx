@@ -2,6 +2,7 @@ import { h } from 'preact'
 import { useState, useEffect, useMemo, useCallback, useRef } from 'preact/hooks'
 import type { NormalizedNode } from '../types'
 import { TreeNode } from './TreeNode'
+import { Tooltip } from './Tooltip'
 
 /** Flatten past host elements to extract component children when not element-expanded */
 function flattenPastHostElements(children: NormalizedNode[]): NormalizedNode[] {
@@ -311,16 +312,20 @@ export function TreeView({
           value={searchQuery}
           onInput={(e) => onSearchChange((e.target as HTMLInputElement).value)}
         />
-        <button class="search-bar-btn" onClick={handleExpandAll} title="Expand all">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M4 6l4 4 4-4" />
-          </svg>
-        </button>
-        <button class="search-bar-btn" onClick={handleCollapseAll} title="Collapse all">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M6 4l4 4-4 4" />
-          </svg>
-        </button>
+        <Tooltip text="Expand all">
+          <button class="search-bar-btn" onClick={handleExpandAll}>
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M4 6l4 4 4-4" />
+            </svg>
+          </button>
+        </Tooltip>
+        <Tooltip text="Collapse all">
+          <button class="search-bar-btn" onClick={handleCollapseAll}>
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M6 4l4 4-4 4" />
+            </svg>
+          </button>
+        </Tooltip>
       </div>
       <div
         ref={scrollRef}
