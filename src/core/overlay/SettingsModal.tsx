@@ -1,6 +1,7 @@
 import { h } from 'preact'
 import { useState, useEffect, useRef, useCallback } from 'preact/hooks'
 import { STORAGE_KEYS } from '../../shared/constants'
+import { Tooltip } from './Tooltip'
 
 type SettingsCategory = 'general' | 'appearance' | 'mcp'
 
@@ -150,7 +151,7 @@ export function SettingsModal({
         <div class="settings-modal-content">
           <div class="settings-modal-header">
             <span class="settings-modal-category-title">{categories.find(c => c.id === category)?.label}</span>
-            <button class="settings-modal-close" onClick={onClose} title="Close">{'\u2715'}</button>
+            <Tooltip text="Close" shortcut="Esc"><button class="settings-modal-close" onClick={onClose}>{'\u2715'}</button></Tooltip>
           </div>
           <div class="settings-modal-body">
             {category === 'general' && (
@@ -299,9 +300,11 @@ export function SettingsModal({
                 </div>
                 <div class="settings-command-block">
                   <pre class="settings-command-code">{getMcpCommand(mcpCommandTab)}</pre>
-                  <button class="settings-command-copy" onClick={handleCopy}>
-                    {copied ? 'Copied!' : 'Copy'}
-                  </button>
+                  <Tooltip text="Copy command">
+                    <button class="settings-command-copy" onClick={handleCopy}>
+                      {copied ? 'Copied!' : 'Copy'}
+                    </button>
+                  </Tooltip>
                 </div>
               </div>
             )}

@@ -5,6 +5,7 @@ import { openInEditor, persistEdit, persistPropValue, persistTextValue, persistH
 import type { DiffData, PreviewResult } from '../communication'
 import { EVENTS, STORAGE_KEYS } from '../../shared/constants'
 import { PreviewModal } from './PreviewModal'
+import { Tooltip } from './Tooltip'
 
 function formatPath(source: SourceLocation): string {
   return `${source.fileName.replace(/^.*\/src\//, 'src/')}:${source.lineNumber}`
@@ -124,13 +125,14 @@ function EditableValue({ item, nodeId, source }: { item: InspectorItem; nodeId: 
   // Boolean: single click toggles immediately
   if (valueType === 'boolean' && item.editHint) {
     return (
-      <span
-        class="editable-value-wrapper editable edit-boolean-toggle"
-        onClick={() => dispatchSectionEdit(nodeId, item.editHint!, !value)}
-        title="Click to toggle"
-      >
-        <span class={`detail-value boolean`}>{String(value)}</span>
-      </span>
+      <Tooltip text="Click to toggle">
+        <span
+          class="editable-value-wrapper editable edit-boolean-toggle"
+          onClick={() => dispatchSectionEdit(nodeId, item.editHint!, !value)}
+        >
+          <span class={`detail-value boolean`}>{String(value)}</span>
+        </span>
+      </Tooltip>
     )
   }
 
@@ -333,8 +335,8 @@ function EditableValue({ item, nodeId, source }: { item: InspectorItem; nodeId: 
         />
       )}
       <span class="edit-controls">
-        <button class="edit-btn confirm" onClick={confirmEdit} title="Confirm (Enter)">✓</button>
-        <button class="edit-btn" onClick={cancelEdit} title="Cancel (Esc)">✕</button>
+        <Tooltip text="Confirm" shortcut="Enter"><button class="edit-btn confirm" onClick={confirmEdit}>✓</button></Tooltip>
+        <Tooltip text="Cancel" shortcut="Esc"><button class="edit-btn" onClick={cancelEdit}>✕</button></Tooltip>
       </span>
       {editError && <span class="edit-error">{editError}</span>}
     </span>
@@ -530,16 +532,17 @@ function EditablePropValue({
   if (valueType === 'boolean') {
     return (
       <>
-        <span
-          class={`editable-value-wrapper editable edit-boolean-toggle${isEdited ? ' prop-edited' : ''}`}
-          onClick={() => {
-            dispatchPropEdit(nodeId, propKey, !value)
-            onPropEdit?.(nodeId, propKey)
-          }}
-          title="Click to toggle"
-        >
-          <span class="detail-value boolean">{String(value)}</span>
-        </span>
+        <Tooltip text="Click to toggle">
+          <span
+            class={`editable-value-wrapper editable edit-boolean-toggle${isEdited ? ' prop-edited' : ''}`}
+            onClick={() => {
+              dispatchPropEdit(nodeId, propKey, !value)
+              onPropEdit?.(nodeId, propKey)
+            }}
+          >
+            <span class="detail-value boolean">{String(value)}</span>
+          </span>
+        </Tooltip>
         {persistButton}
         {previewModal}
       </>
@@ -655,8 +658,8 @@ function EditablePropValue({
         />
       )}
       <span class="edit-controls">
-        <button class="edit-btn confirm" onClick={confirmEdit} title="Confirm (Enter)">✓</button>
-        <button class="edit-btn" onClick={cancelEdit} title="Cancel (Esc)">✕</button>
+        <Tooltip text="Confirm" shortcut="Enter"><button class="edit-btn confirm" onClick={confirmEdit}>✓</button></Tooltip>
+        <Tooltip text="Cancel" shortcut="Esc"><button class="edit-btn" onClick={cancelEdit}>✕</button></Tooltip>
       </span>
       {editError && <span class="edit-error">{editError}</span>}
     </span>
@@ -808,8 +811,8 @@ function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
           onClick={(e) => e.stopPropagation()}
         />
         <span class="edit-controls">
-          <button class="edit-btn confirm" onMouseDown={(e) => { e.preventDefault(); confirmEdit() }} title="Confirm (Ctrl+Enter)">&#10003;</button>
-          <button class="edit-btn" onMouseDown={(e) => { e.preventDefault(); cancelEdit() }} title="Cancel (Esc)">&#10005;</button>
+          <Tooltip text="Confirm" shortcut="Ctrl+Enter"><button class="edit-btn confirm" onMouseDown={(e) => { e.preventDefault(); confirmEdit() }}>&#10003;</button></Tooltip>
+          <Tooltip text="Cancel" shortcut="Esc"><button class="edit-btn" onMouseDown={(e) => { e.preventDefault(); cancelEdit() }}>&#10005;</button></Tooltip>
         </span>
       </div>
     )
@@ -817,9 +820,9 @@ function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
 
   return (
     <div class="detail-row">
-      <span class="detail-text-fragment editable" onDblClick={enterEditMode} title="Double-click to edit">
+      <Tooltip text="Double-click to edit"><span class="detail-text-fragment editable" onDblClick={enterEditMode}>
         "{text}"
-      </span>
+      </span></Tooltip>
       {showPersist && source?.fileName && (
         <div class="persist-row">
           {persistStatus === 'saved' ? (
@@ -868,23 +871,26 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
               <div class="source-link" onClick={() => openInEditor(effectiveSource)}>
                 {formatPath(effectiveSource)}
               </div>
-              <button class="source-copy-btn" onClick={(e) => copyPath(effectiveSource, e)} title="Copy path">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                </svg>
-              </button>
+              <Tooltip text="Copy path">
+                <button class="source-copy-btn" onClick={(e) => copyPath(effectiveSource, e)}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                </button>
+              </Tooltip>
             </div>
           </>
         )}
         {node.slotOwner && (
-          <div
-            class="slot-indicator"
-            onClick={() => openInEditor(node.slotOwner!.source)}
-            title={`Open slot definition in ${formatPath(node.slotOwner!.source)}`}
-          >
-            slot in {node.slotOwner.componentName}
-          </div>
+          <Tooltip text={`Open slot in ${formatPath(node.slotOwner!.source)}`}>
+            <div
+              class="slot-indicator"
+              onClick={() => openInEditor(node.slotOwner!.source)}
+            >
+              slot in {node.slotOwner.componentName}
+            </div>
+          </Tooltip>
         )}
         {showUsageSource && (
           <>
@@ -893,12 +899,14 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
               <div class="source-link" onClick={() => openInEditor(node.usageSource!)}>
                 {formatPath(node.usageSource!)}
               </div>
-              <button class="source-copy-btn" onClick={(e) => copyPath(node.usageSource!, e)} title="Copy path">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                </svg>
-              </button>
+              <Tooltip text="Copy path">
+                <button class="source-copy-btn" onClick={(e) => copyPath(node.usageSource!, e)}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                </button>
+              </Tooltip>
             </div>
           </>
         )}

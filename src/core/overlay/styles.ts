@@ -1867,4 +1867,42 @@ export const STYLES = /* css */ `
   .undo-btn:hover {
     background: rgba(251, 191, 36, 0.3);
   }
+
+  /* ── Tooltip ── */
+
+  @keyframes tooltip-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  .tooltip-wrapper {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .tree-node-name .tooltip-wrapper {
+    display: inline;
+  }
+
+  .tooltip-chip {
+    position: fixed;
+    z-index: 2147483647;
+    background: #1e1e1e;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 400;
+    padding: 4px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    animation: tooltip-fade-in 100ms ease-out;
+    line-height: 1.3;
+  }
+
+  .tooltip-shortcut {
+    color: #888;
+    margin-left: 6px;
+    font-size: 10px;
+  }
 `
