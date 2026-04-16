@@ -28,6 +28,8 @@ function serializeValue(value: unknown): unknown {
   if (typeof value === 'function') return 'fn()'
   if (value === null || value === undefined) return value
   if (typeof value !== 'object') return value
+  // Vue component instances trigger "Avoid enumerating keys" warning when serialized
+  if ((value as any).__v_skip === true) return '[ComponentInstance]'
   try {
     return JSON.parse(JSON.stringify(value))
   } catch {
