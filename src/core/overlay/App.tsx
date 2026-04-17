@@ -1,6 +1,6 @@
 import { h } from 'preact'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'preact/hooks'
-import type { NormalizedNode, DevToolsConfig, TreeUpdateEvent, DockPosition, ActiveTab, ConsoleEntry, ToastItem, ActionSource, HighlightEntry } from '../types'
+import type { NormalizedNode, DevToolsConfig, TreeUpdateEvent, DockPosition, ActiveTab, ConsoleEntry, ToastItem, ActionSource, HighlightEntry, CommitRecord } from '../types'
 import { FloatingIcon } from './FloatingIcon'
 import { Panel } from './Panel'
 import { Highlight } from './Highlight'
@@ -135,13 +135,38 @@ export function App({ config }: AppProps) {
   const [mcpPaused, setMcpPaused] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.MCP_PAUSED) === 'true'
   })
+  const [renderCauseEnabled, setRenderCauseEnabled] = useState(() => {
+    return localStorage.getItem(STORAGE_KEYS.RENDER_CAUSE_ENABLED) === 'true'
+  })
+  const [renderHistorySize, setRenderHistorySize] = useState(() => {
+    const stored = localStorage.getItem(STORAGE_KEYS.RENDER_HISTORY_SIZE)
+    return stored ? Math.max(10, parseInt(stored, 10) || 500) : 500
+  })
+  const [renderIncludeValues, setRenderIncludeValues] = useState(() => {
+    return localStorage.getItem(STORAGE_KEYS.RENDER_INCLUDE_VALUES) !== 'false'
+  })
+  const [renderHistory, setRenderHistoryState] = useState<CommitRecord[]>([])
+  const [renderHistoryRecording, setRenderHistoryRecordingState] = useState(true)
+  const [pinnedRenderComponentId, setPinnedRenderComponentId] = useState<number | null>(null)
+  const renderHistorySizeRef = useRef(renderHistorySize)
+  const renderHistoryRecordingRef = useRef(renderHistoryRecording)
+  useEffect(() => { renderHistorySizeRef.current = renderHistorySize }, [renderHistorySize])
+  useEffect(() => { renderHistoryRecordingRef.current = renderHistoryRecording }, [renderHistoryRecording])
 
   // Listen for tree updates from the framework runtime
   useEffect(() => {
     function handleTreeUpdate(e: Event) {
-      const { tree: newTree } = (e as CustomEvent<TreeUpdateEvent>).detail
+      const { tree: newTree, commit } = (e as CustomEvent<TreeUpdateEvent>).detail
       setTree(newTree)
       devtoolsState.setTree(newTree)
+      if (commit && renderHistoryRecordingRef.current) {
+        setRenderHistoryState((prev) => {
+          const cap = renderHistorySizeRef.current
+          const next = prev.length >= cap ? [...prev.slice(-(cap - 1)), commit] : [...prev, commit]
+          devtoolsState.setRenderHistory(next)
+          return next
+        })
+      }
       // Rebuild reverse DOM → node map
       const map = new Map<HTMLElement, NormalizedNode>()
       buildReverseMap(newTree, map)
@@ -674,6 +699,60 @@ export function App({ config }: AppProps) {
     })
   }, [])
 
+  const handleRenderCauseToggle = useCallback(() => {
+    setRenderCauseEnabled((prev) => {
+      const next = !prev
+      localStorage.setItem(STORAGE_KEYS.RENDER_CAUSE_ENABLED, String(next))
+      window.dispatchEvent(new CustomEvent(EVENTS.REWALK))
+      return next
+    })
+  }, [])
+
+  const handleRenderHistorySizeChange = useCallback((size: number) => {
+    const clamped = Math.max(10, Math.min(2000, size))
+    setRenderHistorySize(clamped)
+    localStorage.setItem(STORAGE_KEYS.RENDER_HISTORY_SIZE, String(clamped))
+  }, [])
+
+  const handleRenderIncludeValuesToggle = useCallback(() => {
+    setRenderIncludeValues((prev) => {
+      const next = !prev
+      localStorage.setItem(STORAGE_KEYS.RENDER_INCLUDE_VALUES, String(next))
+      return next
+    })
+  }, [])
+
+  const handleRenderHistoryRecordingToggle = useCallback(() => {
+    setRenderHistoryRecordingState((prev) => {
+      const next = !prev
+      devtoolsState.setRenderHistoryRecording(next)
+      return next
+    })
+  }, [])
+
+  const handleClearRenderHistory = useCallback(() => {
+    setRenderHistoryState([])
+    devtoolsState.setRenderHistory([])
+  }, [])
+
+  const handlePinRenderComponent = useCallback((persistentId: number | null) => {
+    setPinnedRenderComponentId(persistentId)
+    setActiveTab('renders')
+  }, [])
+
+  // Wire MCP control hooks so agents can toggle recording / clear history
+  useEffect(() => {
+    devtoolsState.onClearRenderHistory = handleClearRenderHistory
+    devtoolsState.onSetRenderHistoryRecording = (enabled: boolean) => {
+      setRenderHistoryRecordingState(enabled)
+      devtoolsState.setRenderHistoryRecording(enabled)
+    }
+    return () => {
+      devtoolsState.onClearRenderHistory = null
+      devtoolsState.onSetRenderHistoryRecording = null
+    }
+  }, [handleClearRenderHistory])
+
   return (
     <div>
       <Highlight highlights={Array.from(highlights.values())} showAiActions={showAiActions} />
@@ -735,6 +814,18 @@ export function App({ config }: AppProps) {
           onHover={handleHover}
           onContextMenu={handleContextMenu}
           onClose={togglePanel}
+          renderCauseEnabled={renderCauseEnabled}
+          renderHistorySize={renderHistorySize}
+          renderIncludeValues={renderIncludeValues}
+          renderHistory={renderHistory}
+          renderHistoryRecording={renderHistoryRecording}
+          pinnedRenderComponentId={pinnedRenderComponentId}
+          onRenderCauseToggle={handleRenderCauseToggle}
+          onRenderHistorySizeChange={handleRenderHistorySizeChange}
+          onRenderIncludeValuesToggle={handleRenderIncludeValuesToggle}
+          onRenderHistoryRecordingToggle={handleRenderHistoryRecordingToggle}
+          onClearRenderHistory={handleClearRenderHistory}
+          onPinRenderComponent={handlePinRenderComponent}
         />
       )}
 

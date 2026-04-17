@@ -158,6 +158,28 @@ describe('BridgeServer', () => {
       await expect(promise).rejects.toThrow('Tab disconnected during request.')
     })
 
+    it('honors a custom timeoutMs', async () => {
+      bridge.attach(server as any)
+      server.hot._emit(BRIDGE_EVENTS.TAB_REGISTER, { tabId: 't1', path: '/' })
+
+      const promise = bridge.request('test', {}, undefined, { timeoutMs: 500 })
+      vi.advanceTimersByTime(501)
+
+      await expect(promise).rejects.toThrow('Tab disconnected during request.')
+    })
+
+    it('a longer custom timeoutMs does NOT trigger at the default 10s', async () => {
+      bridge.attach(server as any)
+      server.hot._emit(BRIDGE_EVENTS.TAB_REGISTER, { tabId: 't1', path: '/' })
+
+      const promise = bridge.request('test', {}, undefined, { timeoutMs: 20_000 })
+      vi.advanceTimersByTime(15_000)
+      // Resolve the request now that we've passed the old default timeout.
+      server.hot._emit(BRIDGE_EVENTS.RESPONSE, { id: 'test-uuid-1', result: 'late' })
+
+      await expect(promise).resolves.toBe('late')
+    })
+
     it('auto-selects most recently focused tab', () => {
       bridge.attach(server as any)
       server.hot._emit(BRIDGE_EVENTS.TAB_REGISTER, { tabId: 't1', path: '/a' })

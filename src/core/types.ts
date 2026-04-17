@@ -30,6 +30,10 @@ export interface NormalizedNode {
   sections: InspectorSection[]
   children: NormalizedNode[]
   isFromNodeModules: boolean
+  /** Stable ID across commits — persists while the fiber is mounted (React-only for now) */
+  persistentId?: number
+  /** Why this node re-rendered on the current commit (React-only for now) */
+  renderCause?: RenderCause
   /** Usage-site source location (where component is rendered in parent JSX) */
   usageSource?: SourceLocation
   /** Prop names that use dynamic bindings (:prop="expr") — persist-to-source is disabled for these */
@@ -76,6 +80,8 @@ export interface DevToolsConfig {
 
 export interface TreeUpdateEvent {
   tree: NormalizedNode[]
+  /** The commit that just occurred (React adapter only, when render-cause attribution is enabled) */
+  commit?: CommitRecord
 }
 
 export type ConsoleEntryType = 'error' | 'warning'
@@ -95,7 +101,57 @@ export interface ToastItem {
   dismissedAt: number | null
 }
 
-export type ActiveTab = 'inspect' | 'console'
+export type ActiveTab = 'inspect' | 'console' | 'renders'
+
+// Render-cause attribution types (React adapter)
+
+export type RenderCauseKind =
+  | 'mount'
+  | 'props'
+  | 'state'
+  | 'context'
+  | 'parent'
+  | 'bailout'
+
+export interface ChangedHook {
+  index: number
+  hookName: string
+  varName?: string
+}
+
+export interface RenderCause {
+  /** Drives the pip color; chosen by precedence: mount > state > context > props > parent > bailout */
+  primary: RenderCauseKind
+  /** All cause kinds that applied this commit (may be a single entry) */
+  contributors: RenderCauseKind[]
+  changedProps?: string[]
+  changedHooks?: ChangedHook[]
+  changedContexts?: string[]
+  /** The commit index this cause belongs to */
+  commitIndex: number
+  /** For bailed-out nodes: the last commit on which this component actually rendered */
+  lastRenderedCommit?: number
+}
+
+export interface CommitComponentEntry {
+  persistentId: number
+  name: string
+  source: SourceLocation | null
+  cause: RenderCauseKind
+  contributors: RenderCauseKind[]
+  changedProps?: string[]
+  changedHooks?: ChangedHook[]
+  changedContexts?: string[]
+  /** Only populated when includeValues is requested */
+  previousValues?: Record<string, string>
+  nextValues?: Record<string, string>
+}
+
+export interface CommitRecord {
+  commitIndex: number
+  timestampMs: number
+  components: CommitComponentEntry[]
+}
 
 // MCP bridge types
 

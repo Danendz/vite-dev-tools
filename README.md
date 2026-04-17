@@ -107,7 +107,7 @@ devtools({
 
 ## MCP Server
 
-The built-in MCP server lets AI coding agents inspect and interact with your running app. It exposes 16 tools over Streamable HTTP at `/__devtools/mcp`.
+The built-in MCP server lets AI coding agents inspect and interact with your running app. It exposes 21 tools over Streamable HTTP at `/__devtools/mcp`.
 
 ### Connecting your AI agent
 
@@ -176,6 +176,16 @@ Interaction tools support three targeting methods (at least one required):
 - **`text`** — find element by visible text content (e.g., click the "Submit" button)
 
 Action responses include whether the DOM settled after the interaction, how many elements matched, and any console errors that occurred during the action.
+
+**Render-cause tools** — requires enabling "Render-cause attribution" in Settings:
+
+| Tool | Description |
+|------|-------------|
+| `getRenderHistory` | Get the recorded commit history — each entry shows which components re-rendered and why |
+| `getRenderCauses` | Filter render history to a single component by name ("why does `<Foo>` keep re-rendering?") |
+| `getHotComponents` | Top N most-frequently re-rendering components in a time window — find perf suspects |
+| `clearRenderHistory` | Empty the render history buffer |
+| `setRenderHistoryRecording` | Pause or resume recording |
 
 ### Multi-tab support
 

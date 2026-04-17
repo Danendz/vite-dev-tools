@@ -1,8 +1,27 @@
 import { h } from 'preact'
 import { useState, useRef, useEffect } from 'preact/hooks'
-import type { NormalizedNode } from '../types'
+import type { NormalizedNode, RenderCause } from '../types'
 import { EVENTS } from '../../shared/constants'
 import { Tooltip } from './Tooltip'
+
+function formatCauseTooltip(cause: RenderCause): string {
+  switch (cause.primary) {
+    case 'mount':
+      return 'Mounted'
+    case 'props':
+      return `props changed: ${cause.changedProps?.join(', ') ?? ''}`
+    case 'state':
+      return `state changed: ${cause.changedHooks?.map((h) => h.varName ?? `#${h.index}`).join(', ') ?? ''}`
+    case 'context':
+      return `context changed: ${cause.changedContexts?.join(', ') ?? ''}`
+    case 'parent':
+      return 'parent re-rendered'
+    case 'bailout':
+      return 'skipped (memoized)'
+    default:
+      return cause.primary
+  }
+}
 
 /** Flatten past host elements to extract component children when not element-expanded */
 function flattenPastHostElements(children: NormalizedNode[]): NormalizedNode[] {
@@ -245,6 +264,11 @@ export function TreeNode({
         <span class="tree-node-toggle" onClick={hasChildren ? handleToggle : undefined}>
           {hasChildren ? (collapsed ? '\u25B6' : '\u25BC') : ''}
         </span>
+        {node.renderCause && node.renderCause.primary !== 'bailout' && (
+          <Tooltip text={formatCauseTooltip(node.renderCause)}>
+            <span class={`tree-cause-pip cause-${node.renderCause.primary}`} />
+          </Tooltip>
+        )}
         {hasHostElementChildren && (
           <Tooltip text={isElementExpanded ? 'Hide HTML elements' : 'Show HTML elements'}>
             <span

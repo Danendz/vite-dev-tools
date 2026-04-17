@@ -44,6 +44,11 @@ describe('createMcpTools', () => {
       'keypress',
       'selectOption',
       'getElementInfo',
+      'getRenderHistory',
+      'getRenderCauses',
+      'getHotComponents',
+      'clearRenderHistory',
+      'setRenderHistoryRecording',
     ]
 
     for (const name of expectedTools) {

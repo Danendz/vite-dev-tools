@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach } from 'vitest'
-import { walkFiberTree, fiberRefMap } from '@/adapters/react/fiber-walker'
+import { walkFiberTree, walkFiberTreeWithCauses, fiberRefMap } from '@/adapters/react/fiber-walker'
 import { createFakeFiber } from '@helpers/factories'
 
 // Fiber tag constants
@@ -285,5 +285,79 @@ describe('walkFiberTree', () => {
     const tree = walkFiberTree(wrapInRoot(fiber))
     expect(fiberRefMap.size).toBeGreaterThan(0)
     expect(fiberRefMap.get(tree[0].id)).toBe(fiber)
+  })
+})
+
+describe('walkFiberTreeWithCauses', () => {
+  beforeEach(() => {
+    fiberRefMap.clear()
+  })
+
+  it('attaches renderCause and persistentId to component nodes', () => {
+    const fiber = createFakeFiber({
+      tag: FunctionComponent,
+      type: { name: 'App', __devtools_source: { fileName: '/src/App.tsx', lineNumber: 1, columnNumber: 0 } },
+      memoizedProps: { a: 1 },
+      alternate: null,
+      flags: 1,
+    })
+    const result = walkFiberTreeWithCauses(wrapInRoot(fiber), {
+      renderCause: { commitIndex: 0, includeValues: false },
+    })
+    expect(result.tree[0].renderCause?.primary).toBe('mount')
+    expect(typeof result.tree[0].persistentId).toBe('number')
+    expect(result.commit?.commitIndex).toBe(0)
+    expect(result.commit?.components).toHaveLength(1)
+    expect(result.commit?.components[0].cause).toBe('mount')
+  })
+
+  it('does not attach cause data when renderCause option is omitted', () => {
+    const fiber = createFakeFiber({
+      tag: FunctionComponent,
+      type: { name: 'App', __devtools_source: { fileName: '/src/App.tsx', lineNumber: 1, columnNumber: 0 } },
+    })
+    const result = walkFiberTreeWithCauses(wrapInRoot(fiber), {})
+    expect(result.tree[0].renderCause).toBeUndefined()
+    expect(result.tree[0].persistentId).toBeUndefined()
+    expect(result.commit).toBeNull()
+  })
+
+  it('omits bailed-out components from the commit record but keeps the cause on the node', () => {
+    const props = { a: 1 }
+    const prev = { memoizedProps: props, memoizedState: null, dependencies: null, flags: 0 }
+    const fiber = createFakeFiber({
+      tag: FunctionComponent,
+      type: { name: 'Skipped', __devtools_source: { fileName: '/src/X.tsx', lineNumber: 1, columnNumber: 0 } },
+      memoizedProps: props,
+      alternate: prev,
+      flags: 0,
+    })
+    const result = walkFiberTreeWithCauses(wrapInRoot(fiber), {
+      renderCause: { commitIndex: 3, includeValues: false },
+    })
+    expect(result.tree[0].renderCause?.primary).toBe('bailout')
+    expect(result.commit?.components).toHaveLength(0)
+  })
+
+  it('collects previousValues/nextValues when includeValues is true', () => {
+    const prev = {
+      memoizedProps: { count: 1 },
+      memoizedState: null,
+      dependencies: null,
+      flags: 1,
+    }
+    const fiber = createFakeFiber({
+      tag: FunctionComponent,
+      type: { name: 'Counter', __devtools_source: { fileName: '/src/C.tsx', lineNumber: 1, columnNumber: 0 } },
+      memoizedProps: { count: 2 },
+      alternate: prev,
+      flags: 1,
+    })
+    const result = walkFiberTreeWithCauses(wrapInRoot(fiber), {
+      renderCause: { commitIndex: 0, includeValues: true },
+    })
+    const entry = result.commit?.components[0]
+    expect(entry?.previousValues?.count).toBe('1')
+    expect(entry?.nextValues?.count).toBe('2')
   })
 })

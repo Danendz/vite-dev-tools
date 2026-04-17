@@ -65,6 +65,12 @@ interface SettingsModalProps {
   onFontSizeChange: (size: number) => void
   onMcpPausedToggle: () => void
   onShowAiActionsToggle: () => void
+  renderCauseEnabled: boolean
+  renderHistorySize: number
+  renderIncludeValues: boolean
+  onRenderCauseToggle: () => void
+  onRenderHistorySizeChange: (size: number) => void
+  onRenderIncludeValuesToggle: () => void
   onClose: () => void
 }
 
@@ -100,6 +106,12 @@ export function SettingsModal({
   onFontSizeChange,
   onMcpPausedToggle,
   onShowAiActionsToggle,
+  renderCauseEnabled,
+  renderHistorySize,
+  renderIncludeValues,
+  onRenderCauseToggle,
+  onRenderHistorySizeChange,
+  onRenderIncludeValuesToggle,
   onClose,
 }: SettingsModalProps) {
   const [category, setCategory] = useState<SettingsCategory>('general')
@@ -186,6 +198,45 @@ export function SettingsModal({
                   </div>
                   <Toggle checked={showPreview} onClick={onShowPreviewToggle} />
                 </div>
+                <div class="settings-row" onClick={onRenderCauseToggle}>
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">Render-cause attribution</div>
+                    <div class="settings-row-desc">
+                      Label why each component re-renders — props, state, context, or parent cascade.
+                      Adds a "Renders" tab with commit history. Opt-in for performance.
+                    </div>
+                  </div>
+                  <Toggle checked={renderCauseEnabled} onClick={onRenderCauseToggle} />
+                </div>
+                {renderCauseEnabled && (
+                  <>
+                    <div class="settings-row settings-row-no-click">
+                      <div class="settings-row-info">
+                        <div class="settings-row-label">History buffer size</div>
+                        <div class="settings-row-desc">Maximum number of commits to keep (10–2000)</div>
+                      </div>
+                      <input
+                        class="settings-number-input"
+                        type="number"
+                        min="10"
+                        max="2000"
+                        step="10"
+                        value={renderHistorySize}
+                        onChange={(e) => {
+                          const val = parseInt((e.target as HTMLInputElement).value, 10)
+                          if (!isNaN(val)) onRenderHistorySizeChange(val)
+                        }}
+                      />
+                    </div>
+                    <div class="settings-row" onClick={onRenderIncludeValuesToggle}>
+                      <div class="settings-row-info">
+                        <div class="settings-row-label">Include value previews</div>
+                        <div class="settings-row-desc">Capture old → new value snapshots. Uses more memory.</div>
+                      </div>
+                      <Toggle checked={renderIncludeValues} onClick={onRenderIncludeValuesToggle} />
+                    </div>
+                  </>
+                )}
                 <div class="settings-row settings-row-no-click">
                   <div class="settings-row-info">
                     <div class="settings-row-label">Editor</div>

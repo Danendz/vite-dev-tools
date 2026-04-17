@@ -32,15 +32,17 @@ Built with **Preact** (not React) inside **Shadow DOM** for isolation.
 - `Highlight.tsx` — DOM element highlight overlay.
 - `state-store.ts` — Shared state object (`devtoolsState`) bridging overlay UI with MCP server. Holds live tree, selected node, console entries, and callbacks.
 - `styles.ts` — All CSS as template string (required for Shadow DOM injection). Uses `var(--accent)` and `var(--accent-rgb)` CSS custom properties for framework-specific theming.
+- `RendersPane.tsx` — Render history tab: commit timeline, cause filters, per-commit component list with expandable value diffs.
 - `FloatingIcon.tsx`, `ContextMenu.tsx`, `PreviewModal.tsx`, `ToastContainer.tsx` — Supporting UI components.
 
 ### MCP Server — `src/core/mcp/`
 
 Full Model Context Protocol support for AI agents to query/control the overlay. Enabled by default (`mcp: true` in config).
 
-- `mcp-server.ts` — Defines 16 MCP tools: query tools (`listConnectedTabs`, `getComponentTree`, `getSelectedComponent`, `getConsoleErrors`, `getPropsOf`, `getSourceLocation`, `searchComponents`), action tools (`selectComponent`, `highlightDom`, `clearHighlight`, `openInEditor`), and interaction tools (`click`, `type`, `keypress`, `selectOption`, `getElementInfo`).
+- `mcp-server.ts` — Defines 21 MCP tools: query tools (`listConnectedTabs`, `getComponentTree`, `getSelectedComponent`, `getConsoleErrors`, `getPropsOf`, `getSourceLocation`, `searchComponents`), action tools (`selectComponent`, `highlightDom`, `clearHighlight`, `openInEditor`), interaction tools (`click`, `type`, `keypress`, `selectOption`, `getElementInfo`), and render-cause tools (`getRenderHistory`, `getRenderCauses`, `getHotComponents`, `clearRenderHistory`, `setRenderHistoryRecording`).
 - `bridge-server.ts` — Vite-server side. Manages browser tab registry and routes RPC requests/responses over Vite HMR WebSocket. Auto-selects most recently focused tab.
 - `bridge-client.ts` — Browser side. Registers tab via HMR, handles incoming MCP requests by reading/mutating `devtoolsState`.
+- `render-history-handlers.ts` — Browser-side handlers for render-cause MCP tools. Reads from `devtoolsState.renderHistory`.
 - `middleware.ts` — HTTP transport at `/__devtools/mcp`. Handles POST/GET/DELETE for Streamable HTTP MCP sessions.
 - `index.ts` — Barrel export.
 
@@ -49,8 +51,11 @@ Full Model Context Protocol support for AI agents to query/control the overlay. 
 ### React Adapter — `src/adapters/react/`
 
 - `adapter.ts` — `FrameworkAdapter` implementation. Detects React version, version-aware transforms (React 18: `_debugSource`; React 19+: injects `__devtools_source` + `__source` prop + component usage map via OXC parser or regex fallback). Edit types: `react-hook` (useState), `react-prop` (JSX attr).
-- `client-runtime.ts` — Listens for fiber commit events, calls `walkFiberTree()`, dispatches tree update events.
-- `fiber-walker.ts` — Walks React fiber tree, normalizes to `NormalizedNode[]`. Supports `hideLibrary` mode.
+- `client-runtime.ts` — Listens for fiber commit events, calls `walkFiberTree()`, dispatches tree update events. Uses max-delay debounce (200ms cap) to handle rapid commits without starvation.
+- `fiber-walker.ts` — Walks React fiber tree, normalizes to `NormalizedNode[]`. Supports `hideLibrary` mode. Extended with `walkFiberTreeWithCauses()` that attaches `renderCause` and `persistentId` per node.
+- `render-cause.ts` — Pure diff logic: compares `fiber.alternate` to detect mount/props/state/context/parent/bailout causes. Precedence: mount > state > context > props > parent.
+- `render-history.ts` — Ring buffer of `CommitRecord` objects (default 500, configurable). Recording can be toggled via UI or MCP.
+- `persistent-id.ts` — Cross-commit fiber identity via WeakMap. Mirrors IDs between `fiber` and `fiber.alternate`.
 - `hook.ts` — Inline script injected before React loads. Sets up `window.__REACT_DEVTOOLS_GLOBAL_HOOK__`.
 - `devtools-entry.ts` — `<DevToolsPanel>` React component entry point.
 - `index.ts` — Public entry. Exports `devtools()` and `DevToolsConfig`.
@@ -67,7 +72,8 @@ Full Model Context Protocol support for AI agents to query/control the overlay. 
 
 ### Shared — `src/shared/`
 
-- `constants.ts` — Event names, localStorage keys, endpoints, bridge events, default config.
+- `constants.ts` — Event names, localStorage keys, endpoints, bridge events, default config, render-history defaults.
+- `preview-value.ts` — Circular-safe, depth-capped `safeStringify` for value previews in render-cause diffs.
 - `editor.ts` — Express middleware for `launch-editor` integration.
 - `ast-utils.ts` — Shared AST utilities.
 - `diff.ts` — Diffing utilities.
@@ -96,10 +102,11 @@ Path aliases: `@/` → `src/`, `@helpers/` → `tests/helpers/` (configured in `
 
 | Layer | Files | What |
 |-------|-------|------|
-| Pure utilities | `diff`, `ast-utils`, `tree-utils`, `console-format` | Pure functions, no mocking |
+| Pure utilities | `diff`, `ast-utils`, `tree-utils`, `console-format`, `preview-value` | Pure functions, no mocking |
 | DOM interaction | `dispatch-events`, `resolve-element`, `settle`, `action-response`, `console-capture` | happy-dom environment |
-| MCP server/bridge | `bridge-server`, `mcp-server`, `bridge-client`, `middleware` | Mock HMR + HTTP |
+| MCP server/bridge | `bridge-server`, `mcp-server`, `bridge-client`, `middleware`, `render-history-handlers` | Mock HMR + HTTP |
 | Framework walkers | `fiber-walker`, `instance-walker`, `state-extractor` | Hand-crafted fake fibers/instances |
+| Render-cause | `render-cause`, `render-history`, `persistent-id` | Fake fibers, ring buffer mechanics |
 | Adapter transforms | `react/adapter`, `vue/adapter` | Assertion-based (no snapshots) |
 
 ### What's NOT tested
@@ -137,6 +144,9 @@ Located at `~/Projects/test-devtools`. Uses the plugin via `pnpm link:../vite-de
 - **Preact, not React**: The overlay uses Preact to avoid conflicts with the host app's React/Vue. JSX configured via `jsxImportSource: 'preact'` in tsconfig.
 - **MCP bridge over HMR**: MCP server communicates with browser overlay via Vite's HMR WebSocket (bridge events in `constants.ts`). Actions triggered by AI are tagged with `source: 'ai'`.
 - **Adapter pattern**: Both React and Vue adapters implement `FrameworkAdapter` and call `createDevtoolsPlugin()` from `plugin-factory.ts`.
+- **Render-cause attribution** (React-only, opt-in via Settings): On each commit, `render-cause.ts` diffs `fiber.alternate` to detect why each component re-rendered (mount/props/state/context/parent/bailout). Causes are attached to `NormalizedNode.renderCause` and collected into a `CommitRecord` ring buffer. UI: colored pip in tree + "Why" section in DetailPanel + "Renders" tab with timeline/filters. MCP tools: `getRenderHistory`, `getRenderCauses`, `getHotComponents`, `clearRenderHistory`, `setRenderHistoryRecording`.
+- **Persistent fiber identity**: `persistent-id.ts` assigns a stable numeric ID per fiber via WeakMap, mirrored to `fiber.alternate`. Survives across commits; unmount = GC. React 19 aggressively detaches alternates — `isKnownFiber()` check prevents false mount labels.
+- **Max-delay debounce**: `client-runtime.ts` debounces commit walks at 100ms but caps burst duration at 200ms, ensuring high-frequency updates (intervals, typing) still get recorded.
 
 ## React Version Handling
 
@@ -150,5 +160,6 @@ Located at `~/Projects/test-devtools`. Uses the plugin via `pnpm link:../vite-de
 - Add new localStorage keys to `STORAGE_KEYS` in `constants.ts`.
 - Always run `pnpm build` and `pnpm typecheck` after changes and reload the test app.
 - If modifying walker files (`fiber-walker.ts`, `instance-walker.ts`) or runtime files (`client-runtime.ts`), the tree structure or communication may change — verify the overlay still receives updates.
-- If adding MCP tools, add handler in `bridge-client.ts` and tool definition in `mcp-server.ts`.
+- If adding MCP tools, add handler in `bridge-client.ts` (or `render-history-handlers.ts` for render-cause tools) and tool definition in `mcp-server.ts`.
 - For adapter-specific server endpoints, use `adapter.configureServer()`.
+- If modifying render-cause detection, update `render-cause.ts` (cause taxonomy) and `render-cause.test.ts` (fake fibers).

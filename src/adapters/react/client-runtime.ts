@@ -2,11 +2,16 @@
  * React-specific client runtime.
  * Listens for fiber tree commits and sends normalized tree data to the overlay.
  */
-import { walkFiberTree, fiberRefMap } from './fiber-walker'
+import { walkFiberTree, walkFiberTreeWithCauses, fiberRefMap } from './fiber-walker'
+import { getRenderHistory } from './render-history'
+import { devtoolsState } from '../../core/overlay/state-store'
 import { EVENTS, STORAGE_KEYS } from '../../shared/constants'
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let lastFiberRoot: any = null
+let burstStartTime = 0
+const MAX_DELAY_MS = 200
+const DEBOUNCE_MS = 100
 
 /**
  * Stores unsaved prop edits so they survive HMR-triggered tree re-walks.
@@ -24,6 +29,15 @@ function getHideLibrary(): boolean {
 
 function getHideProviders(): boolean {
   return localStorage.getItem(STORAGE_KEYS.HIDE_PROVIDERS) !== 'false'
+}
+
+function isRenderCauseEnabled(): boolean {
+  return localStorage.getItem(STORAGE_KEYS.RENDER_CAUSE_ENABLED) === 'true'
+}
+
+function isIncludeValues(): boolean {
+  // Defaults to true when the attribution feature is on
+  return localStorage.getItem(STORAGE_KEYS.RENDER_INCLUDE_VALUES) !== 'false'
 }
 
 function reapplyPendingEdits(nodes: import('../../core/types').NormalizedNode[]) {
@@ -92,28 +106,59 @@ function reapplyPendingEdits(nodes: import('../../core/types').NormalizedNode[])
 
 function walkAndDispatch() {
   if (!lastFiberRoot) return
-  const tree = walkFiberTree(lastFiberRoot, getHideLibrary(), getHideProviders())
+
+  let tree: import('../../core/types').NormalizedNode[]
+  let commit: import('../../core/types').CommitRecord | null = null
+
+  if (isRenderCauseEnabled()) {
+    const history = getRenderHistory()
+    const commitIndex = history.advanceCommitIndex()
+    const result = walkFiberTreeWithCauses(lastFiberRoot, {
+      hideLibrary: getHideLibrary(),
+      hideProviders: getHideProviders(),
+      renderCause: { commitIndex, includeValues: isIncludeValues() },
+    })
+    tree = result.tree
+    commit = result.commit
+    if (commit) {
+      history.record(commit)
+      devtoolsState.setRenderHistory(history.getCommits())
+    }
+  } else {
+    tree = walkFiberTree(lastFiberRoot, getHideLibrary(), getHideProviders())
+  }
 
   if (pendingPropEdits.size > 0 || pendingTextEdits.size > 0) {
     reapplyPendingEdits(tree)
   }
 
   window.dispatchEvent(
-    new CustomEvent(EVENTS.TREE_UPDATE, { detail: { tree } }),
+    new CustomEvent(EVENTS.TREE_UPDATE, { detail: { tree, commit: commit ?? undefined } }),
   )
 }
 
 function handleCommit(event: Event) {
   const { root } = (event as CustomEvent).detail
+  const now = Date.now()
 
+  if (!burstStartTime) burstStartTime = now
   if (debounceTimer) clearTimeout(debounceTimer)
-  debounceTimer = setTimeout(() => {
-    const fiberRoot = root.current
-    if (!fiberRoot) return
 
-    lastFiberRoot = fiberRoot
+  const fiberRoot = root.current
+  if (!fiberRoot) return
+  lastFiberRoot = fiberRoot
+
+  const elapsed = now - burstStartTime
+  if (elapsed >= MAX_DELAY_MS) {
+    burstStartTime = 0
     walkAndDispatch()
-  }, 100)
+  } else {
+    const remaining = Math.min(DEBOUNCE_MS, MAX_DELAY_MS - elapsed)
+    debounceTimer = setTimeout(() => {
+      burstStartTime = 0
+      walkAndDispatch()
+    }, remaining)
+  }
 }
 
 // Listen for fiber commits from the hook
