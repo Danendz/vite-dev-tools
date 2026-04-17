@@ -1002,6 +1002,56 @@ export const STYLES = /* css */ `
     background: rgba(255, 255, 255, 0.06);
   }
 
+  /* ── Console source links ── */
+
+  .console-entry-source {
+    color: #a1a1aa;
+    font-size: 10px;
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: color 0.15s;
+    white-space: nowrap;
+    opacity: 0;
+  }
+
+  .console-entry:hover .console-entry-source {
+    opacity: 1;
+  }
+
+  .console-entry-source:hover {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+
+  .console-entry-source.library {
+    color: #52525b;
+    cursor: default;
+  }
+
+  .console-entry-source.library:hover {
+    text-decoration: none;
+    color: #52525b;
+  }
+
+  .console-stack-line {
+    padding: 0 0 0 2px;
+    line-height: 1.6;
+  }
+
+  .console-stack-line:not(.library) {
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+
+  .console-stack-line:not(.library):hover {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+
+  .console-stack-line.library {
+    color: #52525b;
+  }
+
   .console-empty {
     color: #52525b;
     font-style: italic;
