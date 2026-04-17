@@ -75,6 +75,7 @@ handlers.set('getPropsOf', async (params) => {
     id: node.id,
     name: node.name,
     props: node.props,
+    propOrigins: node.propOrigins ?? null,
     sections: node.sections,
     source: node.source,
     usageSource: node.usageSource ?? null,
@@ -247,6 +248,79 @@ handlers.set('getRenderCauses', getRenderCausesHandler)
 handlers.set('getHotComponents', getHotComponentsHandler)
 handlers.set('clearRenderHistory', clearRenderHistoryHandler)
 handlers.set('setRenderHistoryRecording', setRenderHistoryRecordingHandler)
+
+// --- Deep inspection handlers ---
+
+function findNodeByName(name: string): import('../types').NormalizedNode | null {
+  const queue = [...devtoolsState.tree]
+  while (queue.length > 0) {
+    const node = queue.shift()!
+    if (node.name === name) return node
+    queue.push(...node.children)
+  }
+  return null
+}
+
+handlers.set('getHookTree', async (params) => {
+  const name = params.componentName as string
+  const node = findNodeByName(name)
+  if (!node) return { error: `Component not found: ${name}` }
+
+  const hooksSection = node.sections.find(s => s.id === 'hooks' || s.id === 'setup')
+  if (!hooksSection) return { componentName: name, hooks: [] }
+
+  // Recursively serialize InspectorItems, including nested innerHooks
+  function serializeItem(item: import('../types').InspectorItem): any {
+    const result: any = {
+      key: item.key,
+      value: item.value,
+      badge: item.badge ?? null,
+      editable: item.editable,
+    }
+    if (item.depNames) result.depNames = item.depNames
+    if (item.depValues) result.depValues = item.depValues
+    if (item.sourceFile) result.sourceFile = item.sourceFile
+    if (item.lineNumber) result.lineNumber = item.lineNumber
+    if (item.innerHooks && item.innerHooks.length > 0) {
+      result.innerHooks = item.innerHooks.map(serializeItem)
+    }
+    return result
+  }
+
+  return {
+    componentName: name,
+    hooks: hooksSection.items.map(serializeItem),
+  }
+})
+
+handlers.set('getLocalVars', async (params) => {
+  const name = params.componentName as string
+  const node = findNodeByName(name)
+  if (!node) return { error: `Component not found: ${name}` }
+  return {
+    componentName: name,
+    locals: node.locals ?? [],
+    source: node.source,
+  }
+})
+
+handlers.set('getWatchers', async (params) => {
+  const name = params.componentName as string
+  const node = findNodeByName(name)
+  if (!node) return { error: `Component not found: ${name}` }
+
+  const watcherSection = node.sections.find(s => s.id === 'watchers')
+  if (!watcherSection) return { componentName: name, watchers: [] }
+
+  return {
+    componentName: name,
+    watchers: watcherSection.items.map(item => ({
+      key: item.key,
+      value: item.value,
+      badge: item.badge ?? null,
+    })),
+  }
+})
 
 /** Initialize the HMR bridge client */
 export function initBridgeClient() {

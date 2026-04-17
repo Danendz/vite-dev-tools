@@ -49,6 +49,9 @@ describe('createMcpTools', () => {
       'getHotComponents',
       'clearRenderHistory',
       'setRenderHistoryRecording',
+      'getHookTree',
+      'getLocalVars',
+      'getWatchers',
     ]
 
     for (const name of expectedTools) {

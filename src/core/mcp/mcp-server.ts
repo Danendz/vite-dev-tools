@@ -265,5 +265,40 @@ export function createMcpTools(bridge: BridgeServer): McpServer {
     return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
   })
 
+  // --- Deep inspection tools ---
+
+  mcp.registerTool('getHookTree', {
+    description: 'Get the nested hook/composable tree for a component. Shows custom hooks with their inner useState/useRef/useEffect calls, including dependency arrays and current values. Works for both React hooks and Vue composables.',
+    inputSchema: z.object({
+      componentName: z.string().describe('The component name to inspect.'),
+      tab: z.string().optional().describe('Target tab ID. Auto-selects if omitted.'),
+    }),
+  }, async ({ componentName, tab }) => {
+    const result = await bridge.request('getHookTree', { componentName }, tab)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  })
+
+  mcp.registerTool('getLocalVars', {
+    description: 'Get local variable names and source line numbers for a component. These are non-hook variables declared in the component body (for jump-to-source, no runtime values).',
+    inputSchema: z.object({
+      componentName: z.string().describe('The component name to inspect.'),
+      tab: z.string().optional().describe('Target tab ID. Auto-selects if omitted.'),
+    }),
+  }, async ({ componentName, tab }) => {
+    const result = await bridge.request('getLocalVars', { componentName }, tab)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  })
+
+  mcp.registerTool('getWatchers', {
+    description: 'Get active watchers for a Vue component. Shows watch() and watchEffect() with their current values and execution state. Vue-only — returns empty for React components.',
+    inputSchema: z.object({
+      componentName: z.string().describe('The component name to inspect.'),
+      tab: z.string().optional().describe('Target tab ID. Auto-selects if omitted.'),
+    }),
+  }, async ({ componentName, tab }) => {
+    const result = await bridge.request('getWatchers', { componentName }, tab)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  })
+
   return mcp
 }
