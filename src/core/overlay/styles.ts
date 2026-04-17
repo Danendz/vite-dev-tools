@@ -1924,6 +1924,15 @@ export const STYLES = /* css */ `
   .tree-cause-pip.cause-parent   { background: #6b7280; }
   .tree-cause-pip.cause-bailout  { background: #374151; }
 
+  @keyframes cause-pulse {
+    0%  { transform: scale(1); }
+    40% { transform: scale(1.8); }
+    100% { transform: scale(1); }
+  }
+  .tree-cause-pip.cause-animate {
+    animation: cause-pulse 300ms ease-out;
+  }
+
   .detail-why {
     display: flex;
     flex-direction: column;

@@ -56,6 +56,7 @@ interface TreeNodeProps {
   expandedPropsSet: Set<string>
   aiSelectedNodeIds?: Set<string>
   showAiActions?: boolean
+  commitComponentIds?: Set<number> | null
   onToggle: (nodeId: string) => void
   onElementExpandToggle: (nodeId: string) => void
   onPropEdit: (nodeId: string, propKey: string) => void
@@ -142,6 +143,7 @@ export function TreeNode({
   expandedPropsSet,
   aiSelectedNodeIds,
   showAiActions,
+  commitComponentIds,
   onToggle,
   onElementExpandToggle,
   onPropEdit,
@@ -264,11 +266,17 @@ export function TreeNode({
         <span class="tree-node-toggle" onClick={hasChildren ? handleToggle : undefined}>
           {hasChildren ? (collapsed ? '\u25B6' : '\u25BC') : ''}
         </span>
-        {node.renderCause && node.renderCause.primary !== 'bailout' && (
-          <Tooltip text={formatCauseTooltip(node.renderCause)}>
-            <span class={`tree-cause-pip cause-${node.renderCause.primary}`} />
-          </Tooltip>
-        )}
+        {node.renderCause && node.renderCause.primary !== 'bailout' && (() => {
+          const inCommit = !!(node.persistentId && commitComponentIds?.has(node.persistentId))
+          return (
+            <Tooltip text={formatCauseTooltip(node.renderCause!)}>
+              <span
+                key={inCommit ? node.renderCause!.commitIndex : undefined}
+                class={`tree-cause-pip cause-${node.renderCause!.primary}${inCommit && node.renderCause!.primary !== 'mount' ? ' cause-animate' : ''}`}
+              />
+            </Tooltip>
+          )
+        })()}
         {hasHostElementChildren && (
           <Tooltip text={isElementExpanded ? 'Hide HTML elements' : 'Show HTML elements'}>
             <span
@@ -387,6 +395,7 @@ export function TreeNode({
               expandedPropsSet={expandedPropsSet}
               aiSelectedNodeIds={aiSelectedNodeIds}
               showAiActions={showAiActions}
+              commitComponentIds={commitComponentIds}
               onToggle={onToggle}
               onElementExpandToggle={onElementExpandToggle}
               onPropEdit={onPropEdit}

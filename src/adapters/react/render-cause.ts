@@ -24,17 +24,36 @@ const COMPONENT_TAGS = new Set([
 ])
 
 /**
- * Pure — given a current-commit fiber, decide WHY it re-rendered.
+ * Cross-walk snapshot of each fiber's props/state references.
+ * Keyed by fiber object — works because skipped-subtree fibers are the SAME
+ * object across walks (React never clones them). WeakMap allows GC on unmount.
+ */
+const fiberSnapshot = new WeakMap<object, { props: any; state: any }>()
+
+/**
+ * Given a current-commit fiber, decide WHY it re-rendered.
  * Assumes the fiber is a component fiber (not host). Callers should filter.
  */
 export function computeRenderCause(fiber: any, commitIndex: number): RenderCause {
+  // Read previous snapshot before updating it
+  const prevSnap = fiberSnapshot.get(fiber)
+  fiberSnapshot.set(fiber, { props: fiber.memoizedProps, state: fiber.memoizedState })
+
+  // Snapshot bailout: if this is the same fiber object as the last walk and its
+  // props/state refs are identical, the fiber was part of a skipped subtree —
+  // React never cloned it this commit. This catches cases where the alternate
+  // has stale data from a prior commit that would cause false diffs.
+  if (prevSnap && fiber.memoizedProps === prevSnap.props && fiber.memoizedState === prevSnap.state) {
+    return { primary: 'bailout', contributors: ['bailout'], commitIndex }
+  }
+
   // Mount — but only if we haven't seen this fiber before.
   // React 19 aggressively detaches fiber.alternate after commits to save memory,
   // so alternate === null does NOT always mean "first mount".
   if (!fiber.alternate) {
     if (isKnownFiber(fiber)) {
-      // We've seen this fiber in a prior walk — React just detached its alternate.
-      // Without the alternate we can't diff, so label as parent cascade.
+      // Known fiber, no alternate, props/state changed since last walk →
+      // React 19 detached the alternate. Can't diff, label as parent cascade.
       return { primary: 'parent', contributors: ['parent'], commitIndex }
     }
     return { primary: 'mount', contributors: ['mount'], commitIndex }
@@ -51,9 +70,16 @@ export function computeRenderCause(fiber: any, commitIndex: number): RenderCause
   if (changedContexts.length > 0) contributors.push('context')
   if (changedProps.length > 0) contributors.push('props')
 
-  // Bailout: no PerformedWork flag + nothing locally changed
+  // Bailout: no PerformedWork flag + nothing locally changed.
+  // React doesn't clear flags on bailed-out subtrees, so PerformedWork can be
+  // stale from a prior commit. Cross-check: if both memoizedProps and
+  // memoizedState are referentially identical to the alternate, no new work
+  // was created for this fiber — it was part of a skipped subtree.
   const performedWork = (fiber.flags & PERFORMED_WORK_FLAG) !== 0
-  if (!performedWork && contributors.length === 0) {
+  const propsIdentical = fiber.memoizedProps === alternate.memoizedProps
+  const stateIdentical = fiber.memoizedState === alternate.memoizedState
+
+  if (contributors.length === 0 && (!performedWork || (propsIdentical && stateIdentical))) {
     return { primary: 'bailout', contributors: ['bailout'], commitIndex }
   }
 

@@ -75,6 +75,7 @@ interface PanelProps {
   renderHistory: CommitRecord[]
   renderHistoryRecording: boolean
   pinnedRenderComponentId: number | null
+  commitComponentIds: Set<number> | null
   onRenderCauseToggle: () => void
   onRenderHistorySizeChange: (size: number) => void
   onRenderIncludeValuesToggle: () => void
@@ -143,6 +144,7 @@ export function Panel({
   renderHistory,
   renderHistoryRecording,
   pinnedRenderComponentId,
+  commitComponentIds,
   onRenderCauseToggle,
   onRenderHistorySizeChange,
   onRenderIncludeValuesToggle,
@@ -408,6 +410,7 @@ export function Panel({
                 expandedPropsSet={expandedPropsSet}
                 aiSelectedNodeIds={aiSelectedNodeIds}
                 showAiActions={showAiActions}
+                commitComponentIds={commitComponentIds}
                 onSearchChange={onSearchChange}
                 onPropEdit={onPropEdit}
                 onExpandProps={onExpandProps}

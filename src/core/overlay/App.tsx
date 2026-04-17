@@ -148,6 +148,7 @@ export function App({ config }: AppProps) {
   const [renderHistory, setRenderHistoryState] = useState<CommitRecord[]>([])
   const [renderHistoryRecording, setRenderHistoryRecordingState] = useState(true)
   const [pinnedRenderComponentId, setPinnedRenderComponentId] = useState<number | null>(null)
+  const [commitComponentIds, setCommitComponentIds] = useState<Set<number> | null>(null)
   const renderHistorySizeRef = useRef(renderHistorySize)
   const renderHistoryRecordingRef = useRef(renderHistoryRecording)
   useEffect(() => { renderHistorySizeRef.current = renderHistorySize }, [renderHistorySize])
@@ -159,13 +160,18 @@ export function App({ config }: AppProps) {
       const { tree: newTree, commit } = (e as CustomEvent<TreeUpdateEvent>).detail
       setTree(newTree)
       devtoolsState.setTree(newTree)
-      if (commit && renderHistoryRecordingRef.current) {
-        setRenderHistoryState((prev) => {
-          const cap = renderHistorySizeRef.current
-          const next = prev.length >= cap ? [...prev.slice(-(cap - 1)), commit] : [...prev, commit]
-          devtoolsState.setRenderHistory(next)
-          return next
-        })
+      if (commit) {
+        setCommitComponentIds(new Set(commit.components.map(c => c.persistentId)))
+        if (renderHistoryRecordingRef.current) {
+          setRenderHistoryState((prev) => {
+            const cap = renderHistorySizeRef.current
+            const next = prev.length >= cap ? [...prev.slice(-(cap - 1)), commit] : [...prev, commit]
+            devtoolsState.setRenderHistory(next)
+            return next
+          })
+        }
+      } else {
+        setCommitComponentIds(null)
       }
       // Rebuild reverse DOM → node map
       const map = new Map<HTMLElement, NormalizedNode>()
@@ -820,6 +826,7 @@ export function App({ config }: AppProps) {
           renderHistory={renderHistory}
           renderHistoryRecording={renderHistoryRecording}
           pinnedRenderComponentId={pinnedRenderComponentId}
+          commitComponentIds={commitComponentIds}
           onRenderCauseToggle={handleRenderCauseToggle}
           onRenderHistorySizeChange={handleRenderHistorySizeChange}
           onRenderIncludeValuesToggle={handleRenderIncludeValuesToggle}

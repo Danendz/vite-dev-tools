@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { computeRenderCause, PERFORMED_WORK_FLAG } from '@/adapters/react/render-cause'
+import { getPersistentId } from '@/adapters/react/persistent-id'
 
 // ---- helpers to build fake fibers ----
 
@@ -73,12 +74,12 @@ describe('computeRenderCause', () => {
     expect(cause.changedProps).toEqual(['user'])
   })
 
-  it('returns empty changedProps and falls through to parent when props ref-equal', () => {
+  it('labels bailout when props and state are referentially identical (skipped subtree)', () => {
     const props = { a: 1 }
     const prev = fiber({ memoizedProps: props })
     const next = fiber({ memoizedProps: props, alternate: prev })
     const cause = computeRenderCause(next, 1)
-    expect(cause.primary).toBe('parent')
+    expect(cause.primary).toBe('bailout')
     expect(cause.changedProps).toBeUndefined()
   })
 
@@ -131,6 +132,81 @@ describe('computeRenderCause', () => {
     const next = fiber({ alternate: prev, flags: 0 })
     const cause = computeRenderCause(next, 5)
     expect(cause.primary).toBe('bailout')
+  })
+
+  it('labels bailout when PerformedWork is stale but props/state are referentially identical', () => {
+    const sharedProps = { to: '/', end: true }
+    const sharedState = makeHooks([0])
+    const prev = {
+      tag: 0,
+      type: function NavLink() {},
+      memoizedProps: sharedProps,
+      memoizedState: sharedState,
+      dependencies: null,
+      alternate: null,
+      flags: PERFORMED_WORK_FLAG,
+    }
+    const next = {
+      ...prev,
+      alternate: prev,
+      // Same references — subtree was skipped, React didn't create new work
+      memoizedProps: sharedProps,
+      memoizedState: sharedState,
+      // Stale PerformedWork from the mount commit
+      flags: PERFORMED_WORK_FLAG,
+    }
+    const cause = computeRenderCause(next, 2)
+    expect(cause.primary).toBe('bailout')
+  })
+
+  it('labels bailout via snapshot when no alternate and props/state unchanged between walks', () => {
+    // Same fiber object across walks — simulates a skipped subtree where
+    // React never clones the fiber, so alternate stays null.
+    const props = { to: '/' }
+    const state = makeHooks([0])
+    const f = {
+      tag: 0,
+      type: function NavLink() {},
+      memoizedProps: props,
+      memoizedState: state,
+      dependencies: null,
+      alternate: null,
+      flags: PERFORMED_WORK_FLAG,
+    }
+
+    // Walk 1: mount (snapshot stored internally via WeakMap on fiber)
+    const cause1 = computeRenderCause(f, 0)
+    expect(cause1.primary).toBe('mount')
+
+    // After walk 1, getPersistentId registers the fiber (like attachRenderCause does)
+    getPersistentId(f)
+
+    // Walk 2: same fiber object, same props/state, no alternate
+    // isKnownFiber → true (registered above), snapshot matches → bailout
+    const cause2 = computeRenderCause(f, 1)
+    expect(cause2.primary).toBe('bailout')
+  })
+
+  it('labels parent via snapshot when no alternate but props changed between walks', () => {
+    const f = {
+      tag: 0,
+      type: function NavLink() {},
+      memoizedProps: { to: '/' } as any,
+      memoizedState: null,
+      dependencies: null,
+      alternate: null,
+      flags: PERFORMED_WORK_FLAG,
+    }
+
+    // Walk 1: mount (stores snapshot)
+    computeRenderCause(f, 0)
+    getPersistentId(f)
+
+    // Walk 2: props changed (React 19 detached alternate but component did re-render)
+    f.memoizedProps = { to: '/new' }
+    const cause = computeRenderCause(f, 1)
+    // isKnownFiber → true, but snapshot doesn't match → parent fallback
+    expect(cause.primary).toBe('parent')
   })
 
   it('applies precedence: mount > state > context > props > parent', () => {
