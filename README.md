@@ -12,6 +12,8 @@ Supports **React** and **Vue 3**.
 - Hover any element → instantly find which component owns it
 - See only what renders — strips away providers, wrappers, and internals to show your actual UI tree
 - AI agents can inspect your component tree, read props/state, highlight elements, and interact with the UI (click, type, select) via MCP
+- See why components re-render — cause attribution with value diffs (React & Vue)
+- Deep inspection — hook/composable trees, local variables, and watchers via MCP
 
 Console capture with AI-ready copy · Dockable & resizable panel · Hover-to-highlight · Keyboard shortcut toggle · Framework-themed UI · MCP server for AI agents
 
@@ -107,7 +109,7 @@ devtools({
 
 ## MCP Server
 
-The built-in MCP server lets AI coding agents inspect and interact with your running app. It exposes 21 tools over Streamable HTTP at `/__devtools/mcp`.
+The built-in MCP server lets AI coding agents inspect and interact with your running app. It exposes 24 tools over Streamable HTTP at `/__devtools/mcp`.
 
 ### Connecting your AI agent
 
@@ -186,6 +188,14 @@ Action responses include whether the DOM settled after the interaction, how many
 | `getHotComponents` | Top N most-frequently re-rendering components in a time window — find perf suspects |
 | `clearRenderHistory` | Empty the render history buffer |
 | `setRenderHistoryRecording` | Pause or resume recording |
+
+**Deep inspection tools:**
+
+| Tool | Description |
+|------|-------------|
+| `getHookTree` | Get the nested hook/composable tree with dependencies and current values |
+| `getLocalVars` | Get local variable names and source line numbers for a component |
+| `getWatchers` | Get Vue watchers with their current execution state (Vue only) |
 
 ### Multi-tab support
 
