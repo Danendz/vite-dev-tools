@@ -11,6 +11,8 @@ export interface PopupManagerConfig {
 }
 
 export interface PopupManager {
+  /** Whether the devtools are currently in a detached popup window. */
+  isDetached(): boolean
   /** Open the popup window, inject styles, set DETACHED flag. Returns the popup Window. */
   detach(): Window
   /** Close the popup, clear DETACHED flag. */
@@ -271,7 +273,12 @@ export function createPopupManager(config: PopupManagerConfig): PopupManager {
     reconnectCallbacks.push(cb)
   }
 
+  function isDetached(): boolean {
+    return popupWin !== null && !popupWin.closed
+  }
+
   return {
+    isDetached,
     detach,
     dock,
     refocusPopup,

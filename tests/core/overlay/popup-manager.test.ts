@@ -140,6 +140,20 @@ describe('createPopupManager', () => {
     expect(manager.getPopupWindow()).toBeNull()
   })
 
+  it('isDetached returns false initially and true after detach', async () => {
+    const { createPopupManager } = await importManager()
+    const fakeWin = createFakePopupWindow()
+    const openSpy = vi.fn(() => fakeWin as unknown as Window)
+    vi.stubGlobal('window', { ...window, open: openSpy, document })
+
+    const manager = createPopupManager(makeConfig())
+    expect(manager.isDetached()).toBe(false)
+    manager.detach()
+    expect(manager.isDetached()).toBe(true)
+    manager.dock()
+    expect(manager.isDetached()).toBe(false)
+  })
+
   describe('detach()', () => {
     it('calls window.open with named popup and returns the window', async () => {
       const { createPopupManager } = await importManager()
