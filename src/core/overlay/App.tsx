@@ -92,9 +92,10 @@ export function App({ config, popupManager }: AppProps) {
   })
   const [activeTab, setActiveTab] = useState<ActiveTab>('inspect')
   const [consoleEntries, setConsoleEntries] = useState<ConsoleEntry[]>([])
-  const [consoleFilters, setConsoleFilters] = useState<{ errors: boolean; warnings: boolean }>({
+  const [consoleFilters, setConsoleFilters] = useState<{ errors: boolean; warnings: boolean; logs: boolean }>({
     errors: true,
     warnings: true,
+    logs: true,
   })
   const [hideLibrary, setHideLibrary] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.HIDE_LIBRARY) !== 'false'
@@ -583,7 +584,7 @@ export function App({ config, popupManager }: AppProps) {
     setConsoleEntries([])
   }, [])
 
-  const handleFilterChange = useCallback((filters: { errors: boolean; warnings: boolean }) => {
+  const handleFilterChange = useCallback((filters: { errors: boolean; warnings: boolean; logs: boolean }) => {
     setConsoleFilters(filters)
   }, [])
 

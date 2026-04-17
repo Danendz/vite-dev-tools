@@ -936,6 +936,10 @@ export const STYLES = /* css */ `
     color: #f59e0b;
   }
 
+  .console-entry-icon.log {
+    color: #60a5fa;
+  }
+
   .console-entry-time {
     color: #71717a;
     font-size: 10px;
@@ -960,6 +964,10 @@ export const STYLES = /* css */ `
 
   .console-entry.warning .console-entry-message {
     color: #fcd34d;
+  }
+
+  .console-entry.log .console-entry-message {
+    color: #93c5fd;
   }
 
   .console-entry-stack {

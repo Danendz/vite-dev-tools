@@ -24,7 +24,7 @@ interface PanelProps {
   matchingNodeIds: Set<string> | null
   searchAncestorIds: Set<string> | null
   consoleEntries: ConsoleEntry[]
-  consoleFilters: { errors: boolean; warnings: boolean }
+  consoleFilters: { errors: boolean; warnings: boolean; logs: boolean }
   errorCount: number
   isPickerActive: boolean
   expandedNodeIds: Set<string> | null
@@ -49,7 +49,7 @@ interface PanelProps {
   onDockChange: (pos: DockPosition) => void
   onResize: (size: number) => void
   onTabChange: (tab: ActiveTab) => void
-  onFilterChange: (filters: { errors: boolean; warnings: boolean }) => void
+  onFilterChange: (filters: { errors: boolean; warnings: boolean; logs: boolean }) => void
   onClearConsole: () => void
   editedProps: Map<string, Set<string>>
   expandedPropsSet: Set<string>

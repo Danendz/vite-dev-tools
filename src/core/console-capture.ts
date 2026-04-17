@@ -61,6 +61,7 @@ function createEntry(type: ConsoleEntryType, args: unknown[], stack?: string | n
 export function startCapture(onEntry: EntryCallback): () => void {
   const origError = console.error
   const origWarn = console.warn
+  const origLog = console.log
 
   console.error = (...args: unknown[]) => {
     onEntry(createEntry('error', args))
@@ -70,6 +71,11 @@ export function startCapture(onEntry: EntryCallback): () => void {
   console.warn = (...args: unknown[]) => {
     onEntry(createEntry('warning', args))
     origWarn.apply(console, args)
+  }
+
+  console.log = (...args: unknown[]) => {
+    onEntry(createEntry('log', args))
+    origLog.apply(console, args)
   }
 
   function handleError(e: ErrorEvent) {
@@ -95,6 +101,7 @@ export function startCapture(onEntry: EntryCallback): () => void {
   return () => {
     console.error = origError
     console.warn = origWarn
+    console.log = origLog
     window.removeEventListener('error', handleError)
     window.removeEventListener('unhandledrejection', handleRejection)
   }

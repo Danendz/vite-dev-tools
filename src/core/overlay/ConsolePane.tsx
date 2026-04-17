@@ -6,8 +6,8 @@ import { Tooltip } from './Tooltip'
 
 interface ConsolePaneProps {
   entries: ConsoleEntry[]
-  filters: { errors: boolean; warnings: boolean }
-  onFilterChange: (filters: { errors: boolean; warnings: boolean }) => void
+  filters: { errors: boolean; warnings: boolean; logs: boolean }
+  onFilterChange: (filters: { errors: boolean; warnings: boolean; logs: boolean }) => void
   onClear: () => void
 }
 
@@ -27,6 +27,7 @@ export function ConsolePane({ entries, filters, onFilterChange, onClear }: Conso
     return entries.filter((e) => {
       if (e.type === 'error' && !filters.errors) return false
       if (e.type === 'warning' && !filters.warnings) return false
+      if (e.type === 'log' && !filters.logs) return false
       return true
     })
   }, [entries, filters])
@@ -56,6 +57,12 @@ export function ConsolePane({ entries, filters, onFilterChange, onClear }: Conso
         >
           Warnings
         </button>
+        <button
+          class={`console-filter-btn${filters.logs ? ' filter-active' : ''}`}
+          onClick={() => onFilterChange({ ...filters, logs: !filters.logs })}
+        >
+          Logs
+        </button>
         <div class="console-toolbar-spacer" />
         <button class="console-action-btn" onClick={onClear}>
           Clear
@@ -78,9 +85,13 @@ export function ConsolePane({ entries, filters, onFilterChange, onClear }: Conso
                 <svg class="console-entry-icon error" viewBox="0 0 16 16" fill="currentColor">
                   <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm-.75 3.5a.75.75 0 0 1 1.5 0v4a.75.75 0 0 1-1.5 0v-4zm.75 7.25a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5z" />
                 </svg>
-              ) : (
+              ) : entry.type === 'warning' ? (
                 <svg class="console-entry-icon warning" viewBox="0 0 16 16" fill="currentColor">
                   <path d="M8.22 1.754a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368L8.22 1.754zm-.75 3.746a.75.75 0 0 1 1.5 0v3a.75.75 0 0 1-1.5 0v-3zm.75 6.25a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5z" />
+                </svg>
+              ) : (
+                <svg class="console-entry-icon log" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm-.75 4a.75.75 0 0 1 1.5 0v.5a.75.75 0 0 1-1.5 0V5zm.75 7.25a.75.75 0 0 1-.75-.75V7.5a.75.75 0 0 1 1.5 0v4a.75.75 0 0 1-.75.75z" />
                 </svg>
               )}
               <span class="console-entry-time">{formatTimestamp(entry.timestamp)}</span>

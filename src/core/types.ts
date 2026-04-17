@@ -104,7 +104,7 @@ export interface TreeUpdateEvent {
   commit?: CommitRecord
 }
 
-export type ConsoleEntryType = 'error' | 'warning'
+export type ConsoleEntryType = 'error' | 'warning' | 'log'
 
 export interface ConsoleEntry {
   id: string
