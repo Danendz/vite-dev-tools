@@ -33,6 +33,7 @@ export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevTool
     ...config,
     accentColor: config?.accentColor ?? adapter.accent,
     supportedSettings: adapter.supportedSettings,
+    framework: adapter.name,
   }
   let projectRoot = ''
 

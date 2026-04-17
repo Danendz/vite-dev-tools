@@ -94,6 +94,8 @@ export interface DevToolsConfig {
   supportedSettings?: string[]
   /** Enable MCP server for AI agent integration (default: false) */
   mcp?: boolean
+  /** Framework name — set automatically by the adapter (e.g. 'react', 'vue') */
+  framework?: string
 }
 
 export interface TreeUpdateEvent {
@@ -214,6 +216,7 @@ export interface ConnectedTab {
   tabId: string
   path: string
   title?: string
+  framework?: string
   lastFocused: number
 }
 

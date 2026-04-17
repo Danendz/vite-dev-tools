@@ -21,11 +21,12 @@ export class BridgeServer {
   private server: ViteDevServer | null = null
 
   // Store bound handlers for cleanup
-  private _onRegister = (data: { tabId: string; path: string; title?: string }) => {
+  private _onRegister = (data: { tabId: string; path: string; title?: string; framework?: string }) => {
     this.tabs.set(data.tabId, {
       tabId: data.tabId,
       path: data.path,
       title: data.title,
+      framework: data.framework,
       lastFocused: Date.now(),
     })
   }

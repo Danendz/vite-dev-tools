@@ -323,7 +323,7 @@ handlers.set('getWatchers', async (params) => {
 })
 
 /** Initialize the HMR bridge client */
-export function initBridgeClient() {
+export function initBridgeClient(framework?: string) {
   if (!(import.meta as any).hot) return
 
   const hot = (import.meta as any).hot
@@ -333,6 +333,7 @@ export function initBridgeClient() {
     tabId: TAB_ID,
     path: window.location.pathname,
     title: document.title,
+    framework,
   })
 
   // Track focus

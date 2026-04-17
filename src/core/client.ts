@@ -46,6 +46,6 @@ export function mountOverlay(config: DevToolsConfig, container?: HTMLElement) {
 
   // Initialize MCP bridge if enabled
   if (config.mcp) {
-    initBridgeClient()
+    initBridgeClient(config.framework)
   }
 }
