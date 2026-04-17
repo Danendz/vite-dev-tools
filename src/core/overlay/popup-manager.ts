@@ -157,17 +157,10 @@ export function createPopupManager(config: PopupManagerConfig): PopupManager {
 
       ch.onmessage = function(event) {
         var type = event.data && event.data.type;
-        console.log('[devtools:popup-side] received:', type);
-
         if (type === 'page-closing') {
-          console.log('[devtools:popup-side] page-closing — starting disconnect timer');
           if (timer) clearTimeout(timer);
-          timer = setTimeout(function() {
-            console.log('[devtools:popup-side] page gone — closing popup');
-            window.close();
-          }, TIMEOUT_MS);
+          timer = setTimeout(function() { window.close(); }, TIMEOUT_MS);
         } else if (type === 'page-ready') {
-          console.log('[devtools:popup-side] page-ready — sending popup-ack');
           if (timer) { clearTimeout(timer); timer = null; }
           ch.postMessage({ type: 'popup-ack' });
           if (event.data.title) {
@@ -177,7 +170,6 @@ export function createPopupManager(config: PopupManagerConfig): PopupManager {
       };
 
       ch.postMessage({ type: 'popup-ready' });
-      console.log('[devtools:popup-side] standalone script initialized');
     })();`
     doc.head.appendChild(script)
   }
@@ -247,15 +239,11 @@ export function createPopupManager(config: PopupManagerConfig): PopupManager {
   }
 
   function attemptReconnect(): void {
-    const flag = localStorage.getItem(STORAGE_KEYS.DETACHED)
-    console.log('[devtools:reconnect] attemptReconnect called, DETACHED flag =', flag)
-    if (!flag) return
+    if (!localStorage.getItem(STORAGE_KEYS.DETACHED)) return
 
     const ch = getChannel()
 
-    // Listen for popup-ack confirming the popup is alive
     const onMessage = (event: MessageEvent<ChannelMessage>) => {
-      console.log('[devtools:reconnect] received message:', event.data.type)
       if (event.data.type === 'popup-ack') {
         clearReconnectTimer()
         ch.removeEventListener('message', onMessage)
@@ -263,19 +251,16 @@ export function createPopupManager(config: PopupManagerConfig): PopupManager {
         let win: Window | null = null
         try {
           win = window.open('', 'vite-devtools-popup')
-          console.log('[devtools:reconnect] window.open result:', win ? 'got window' : 'null', win?.closed ? '(closed)' : '(open)')
-        } catch (e) {
-          console.log('[devtools:reconnect] window.open threw:', e)
+        } catch {
+          // cross-origin or blocked
         }
 
         if (win && !win.closed) {
           popupWin = win
           injectIntoPopup(win)
           startClosedPoller(win)
-          console.log('[devtools:reconnect] firing reconnectCallbacks, count =', reconnectCallbacks.length)
           reconnectCallbacks.forEach((cb) => cb(win!))
         } else {
-          console.log('[devtools:reconnect] window.open failed — falling back to docked')
           localStorage.removeItem(STORAGE_KEYS.DETACHED)
           dockCallbacks.forEach((cb) => cb())
         }
@@ -284,14 +269,10 @@ export function createPopupManager(config: PopupManagerConfig): PopupManager {
 
     ch.addEventListener('message', onMessage)
 
-    // Send page-ready so popup knows the page is live
     const msg: PageToPopupMessage = { type: 'page-ready', title: document.title }
-    console.log('[devtools:reconnect] sending page-ready')
     ch.postMessage(msg)
 
-    // Fall back to docked after timeout
     reconnectTimer = setTimeout(() => {
-      console.log('[devtools:reconnect] timeout — no popup-ack received, falling back to docked')
       ch.removeEventListener('message', onMessage)
       localStorage.removeItem(STORAGE_KEYS.DETACHED)
       dockCallbacks.forEach((cb) => cb())
@@ -338,60 +319,3 @@ export function createPopupManager(config: PopupManagerConfig): PopupManager {
   }
 }
 
-// ── initPopupSideChannel ──────────────────────────────────────────────────────
-
-/**
- * Called from within the popup window.
- * Handles the popup side of the BroadcastChannel protocol.
- *
- * @param popupDocument - The popup's document (used for title updates etc.)
- * @param onPageReady   - Called when the page sends `page-ready`
- * @param onPageGone    - Called when the page sends `page-closing` and no
- *                        reconnect arrives within 3 s
- * @returns Cleanup function
- */
-export function initPopupSideChannel(
-  _popupDocument: Document,
-  onPageReady: (title: string) => void,
-  onPageGone: () => void,
-): () => void {
-  const ch = new BroadcastChannel(CHANNEL_NAME)
-  let disconnectTimer: ReturnType<typeof setTimeout> | null = null
-
-  function clearDisconnectTimer() {
-    if (disconnectTimer !== null) {
-      clearTimeout(disconnectTimer)
-      disconnectTimer = null
-    }
-  }
-
-  ch.addEventListener('message', (event: MessageEvent<ChannelMessage>) => {
-    const { data } = event
-
-    console.log('[devtools:popup-side] received message:', data.type)
-    if (data.type === 'page-closing') {
-      console.log('[devtools:popup-side] page-closing — starting disconnect timer')
-      clearDisconnectTimer()
-      disconnectTimer = setTimeout(() => {
-        console.log('[devtools:popup-side] disconnect timer fired — page is gone')
-        onPageGone()
-      }, RECONNECT_TIMEOUT_MS)
-    } else if (data.type === 'page-ready') {
-      console.log('[devtools:popup-side] page-ready — sending popup-ack')
-      clearDisconnectTimer()
-      const ack: PopupToPageMessage = { type: 'popup-ack' }
-      ch.postMessage(ack)
-      onPageReady((data as { type: 'page-ready'; title: string }).title)
-    }
-  })
-
-  // Ask the page if it's alive
-  console.log('[devtools:popup-side] initPopupSideChannel initialized, sending popup-ready')
-  const ready: PopupToPageMessage = { type: 'popup-ready' }
-  ch.postMessage(ready)
-
-  return () => {
-    clearDisconnectTimer()
-    ch.close()
-  }
-}

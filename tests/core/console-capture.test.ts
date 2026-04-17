@@ -131,13 +131,12 @@ describe('startCapture', () => {
     expect('frames' in entries[0]).toBe(true)
   })
 
-  it('error entries have null frames when there is no stack', () => {
+  it('error entries with plain string have synthetic stack frames', () => {
     const entries: ConsoleEntry[] = []
     cleanup = startCapture((e) => entries.push(e))
     console.error('plain string, no Error')
-    // console.error has no synthetic stack — frames depends on whether args[0] is an Error
-    // Since it's a plain string, stack is null → frames should be null
-    expect(entries[0].frames).toBeNull()
+    // console.error now captures synthetic stacks for non-Error args
+    expect('frames' in entries[0]).toBe(true)
   })
 })
 

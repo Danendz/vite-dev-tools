@@ -538,9 +538,10 @@ describe('createPopupManager', () => {
   })
 })
 
-// ── initPopupSideChannel ──────────────────────────────────────────────────────
+// initPopupSideChannel was replaced by an inline <script> injected into the popup.
+// The BroadcastChannel protocol is tested via the attemptReconnect tests above.
 
-describe('initPopupSideChannel', () => {
+describe.skip('initPopupSideChannel (removed — replaced by inline popup script)', () => {
   it('broadcasts popup-ready immediately on init', async () => {
     const { initPopupSideChannel } = await importManager()
 

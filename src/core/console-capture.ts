@@ -42,6 +42,14 @@ function cleanStack(stack: string): string {
     .join('\n')
 }
 
+/** Check if a file path is from a library or the devtools plugin itself */
+function isLibraryPath(file: string): boolean {
+  return file.includes('node_modules/') ||
+    file.includes('.vite/deps/') ||
+    file.includes('dist/overlay') ||
+    file.includes('/@fs/')
+}
+
 /**
  * Parse a stack trace string into structured StackFrame objects.
  * Handles named frames, anonymous frames, and eval frames.
@@ -70,7 +78,7 @@ export function parseStack(stack: string): StackFrame[] {
         file,
         line: parseInt(evalMatch[2], 10),
         col: parseInt(evalMatch[3], 10),
-        isLibrary: file.includes('node_modules/') || file.includes('.vite/deps/'),
+        isLibrary: isLibraryPath(file),
       })
       continue
     }
@@ -84,7 +92,7 @@ export function parseStack(stack: string): StackFrame[] {
         file,
         line: parseInt(namedMatch[3], 10),
         col: parseInt(namedMatch[4], 10),
-        isLibrary: file.includes('node_modules/') || file.includes('.vite/deps/'),
+        isLibrary: isLibraryPath(file),
       })
       continue
     }
@@ -98,7 +106,7 @@ export function parseStack(stack: string): StackFrame[] {
         file,
         line: parseInt(anonMatch[2], 10),
         col: parseInt(anonMatch[3], 10),
-        isLibrary: file.includes('node_modules/') || file.includes('.vite/deps/'),
+        isLibrary: isLibraryPath(file),
       })
       continue
     }
@@ -115,7 +123,11 @@ function createEntry(type: ConsoleEntryType, args: unknown[], stack?: string | n
   if (isSynthetic && rawStack) {
     rawStack = rawStack
       .split('\n')
-      .filter((line) => !line.includes('console-capture'))
+      .filter((line) =>
+        !line.includes('console-capture') &&
+        !line.includes('dist/overlay') &&
+        !line.includes('/@fs/')
+      )
       .join('\n')
   }
 
@@ -136,7 +148,11 @@ export function startCapture(onEntry: EntryCallback): () => void {
   const origLog = console.log
 
   console.error = (...args: unknown[]) => {
-    onEntry(createEntry('error', args))
+    // If args[0] is an Error, its .stack is extracted in createEntry.
+    // Otherwise, capture a synthetic stack so we get a source location.
+    const hasErrorStack = args[0] instanceof Error && args[0].stack
+    const syntheticStack = hasErrorStack ? undefined : (new Error().stack ?? null)
+    onEntry(createEntry('error', args, syntheticStack))
     origError.apply(console, args)
   }
 
