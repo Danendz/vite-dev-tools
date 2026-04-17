@@ -53,4 +53,4 @@ Located at `~/Projects/test-devtools`. Uses the plugin via `pnpm link:../vite-de
 - New MCP tools: handler in `bridge-client.ts` (or `render-history-handlers.ts`), tool definition in `mcp-server.ts`.
 - Adapter-specific server endpoints: use `adapter.configureServer()`.
 - Modifying walkers (`fiber-walker.ts`, `instance-walker.ts`) or runtimes (`client-runtime.ts`) can break tree updates — verify the overlay still receives data.
-- Always run `pnpm build` and `pnpm typecheck` after changes and reload the test app.
+- **Always run `pnpm build` after changes.** The test app uses the built output, not source files. Without rebuilding, changes won't be visible. Run `pnpm typecheck` as well, then reload the test app.
