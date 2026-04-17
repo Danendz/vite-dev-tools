@@ -13,16 +13,6 @@ import { EVENTS, STORAGE_KEYS } from '../../shared/constants'
 import { devtoolsState } from './state-store'
 import { openInEditor } from '../communication'
 import type { PopupManager } from './popup-manager'
-import { initPopupSideChannel } from './popup-manager'
-import { STYLES } from './styles'
-
-function hexToRgb(hex: string): string {
-  const h = hex.replace('#', '')
-  const r = parseInt(h.slice(0, 2), 16)
-  const g = parseInt(h.slice(2, 4), 16)
-  const b = parseInt(h.slice(4, 6), 16)
-  return `${r}, ${g}, ${b}`
-}
 
 function findNodeById(nodes: NormalizedNode[], id: string): NormalizedNode | null {
   for (const node of nodes) {
@@ -173,7 +163,6 @@ export function App({ config, popupManager }: AppProps) {
     return localStorage.getItem(STORAGE_KEYS.DETACHED) === '1'
   })
   const [popupMountPoint, setPopupMountPoint] = useState<HTMLElement | null>(null)
-  const sideChannelCleanupRef = useRef<(() => void) | null>(null)
 
   // Listen for tree updates from the framework runtime
   useEffect(() => {
@@ -334,12 +323,6 @@ export function App({ config, popupManager }: AppProps) {
     if (!popupManager) return
 
     popupManager.onDetach((win) => {
-      // Clean up any previous side-channel
-      if (sideChannelCleanupRef.current) {
-        sideChannelCleanupRef.current()
-        sideChannelCleanupRef.current = null
-      }
-
       // Create a mount point in the popup's body
       const mount = win.document.createElement('div')
       mount.className = 'devtools-root'
@@ -349,75 +332,28 @@ export function App({ config, popupManager }: AppProps) {
       setPopupMountPoint(mount)
       setIsDetached(true)
       setIsOpen(false)
-
-      // Set up reconnection handling in the popup
-      sideChannelCleanupRef.current = initPopupSideChannel(
-        win.document,
-        (title) => {
-          win.document.title = `Vite DevTools — ${title}`
-        },
-        () => {
-          win.close()
-        },
-      )
     })
 
     popupManager.onDock(() => {
-      // Clean up side-channel when docking
-      if (sideChannelCleanupRef.current) {
-        sideChannelCleanupRef.current()
-        sideChannelCleanupRef.current = null
-      }
       setPopupMountPoint(null)
       setIsDetached(false)
       setIsOpen(true)
     })
 
     popupManager.onReconnect((win) => {
-      // Clean up any previous side-channel
-      if (sideChannelCleanupRef.current) {
-        sideChannelCleanupRef.current()
-        sideChannelCleanupRef.current = null
-      }
-
-      // Clear existing body content (window.open('', name) may have stale content)
+      // popup-manager already re-injected styles via injectIntoPopup.
+      // We just need to create a fresh mount point for the portal.
       const doc = win.document
-      doc.body.innerHTML = ''
 
-      // Re-inject styles into the popup
-      const existingStyles = doc.head.querySelectorAll('style')
-      existingStyles.forEach((s) => s.remove())
-      const style = doc.createElement('style')
-      style.textContent = STYLES
-      doc.head.appendChild(style)
+      // Clear any stale mount points
+      const existing = doc.querySelector('.devtools-root')
+      if (existing) existing.remove()
 
-      // Set accent CSS custom properties on body
-      const accent = config.accentColor ?? '#8b5cf6'
-      doc.body.style.setProperty('--accent', accent)
-      doc.body.style.setProperty('--accent-rgb', hexToRgb(accent))
-      doc.body.style.margin = '0'
-      doc.body.style.padding = '0'
-      doc.body.style.background = '#18181b'
-      doc.body.style.overflow = 'hidden'
-      doc.body.style.fontFamily = "'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace"
-
-      // Create a fresh mount point in the popup's body
       const mount = doc.createElement('div')
       mount.className = 'devtools-root'
       mount.style.width = '100%'
       mount.style.height = '100vh'
       doc.body.appendChild(mount)
-
-      // Set up reconnection handling in the popup
-      sideChannelCleanupRef.current = initPopupSideChannel(
-        doc,
-        (title) => {
-          doc.title = `Vite DevTools — ${title}`
-        },
-        () => {
-          win.close()
-        },
-      )
 
       setPopupMountPoint(mount)
       setIsDetached(true)
@@ -430,11 +366,6 @@ export function App({ config, popupManager }: AppProps) {
 
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload)
-      // Clean up side-channel on unmount
-      if (sideChannelCleanupRef.current) {
-        sideChannelCleanupRef.current()
-        sideChannelCleanupRef.current = null
-      }
     }
   }, [popupManager])
 
