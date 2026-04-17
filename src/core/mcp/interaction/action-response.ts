@@ -32,6 +32,7 @@ export function startErrorCapture(): () => ConsoleEntry[] {
       message: args.map(a => (typeof a === 'string' ? a : String(a))).join(' '),
       stack: args[0] instanceof Error ? (args[0].stack ?? null) : null,
       timestamp: Date.now(),
+      frames: null,
     })
   }
 
@@ -51,6 +52,7 @@ export function startErrorCapture(): () => ConsoleEntry[] {
       message: e.message,
       stack: e.error?.stack ?? null,
       timestamp: Date.now(),
+      frames: null,
     })
   }
 
@@ -61,6 +63,7 @@ export function startErrorCapture(): () => ConsoleEntry[] {
       message: String(e.reason),
       stack: e.reason?.stack ?? null,
       timestamp: Date.now(),
+      frames: null,
     })
   }
 

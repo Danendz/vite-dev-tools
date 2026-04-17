@@ -1,4 +1,4 @@
-import type { ConsoleEntry, ConsoleEntryType } from './types'
+import type { ConsoleEntry, ConsoleEntryType, StackFrame } from './types'
 
 let idCounter = 0
 
@@ -42,14 +42,91 @@ function cleanStack(stack: string): string {
     .join('\n')
 }
 
+/**
+ * Parse a stack trace string into structured StackFrame objects.
+ * Handles named frames, anonymous frames, and eval frames.
+ * Skips non-matching lines (e.g. "Error: message").
+ */
+export function parseStack(stack: string): StackFrame[] {
+  if (!stack) return []
+
+  const frames: StackFrame[] = []
+
+  // Regex for: at funcName (file:line:col)
+  const namedRe = /^\s+at\s+(\S+)\s+\((.+):(\d+):(\d+)\)\s*$/
+  // Regex for: at file:line:col (anonymous, no parens around location)
+  const anonRe = /^\s+at\s+((?!eval\b)[^()\s]+):(\d+):(\d+)\s*$/
+  // Regex for eval: at eval (eval at fn (file:line:col), ...)
+  // Use a non-greedy match for the file path, stopping before :digits:digits
+  const evalRe = /^\s+at\s+eval\s+\(eval at\s+\S+\s+\((.+?):(\d+):(\d+)\)/
+
+  for (const line of stack.split('\n')) {
+    // Try eval frame first (more specific)
+    const evalMatch = evalRe.exec(line)
+    if (evalMatch) {
+      const file = evalMatch[1]
+      frames.push({
+        fn: null,
+        file,
+        line: parseInt(evalMatch[2], 10),
+        col: parseInt(evalMatch[3], 10),
+        isLibrary: file.includes('node_modules/') || file.includes('.vite/deps/'),
+      })
+      continue
+    }
+
+    // Try named frame: at funcName (file:line:col)
+    const namedMatch = namedRe.exec(line)
+    if (namedMatch) {
+      const file = namedMatch[2]
+      frames.push({
+        fn: namedMatch[1],
+        file,
+        line: parseInt(namedMatch[3], 10),
+        col: parseInt(namedMatch[4], 10),
+        isLibrary: file.includes('node_modules/') || file.includes('.vite/deps/'),
+      })
+      continue
+    }
+
+    // Try anonymous frame: at file:line:col
+    const anonMatch = anonRe.exec(line)
+    if (anonMatch) {
+      const file = anonMatch[1]
+      frames.push({
+        fn: null,
+        file,
+        line: parseInt(anonMatch[2], 10),
+        col: parseInt(anonMatch[3], 10),
+        isLibrary: file.includes('node_modules/') || file.includes('.vite/deps/'),
+      })
+      continue
+    }
+  }
+
+  return frames
+}
+
 function createEntry(type: ConsoleEntryType, args: unknown[], stack?: string | null): ConsoleEntry {
-  const rawStack = stack ?? (args[0] instanceof Error ? args[0].stack ?? null : null)
+  const isSynthetic = stack !== undefined
+  let rawStack = stack ?? (args[0] instanceof Error ? args[0].stack ?? null : null)
+
+  // Strip internal capture frames from synthetic stacks
+  if (isSynthetic && rawStack) {
+    rawStack = rawStack
+      .split('\n')
+      .filter((line) => !line.includes('console-capture'))
+      .join('\n')
+  }
+
+  const cleaned = rawStack ? cleanStack(rawStack) : null
   return {
     id: `console_${idCounter++}`,
     type,
     timestamp: performance.now(),
     message: formatArgs(args),
-    stack: rawStack ? cleanStack(rawStack) : null,
+    stack: cleaned,
+    frames: cleaned ? parseStack(cleaned) : null,
   }
 }
 
@@ -64,12 +141,14 @@ export function startCapture(onEntry: EntryCallback): () => void {
   }
 
   console.warn = (...args: unknown[]) => {
-    onEntry(createEntry('warning', args))
+    const syntheticStack = new Error().stack ?? null
+    onEntry(createEntry('warning', args, syntheticStack))
     origWarn.apply(console, args)
   }
 
   console.log = (...args: unknown[]) => {
-    onEntry(createEntry('log', args))
+    const syntheticStack = new Error().stack ?? null
+    onEntry(createEntry('log', args, syntheticStack))
     origLog.apply(console, args)
   }
 
