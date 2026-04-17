@@ -85,6 +85,9 @@ interface PanelProps {
   onNavigateToCommit?: (commitIndex: number) => void
   focusCommitIndex?: number | null
   onFocusCommitConsumed?: () => void
+  mode?: 'docked' | 'popup'
+  onDetach?: () => void
+  onDockBack?: () => void
 }
 
 export function Panel({
@@ -157,6 +160,9 @@ export function Panel({
   onNavigateToCommit,
   focusCommitIndex,
   onFocusCommitConsumed,
+  mode = 'docked',
+  onDetach,
+  onDockBack,
 }: PanelProps) {
   const [detailSize, setDetailSize] = useState(() => {
     const stored = localStorage.getItem(STORAGE_KEYS.DETAIL_SIZE)
@@ -244,6 +250,9 @@ export function Panel({
   }, [])
 
   const wrapperStyle = useMemo(() => {
+    if (mode === 'popup') {
+      return { position: 'relative' as const, width: '100%', height: '100vh' }
+    }
     const base = { position: 'fixed' as const, zIndex: 2147483646 }
     if (dockPosition === 'bottom') {
       return { ...base, bottom: '0', left: '0', right: '0', height: `${panelSize}px` }
@@ -252,23 +261,25 @@ export function Panel({
       return { ...base, top: '0', left: '0', bottom: '0', width: `${panelSize}px` }
     }
     return { ...base, top: '0', right: '0', bottom: '0', width: `${panelSize}px` }
-  }, [dockPosition, panelSize])
+  }, [mode, dockPosition, panelSize])
 
   const isVertical = dockPosition !== 'bottom'
 
   return (
     <div class="panel-wrapper" style={wrapperStyle}>
-      <div
-        class={`resize-handle resize-handle-${dockPosition}`}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-      />
+      {mode === 'docked' && (
+        <div
+          class={`resize-handle resize-handle-${dockPosition}`}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+        />
+      )}
       <div class="panel">
         <div class="panel-header">
           <span class="panel-title">vite-devtools</span>
           <div class="panel-header-controls">
-            {/* Element picker */}
+            {/* Element picker — both modes */}
             <Tooltip text="Select element">
               <button
                 class={`dock-btn${isPickerActive ? ' active' : ''}`}
@@ -280,7 +291,7 @@ export function Panel({
                 </svg>
               </button>
             </Tooltip>
-            {/* Clear AI highlight */}
+            {/* Clear AI highlight — both modes */}
             {aiHighlightActive && (
               <Tooltip text="Clear AI highlight">
                 <button
@@ -291,7 +302,7 @@ export function Panel({
                 </button>
               </Tooltip>
             )}
-            {/* Settings */}
+            {/* Settings — both modes */}
             <Tooltip text="Settings">
               <button
                 class={`dock-btn${settingsOpen ? ' active' : ''}`}
@@ -303,47 +314,76 @@ export function Panel({
                 </svg>
               </button>
             </Tooltip>
-            {/* Dock left */}
-            <Tooltip text="Dock left">
-              <button
-                class={`dock-btn${dockPosition === 'left' ? ' active' : ''}`}
-                onClick={() => onDockChange('left')}
-              >
-                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <rect x="2" y="2" width="12" height="12" rx="1" />
-                  <line x1="7" y1="2" x2="7" y2="14" />
-                </svg>
-              </button>
-            </Tooltip>
-            {/* Dock bottom */}
-            <Tooltip text="Dock bottom">
-              <button
-                class={`dock-btn${dockPosition === 'bottom' ? ' active' : ''}`}
-                onClick={() => onDockChange('bottom')}
-              >
-                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <rect x="2" y="2" width="12" height="12" rx="1" />
-                  <line x1="2" y1="10" x2="14" y2="10" />
-                </svg>
-              </button>
-            </Tooltip>
-            {/* Dock right */}
-            <Tooltip text="Dock right">
-              <button
-                class={`dock-btn${dockPosition === 'right' ? ' active' : ''}`}
-                onClick={() => onDockChange('right')}
-              >
-                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <rect x="2" y="2" width="12" height="12" rx="1" />
-                  <line x1="9" y1="2" x2="9" y2="14" />
-                </svg>
-              </button>
-            </Tooltip>
-            <Tooltip text="Close" shortcut="Ctrl+Shift+D">
-              <button class="panel-close" onClick={onClose}>
-                ×
-              </button>
-            </Tooltip>
+            {/* Docked-mode controls */}
+            {mode === 'docked' && (
+              <>
+                {/* Dock left */}
+                <Tooltip text="Dock left">
+                  <button
+                    class={`dock-btn${dockPosition === 'left' ? ' active' : ''}`}
+                    onClick={() => onDockChange('left')}
+                  >
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <rect x="2" y="2" width="12" height="12" rx="1" />
+                      <line x1="7" y1="2" x2="7" y2="14" />
+                    </svg>
+                  </button>
+                </Tooltip>
+                {/* Dock bottom */}
+                <Tooltip text="Dock bottom">
+                  <button
+                    class={`dock-btn${dockPosition === 'bottom' ? ' active' : ''}`}
+                    onClick={() => onDockChange('bottom')}
+                  >
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <rect x="2" y="2" width="12" height="12" rx="1" />
+                      <line x1="2" y1="10" x2="14" y2="10" />
+                    </svg>
+                  </button>
+                </Tooltip>
+                {/* Dock right */}
+                <Tooltip text="Dock right">
+                  <button
+                    class={`dock-btn${dockPosition === 'right' ? ' active' : ''}`}
+                    onClick={() => onDockChange('right')}
+                  >
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <rect x="2" y="2" width="12" height="12" rx="1" />
+                      <line x1="9" y1="2" x2="9" y2="14" />
+                    </svg>
+                  </button>
+                </Tooltip>
+                {/* Open in popup window */}
+                {onDetach && (
+                  <Tooltip text="Open in popup window">
+                    <button class="dock-btn" onClick={onDetach}>
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <rect x="1" y="4" width="10" height="10" rx="1" />
+                        <path d="M9 1h6v6" />
+                        <path d="M15 1L8 8" />
+                      </svg>
+                    </button>
+                  </Tooltip>
+                )}
+                <Tooltip text="Close" shortcut="Ctrl+Shift+D">
+                  <button class="panel-close" onClick={onClose}>
+                    ×
+                  </button>
+                </Tooltip>
+              </>
+            )}
+            {/* Popup-mode controls */}
+            {mode === 'popup' && (
+              <Tooltip text="Dock back to page">
+                <button class="dock-btn" onClick={onDockBack}>
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <rect x="2" y="2" width="12" height="12" rx="1" />
+                    <path d="M6 6l-4 4" />
+                    <path d="M2 7v3h3" />
+                  </svg>
+                </button>
+              </Tooltip>
+            )}
           </div>
           {settingsOpen && (
             <SettingsModal
