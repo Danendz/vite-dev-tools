@@ -129,13 +129,14 @@ export function createPopupManager(config: PopupManagerConfig): PopupManager {
     // Set popup title
     doc.title = `Vite DevTools \u2014 ${document.title}`
 
-    // Prevent reload in popup (about:blank would wipe the portal)
+    // Intercept reload shortcut — reload the parent page instead of about:blank
     win.addEventListener('keydown', (e: KeyboardEvent) => {
       if (
         e.key === 'F5' ||
         ((e.ctrlKey || e.metaKey) && e.key === 'r')
       ) {
         e.preventDefault()
+        window.location.reload()
       }
     })
 
