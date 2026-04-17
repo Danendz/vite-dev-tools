@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { walkFiberTree, walkFiberTreeWithCauses, fiberRefMap } from '@/adapters/react/fiber-walker'
 import { createFakeFiber } from '@helpers/factories'
 
@@ -358,6 +358,181 @@ describe('walkFiberTree', () => {
         fileName: '/src/Test.tsx',
         lineNumber: 1,
         columnNumber: 0,
+      })
+    })
+
+    describe('usage map multi-usage disambiguation', () => {
+      let savedMap: any
+
+      beforeEach(() => {
+        savedMap = (globalThis as any).__DEVTOOLS_USAGE_MAP__
+      })
+
+      afterEach(() => {
+        if (savedMap === undefined) {
+          delete (globalThis as any).__DEVTOOLS_USAGE_MAP__
+        } else {
+          (globalThis as any).__DEVTOOLS_USAGE_MAP__ = savedMap
+        }
+      })
+
+      it('picks correct usage entry for multiple same-name siblings', () => {
+        ;(globalThis as any).__DEVTOOLS_USAGE_MAP__ = {
+          '/src/Parent.tsx': {
+            Input: [
+              { line: 10, col: 5 },
+              { line: 20, col: 5 },
+            ],
+          },
+        }
+
+        const input2 = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Input' },
+        })
+        const input1 = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Input' },
+          sibling: input2,
+        })
+
+        const parent = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Parent', __devtools_source: { fileName: '/src/Parent.tsx', lineNumber: 1, columnNumber: 0 } },
+          child: input1,
+        })
+        input1.return = parent
+        input2.return = parent
+
+        const tree = walkFiberTree(wrapInRoot(parent))
+        // Library components (no __devtools_source) store usage map result in source, not usageSource
+        expect(tree[0].children[0].source).toEqual({ fileName: '/src/Parent.tsx', lineNumber: 10, columnNumber: 5 })
+        expect(tree[0].children[1].source).toEqual({ fileName: '/src/Parent.tsx', lineNumber: 20, columnNumber: 5 })
+      })
+
+      it('picks correct usage entry for same-name at different nesting depths', () => {
+        ;(globalThis as any).__DEVTOOLS_USAGE_MAP__ = {
+          '/src/Parent.tsx': {
+            Button: [
+              { line: 5, col: 3 },
+              { line: 15, col: 7 },
+            ],
+          },
+        }
+
+        // Button2 is nested inside a library wrapper (no __devtools_source)
+        const button2 = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Button' },
+        })
+        const wrapper = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'LibWrapper' }, // no __devtools_source → library
+          child: button2,
+        })
+        button2.return = wrapper
+
+        const button1 = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Button' },
+          sibling: wrapper,
+        })
+
+        const parent = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Parent', __devtools_source: { fileName: '/src/Parent.tsx', lineNumber: 1, columnNumber: 0 } },
+          child: button1,
+        })
+        button1.return = parent
+        wrapper.return = parent
+
+        const tree = walkFiberTree(wrapInRoot(parent))
+        // button1 is first in DFS → index 0 → line 5
+        expect(tree[0].children[0].source).toEqual({ fileName: '/src/Parent.tsx', lineNumber: 5, columnNumber: 3 })
+        // button2 is second in DFS (inside LibWrapper) → index 1 → line 15
+        const libNode = tree[0].children[1] // LibWrapper
+        expect(libNode.children[0].source).toEqual({ fileName: '/src/Parent.tsx', lineNumber: 15, columnNumber: 7 })
+      })
+
+      it('clamps index when more fibers than usage entries', () => {
+        ;(globalThis as any).__DEVTOOLS_USAGE_MAP__ = {
+          '/src/Parent.tsx': {
+            Item: [
+              { line: 10, col: 1 },
+            ],
+          },
+        }
+
+        const item2 = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Item' },
+        })
+        const item1 = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Item' },
+          sibling: item2,
+        })
+
+        const parent = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Parent', __devtools_source: { fileName: '/src/Parent.tsx', lineNumber: 1, columnNumber: 0 } },
+          child: item1,
+        })
+        item1.return = parent
+        item2.return = parent
+
+        const tree = walkFiberTree(wrapInRoot(parent))
+        // Both should get line 10 (clamped to last entry)
+        expect(tree[0].children[0].source).toEqual({ fileName: '/src/Parent.tsx', lineNumber: 10, columnNumber: 1 })
+        expect(tree[0].children[1].source).toEqual({ fileName: '/src/Parent.tsx', lineNumber: 10, columnNumber: 1 })
+      })
+
+      it('does not count same-name fibers inside user component subtrees', () => {
+        ;(globalThis as any).__DEVTOOLS_USAGE_MAP__ = {
+          '/src/Parent.tsx': {
+            Button: [
+              { line: 8, col: 3 },
+            ],
+          },
+          '/src/Child.tsx': {
+            Button: [
+              { line: 4, col: 5 },
+            ],
+          },
+        }
+
+        // Child component has its own Button (should not affect Parent's count)
+        const childButton = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Button' },
+        })
+        const childComp = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Child', __devtools_source: { fileName: '/src/Child.tsx', lineNumber: 1, columnNumber: 0 } },
+          child: childButton,
+        })
+        childButton.return = childComp
+
+        const parentButton = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Button' },
+        })
+
+        // Parent has: Child (with its own Button), then Button
+        childComp.sibling = parentButton
+
+        const parent = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Parent', __devtools_source: { fileName: '/src/Parent.tsx', lineNumber: 1, columnNumber: 0 } },
+          child: childComp,
+        })
+        childComp.return = parent
+        parentButton.return = parent
+
+        const tree = walkFiberTree(wrapInRoot(parent))
+        // Parent's Button should be index 0 (Child's Button is not counted)
+        const parentBtnNode = tree[0].children[1] // second child of Parent
+        expect(parentBtnNode.source).toEqual({ fileName: '/src/Parent.tsx', lineNumber: 8, columnNumber: 3 })
       })
     })
   })

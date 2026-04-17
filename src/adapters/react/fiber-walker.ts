@@ -55,9 +55,39 @@ function getComponentName(fiber: any): string {
 }
 
 /**
+ * Count how many fibers with the same component name appear before `target`
+ * in a DFS walk of `parentFiber`'s subtree. Stops at user component boundaries
+ * (those with __devtools_source) since their JSX is in their own file's usage map.
+ */
+function countSameNameBefore(target: any, parentFiber: any, componentName: string): number {
+  let count = 0
+  function walk(f: any): boolean {
+    let child = f.child
+    while (child) {
+      if (child === target) return true
+      if (COMPONENT_TAGS.has(child.tag) && getComponentName(child) === componentName) {
+        count++
+      }
+      // Don't recurse into other user components — their JSX is in their own file
+      const hasSource = child.type?.__devtools_source || child.elementType?.__devtools_source
+      if (COMPONENT_TAGS.has(child.tag) && hasSource) {
+        // skip subtree
+      } else {
+        if (walk(child)) return true
+      }
+      child = child.sibling
+    }
+    return false
+  }
+  walk(parentFiber)
+  return count
+}
+
+/**
  * Look up usage-site source from the compile-time usage map (__DEVTOOLS_USAGE_MAP__).
  * Walks up the fiber tree to find the parent component's file, then looks up
  * the current component name in that file's usage map.
+ * For multi-usage components, disambiguates by counting same-name fibers in DFS order.
  * Populated by the Vite transform for React 19+ (where _debugSource is unavailable).
  */
 function lookupUsageMapEntry(fiber: any): { line: number; col: number; propOrigins?: Record<string, any>; filePath: string } | null {
@@ -78,7 +108,10 @@ function lookupUsageMapEntry(fiber: any): { line: number; col: number; propOrigi
 
           const locations = (fileUsages as any)[componentName]
           if (locations && locations.length > 0) {
-            return { ...locations[0], filePath }
+            if (locations.length === 1) return { ...locations[0], filePath }
+            // Multiple usages — pick by position among same-name descendants
+            const index = countSameNameBefore(fiber, parent, componentName)
+            return { ...locations[Math.min(index, locations.length - 1)], filePath }
           }
         }
       }
@@ -106,9 +139,7 @@ function getPropOriginsFromMap(fiber: any): Record<string, any> | undefined {
 
 /**
  * Get the React-provided usage-site source (where component is rendered in parent JSX).
- * Returns from _debugSource (React 18), _debugStack (React 19+), or compile-time usage map.
- * _debugStack is preferred over usage map because it's per-instance (exact location),
- * while the usage map can't disambiguate multiple usages of the same component in one file.
+ * Returns from _debugSource (React 18) or compile-time usage map (React 19+).
  */
 function getReactSource(fiber: any) {
   if (fiber._debugSource) {
@@ -119,13 +150,7 @@ function getReactSource(fiber: any) {
     }
   }
 
-  // Try _debugStack first — per-instance, exact call-site location
-  if (fiber._debugStack) {
-    const parsed = parseDebugStack(fiber._debugStack)
-    if (parsed) return parsed
-  }
-
-  // Fallback to compile-time usage map (may pick wrong entry for multi-usage components)
+  // Compile-time usage map — correct original-source line numbers
   const mapSource = parseUsageSourceFromMap(fiber)
   if (mapSource) return mapSource
 
@@ -148,45 +173,6 @@ function getSourceLocations(fiber: any): { source: ReturnType<typeof getReactSou
   return { source: reactSource, usageSource: null }
 }
 
-type ParsedStack = { fileName: string; lineNumber: number; columnNumber: number } | null
-
-// Cache parsed stack results to avoid re-parsing the same stack
-const stackCache = new WeakMap<object, ParsedStack>()
-
-function parseDebugStack(stack: Error | string): ParsedStack {
-  const stackObj = typeof stack === 'string' ? null : stack
-  if (stackObj && stackCache.has(stackObj)) {
-    return stackCache.get(stackObj)!
-  }
-
-  const stackStr = typeof stack === 'string' ? stack : stack.stack
-  if (!stackStr) return null
-
-  // Parse stack frames — look for the first frame that points to user source code
-  const lines = stackStr.split('\n')
-  for (const line of lines) {
-    if (!line.includes('at ')) continue
-    if (line.includes('node_modules/')) continue
-    if (line.includes('.vite/deps/')) continue
-    if (line.includes('.vite/')) continue
-    if (line.includes('react-stack-top-frame')) continue
-    if (line.includes('chunk-')) continue
-
-    const match = line.match(/(?:https?:\/\/[^/]+)?(\/[^:?]+)(?:\?[^:]*)?:(\d+):(\d+)/)
-    if (match) {
-      const result = {
-        fileName: match[1],
-        lineNumber: parseInt(match[2], 10),
-        columnNumber: parseInt(match[3], 10),
-      }
-      if (stackObj) stackCache.set(stackObj, result)
-      return result
-    }
-  }
-
-  if (stackObj) stackCache.set(stackObj, null)
-  return null
-}
 
 function isFromNodeModules(fiber: any): boolean {
   const { source } = getSourceLocations(fiber)
@@ -574,10 +560,6 @@ function getHostElementSource(fiber: any): ReturnType<typeof getReactSource> {
         }
       }
     }
-  }
-
-  if (fiber._debugStack) {
-    return parseDebugStack(fiber._debugStack)
   }
 
   return null
