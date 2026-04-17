@@ -360,9 +360,9 @@ describe('createPopupManager', () => {
       const manager = createPopupManager(makeConfig())
       const cb = vi.fn()
       manager.onDock(cb)
-      // Should not throw and should still call callbacks
+      // Should not throw and should not call callbacks when already docked
       manager.dock()
-      expect(cb).toHaveBeenCalledTimes(1)
+      expect(cb).toHaveBeenCalledTimes(0)
     })
   })
 

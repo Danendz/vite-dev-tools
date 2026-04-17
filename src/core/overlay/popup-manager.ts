@@ -172,10 +172,12 @@ export function createPopupManager(config: PopupManagerConfig): PopupManager {
   }
 
   function dock(): void {
+    if (!popupWin) return
+
     clearPollTimer()
     clearReconnectTimer()
 
-    if (popupWin && !popupWin.closed) {
+    if (!popupWin.closed) {
       popupWin.close()
     }
     popupWin = null
