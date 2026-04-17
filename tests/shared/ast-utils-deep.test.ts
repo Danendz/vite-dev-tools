@@ -11,6 +11,7 @@ import {
   findReactiveObjectProperty,
   traceJSXPropOrigins,
   findFunctionDefinition,
+  findVueCallSites,
   REACT_BUILT_IN_HOOKS,
 } from '@/shared/ast-utils'
 
@@ -682,5 +683,93 @@ function App() {
     const result = parseJSX('test.tsx', code)!
     const origins = traceJSXPropOrigins(result.program, 2, 3, result.lineStarts)
     expect(origins).toBeNull()
+  })
+})
+
+// ---- findVueCallSites ----
+
+describe('findVueCallSites', () => {
+  it('extracts watch and watchEffect call lines', () => {
+    const code = `const count = ref(0)
+const name = ref('')
+watch(count, (val) => console.log(val))
+watchEffect(() => console.log(count.value))
+`
+    const result = parseJSX('test.ts', code)!
+    const sites = findVueCallSites(result.program, 0, code.length, result.lineStarts)
+
+    expect(sites.callLines['watch']).toEqual([3])
+    expect(sites.callLines['watchEffect']).toEqual([4])
+    expect(sites.provides).toEqual([])
+  })
+
+  it('extracts provide with string key', () => {
+    const code = `const theme = reactive({ color: 'blue' })
+provide('theme', theme)
+provide('locale', 'en')
+`
+    const result = parseJSX('test.ts', code)!
+    const sites = findVueCallSites(result.program, 0, code.length, result.lineStarts)
+
+    expect(sites.provides).toEqual([
+      { key: 'theme', line: 2 },
+      { key: 'locale', line: 3 },
+    ])
+    expect(sites.callLines).toEqual({})
+  })
+
+  it('extracts provide with variable key (no key in result)', () => {
+    const code = `const ThemeKey = Symbol('theme')
+provide(ThemeKey, { color: 'blue' })
+`
+    const result = parseJSX('test.ts', code)!
+    const sites = findVueCallSites(result.program, 0, code.length, result.lineStarts)
+
+    expect(sites.provides).toEqual([
+      { key: undefined, line: 2 },
+    ])
+  })
+
+  it('handles mixed calls', () => {
+    const code = `const count = ref(0)
+watch(count, (v) => {})
+provide('data', count)
+watchEffect(() => console.log(count.value))
+watchPostEffect(() => {})
+`
+    const result = parseJSX('test.ts', code)!
+    const sites = findVueCallSites(result.program, 0, code.length, result.lineStarts)
+
+    expect(sites.callLines['watch']).toEqual([2])
+    expect(sites.callLines['watchEffect']).toEqual([4])
+    expect(sites.callLines['watchPostEffect']).toEqual([5])
+    expect(sites.provides).toEqual([{ key: 'data', line: 3 }])
+  })
+
+  it('respects body range boundaries', () => {
+    const code = `watch(outside, () => {})
+function setup() {
+  watch(inside, () => {})
+}
+watch(alsoOutside, () => {})
+`
+    const result = parseJSX('test.ts', code)!
+    // Only scan inside the function body
+    const func = findFunctionDefinition(result.program, 'setup', result.lineStarts)!
+    const sites = findVueCallSites(result.program, func.bodyRange[0], func.bodyRange[1], result.lineStarts)
+
+    expect(sites.callLines['watch']).toEqual([3])
+  })
+
+  it('ignores non-tracked calls', () => {
+    const code = `const count = ref(0)
+const doubled = computed(() => count.value * 2)
+onMounted(() => console.log('hi'))
+`
+    const result = parseJSX('test.ts', code)!
+    const sites = findVueCallSites(result.program, 0, code.length, result.lineStarts)
+
+    expect(sites.callLines).toEqual({})
+    expect(sites.provides).toEqual([])
   })
 })

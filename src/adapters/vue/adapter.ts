@@ -15,6 +15,7 @@ import {
   findFunctionDefinition,
   findImportSource,
   findReactiveObjectProperty,
+  findVueCallSites,
   spliceSource,
   VUE_BUILT_IN_COMPOSABLES,
 } from '../../shared/ast-utils'
@@ -315,12 +316,27 @@ function injectSourceAttributes(code: string, id: string, projectRoot: string): 
         }
       })
 
-      if (customComposables.length > 0 || locals.length > 0 || Object.keys(varLines).length > 0) {
-        const meta = JSON.stringify({
+      // Extract watch/watchEffect/provide call sites for navigation
+      const callSites = findVueCallSites(parsed.program, 0, scriptContent.length, parsed.lineStarts)
+      // Offset call site line numbers by script position in SFC
+      const cl: Record<string, number[]> = {}
+      for (const [name, lines] of Object.entries(callSites.callLines)) {
+        cl[name] = lines.map(l => l + linesBeforeScript)
+      }
+      const pv = callSites.provides.map(p => ({
+        ...p,
+        line: p.line + linesBeforeScript,
+      }))
+
+      if (customComposables.length > 0 || locals.length > 0 || Object.keys(varLines).length > 0 || Object.keys(cl).length > 0 || pv.length > 0) {
+        const metaObj: any = {
           composables: serializeComposableMeta(customComposables),
           locals: locals.map(l => ({ n: l.name, l: l.line + linesBeforeScript })),
           varLines,
-        })
+        }
+        if (Object.keys(cl).length > 0) metaObj.cl = cl
+        if (pv.length > 0) metaObj.pv = pv
+        const meta = JSON.stringify(metaObj)
         composableCode = `;(globalThis.__DEVTOOLS_COMPOSABLES__||(globalThis.__DEVTOOLS_COMPOSABLES__={}))["${relativePath}"]=${meta};`
       }
     }

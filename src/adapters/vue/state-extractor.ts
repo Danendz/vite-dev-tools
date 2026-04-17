@@ -165,20 +165,43 @@ export function extractSections(instance: any): InspectorSection[] {
     }
   }
 
+  // Look up composable metadata early — used by watchers, provides, and setup enrichment
+  const meta = findComponentMeta(instance)
+
   // Provide
   if (instance.provides && typeof instance.provides === 'object') {
     const provideItems: InspectorItem[] = []
     // Only show provides that this component actually declared (not inherited)
     const parentProvides = instance.parent?.provides
+    // Build provide line lookup from metadata
+    const provideMeta: Array<{ key?: string; line: number }> = meta?.pv || []
+    let provideIndex = 0
+
     for (const key of Reflect.ownKeys(instance.provides)) {
       // Skip inherited provides
       if (parentProvides && instance.provides[key] === parentProvides[key]) continue
-      provideItems.push({
-        key: typeof key === 'symbol' ? key.description ?? 'Symbol()' : String(key),
+      const displayKey = typeof key === 'symbol' ? key.description ?? 'Symbol()' : String(key)
+
+      // Match by key (string keys) or by index order (symbol keys)
+      let lineNumber: number | undefined
+      const keyMatch = provideMeta.find(p => p.key === displayKey)
+      if (keyMatch) {
+        lineNumber = keyMatch.line
+      } else if (provideIndex < provideMeta.length) {
+        // Fallback: index-based match for symbol/variable keys
+        const entry = provideMeta[provideIndex]
+        if (!entry.key) lineNumber = entry.line
+      }
+      provideIndex++
+
+      const item: InspectorItem = {
+        key: displayKey,
         value: serializeValue(instance.provides[key]),
         editable: false,
         persistable: false,
-      })
+      }
+      if (lineNumber != null) item.lineNumber = lineNumber
+      provideItems.push(item)
     }
     if (provideItems.length > 0) {
       sections.push({ id: 'provide', label: 'Provide', items: provideItems })
@@ -212,13 +235,13 @@ export function extractSections(instance: any): InspectorSection[] {
   }
 
   // Watchers (Vue 3 scope effects)
-  const watcherItems = extractWatchers(instance)
+  const watcherItems = extractWatchers(instance, meta)
   if (watcherItems.length > 0) {
     sections.push({ id: 'watchers', label: 'Watchers', items: watcherItems })
   }
 
   // Wire line numbers and group setup items under composables if metadata available
-  enrichSetupWithMetadata(sections, instance)
+  enrichSetupWithMetadata(sections, instance, meta)
 
   return sections
 }
@@ -240,15 +263,30 @@ function extractWatcherDeps(effect: any): string[] {
 }
 
 /**
+ * Build a flat, sorted list of watcher call line numbers from metadata callLines.
+ * Merges all watcher call types (watch, watchEffect, etc.) and sorts by line.
+ */
+function buildWatcherLineList(cl: Record<string, number[]>): number[] {
+  const lines: number[] = []
+  for (const [name, arr] of Object.entries(cl)) {
+    if (name !== 'provide') lines.push(...arr)
+  }
+  return lines.sort((a, b) => a - b)
+}
+
+/**
  * Extract watchers from Vue 3's component scope effects.
  * In Vue 3.5+, effect.cb and effect.getter are closure variables inside doWatch(),
  * not properties on the effect. So we can't distinguish watch() from watchEffect().
  * We label all watcher effects as "watcher" and show their tracked dep keys.
  */
-function extractWatchers(instance: any): InspectorItem[] {
+function extractWatchers(instance: any, meta: any): InspectorItem[] {
   const items: InspectorItem[] = []
   const scope = instance.scope
   if (!scope?.effects) return items
+
+  // Build ordered watcher line numbers from metadata for index-based matching
+  const watcherLines = meta?.cl ? buildWatcherLineList(meta.cl) : []
 
   let watcherIndex = 0
   for (const effect of scope.effects) {
@@ -262,14 +300,21 @@ function extractWatchers(instance: any): InspectorItem[] {
         ? `tracking: ${depNames.join(', ')}`
         : '[active]'
 
-      items.push({
+      const item: InspectorItem = {
         key: `watcher #${watcherIndex}`,
         value,
         editable: false,
         persistable: false,
         badge: 'watcher',
         depNames: depNames.length > 0 ? depNames : undefined,
-      })
+      }
+
+      // Wire line number from metadata (index-based match)
+      if (watcherIndex < watcherLines.length) {
+        item.lineNumber = watcherLines[watcherIndex]
+      }
+
+      items.push(item)
       watcherIndex++
     }
   }
@@ -299,8 +344,7 @@ function findComponentMeta(instance: any): any | null {
  * If __DEVTOOLS_COMPOSABLES__ metadata is available, wire line numbers to
  * setup items and re-group under their parent composable as nested InspectorItems.
  */
-function enrichSetupWithMetadata(sections: InspectorSection[], instance: any): void {
-  const meta = findComponentMeta(instance)
+function enrichSetupWithMetadata(sections: InspectorSection[], instance: any, meta?: any): void {
   if (!meta) return
 
   const setupSection = sections.find(s => s.id === 'setup')

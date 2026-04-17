@@ -312,6 +312,79 @@ describe('extractSections', () => {
       expect(composableItem!.innerHooks![0].lineNumber).toBe(12)
     })
 
+    it('wires watcher line numbers from callLines metadata', () => {
+      ;(globalThis as any).__DEVTOOLS_COMPOSABLES__ = {
+        'src/App.vue': {
+          composables: [],
+          locals: [],
+          cl: { watchEffect: [10], watch: [15] },
+        },
+      }
+
+      const instance = {
+        type: { __file: '/project/src/App.vue' },
+        scope: {
+          effects: [
+            { fn: () => {}, scheduler: () => {}, deps: { dep: { key: 'count' }, nextDep: null } },
+            { fn: () => {}, scheduler: () => {}, deps: null },
+          ],
+        },
+      }
+
+      const sections = extractSections(instance)
+      const watcherSection = sections.find(s => s.id === 'watchers')
+      expect(watcherSection).toBeDefined()
+      // Sorted by line: watchEffect(10), watch(15) → watchers get these in order
+      expect(watcherSection!.items[0].lineNumber).toBe(10)
+      expect(watcherSection!.items[1].lineNumber).toBe(15)
+    })
+
+    it('wires provide line numbers from pv metadata by key', () => {
+      ;(globalThis as any).__DEVTOOLS_COMPOSABLES__ = {
+        'src/App.vue': {
+          composables: [],
+          locals: [],
+          pv: [{ key: 'theme', line: 8 }, { key: 'locale', line: 12 }],
+        },
+      }
+
+      const instance = {
+        type: { __file: '/project/src/App.vue' },
+        provides: { theme: { color: 'blue' }, locale: 'en' },
+        parent: { provides: {} },
+      }
+
+      const sections = extractSections(instance)
+      const provideSection = sections.find(s => s.id === 'provide')
+      expect(provideSection).toBeDefined()
+      expect(provideSection!.items[0].key).toBe('theme')
+      expect(provideSection!.items[0].lineNumber).toBe(8)
+      expect(provideSection!.items[1].key).toBe('locale')
+      expect(provideSection!.items[1].lineNumber).toBe(12)
+    })
+
+    it('wires provide line numbers by index for symbol keys', () => {
+      ;(globalThis as any).__DEVTOOLS_COMPOSABLES__ = {
+        'src/App.vue': {
+          composables: [],
+          locals: [],
+          pv: [{ line: 5 }],
+        },
+      }
+
+      const sym = Symbol('myKey')
+      const instance = {
+        type: { __file: '/project/src/App.vue' },
+        provides: { [sym]: 'value' },
+        parent: { provides: {} },
+      }
+
+      const sections = extractSections(instance)
+      const provideSection = sections.find(s => s.id === 'provide')
+      expect(provideSection).toBeDefined()
+      expect(provideSection!.items[0].lineNumber).toBe(5)
+    })
+
     it('resolves depValues from current setupState', () => {
       ;(globalThis as any).__DEVTOOLS_COMPOSABLES__ = {
         'src/App.vue': {

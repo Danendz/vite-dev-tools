@@ -855,6 +855,47 @@ export function traceJSXPropOrigins(
   return found ? origins : null
 }
 
+// ---- Vue call site extraction (watch/provide) ----
+
+export interface VueCallSites {
+  callLines: Record<string, number[]>
+  provides: Array<{ key?: string; line: number }>
+}
+
+const VUE_TRACKED_CALLS = new Set(['watch', 'watchEffect', 'watchPostEffect', 'watchSyncEffect', 'provide'])
+
+/**
+ * Find watch/watchEffect/provide call sites within a scope range.
+ * Returns watcher call line numbers (for index-based matching with runtime effects)
+ * and provide entries with optional string key (for key-based matching).
+ */
+export function findVueCallSites(program: BaseNode, bodyStart: number, bodyEnd: number, lineStarts: LineStarts): VueCallSites {
+  const callLines: Record<string, number[]> = {}
+  const provides: VueCallSites['provides'] = []
+
+  walkAST(program, (node) => {
+    if (node.start < bodyStart || node.start > bodyEnd) return
+    if (node.type !== 'CallExpression') return
+    const callee = node.callee
+    if (callee?.type !== 'Identifier' || !VUE_TRACKED_CALLS.has(callee.name)) return
+
+    const line = offsetToLineCol(lineStarts, node.start).line
+
+    if (callee.name === 'provide') {
+      const firstArg = node.arguments?.[0]
+      const key = firstArg?.type === 'StringLiteral' || (firstArg?.type === 'Literal' && typeof firstArg.value === 'string')
+        ? firstArg.value
+        : undefined
+      provides.push({ key: typeof key === 'string' ? key : undefined, line })
+    } else {
+      if (!callLines[callee.name]) callLines[callee.name] = []
+      callLines[callee.name].push(line)
+    }
+  })
+
+  return { callLines, provides }
+}
+
 // ---- Source splicing ----
 
 export function spliceSource(code: string, edits: Array<{ start: number; end: number; replacement: string }>): string {

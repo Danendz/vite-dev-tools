@@ -106,7 +106,9 @@ function getPropOriginsFromMap(fiber: any): Record<string, any> | undefined {
 
 /**
  * Get the React-provided usage-site source (where component is rendered in parent JSX).
- * Returns from _debugSource (React 18), compile-time usage map, or _debugStack (React 19+).
+ * Returns from _debugSource (React 18), _debugStack (React 19+), or compile-time usage map.
+ * _debugStack is preferred over usage map because it's per-instance (exact location),
+ * while the usage map can't disambiguate multiple usages of the same component in one file.
  */
 function getReactSource(fiber: any) {
   if (fiber._debugSource) {
@@ -117,14 +119,15 @@ function getReactSource(fiber: any) {
     }
   }
 
-  // Try compile-time usage map (accurate source positions for React 19+)
-  const mapSource = parseUsageSourceFromMap(fiber)
-  if (mapSource) return mapSource
-
+  // Try _debugStack first — per-instance, exact call-site location
   if (fiber._debugStack) {
     const parsed = parseDebugStack(fiber._debugStack)
     if (parsed) return parsed
   }
+
+  // Fallback to compile-time usage map (may pick wrong entry for multi-usage components)
+  const mapSource = parseUsageSourceFromMap(fiber)
+  if (mapSource) return mapSource
 
   return null
 }
