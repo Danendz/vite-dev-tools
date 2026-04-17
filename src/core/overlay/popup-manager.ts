@@ -238,13 +238,13 @@ export function createPopupManager(config: PopupManagerConfig): PopupManager {
 
         if (win && !win.closed) {
           popupWin = win
+          injectIntoPopup(win)
           startClosedPoller(win)
           reconnectCallbacks.forEach((cb) => cb(win!))
         } else {
-          // Could not get popup reference — still signal reconnect
-          reconnectCallbacks.forEach((cb) => {
-            if (win) cb(win)
-          })
+          // Could not get popup Window (blocked by popup blocker) — fall back to docked
+          localStorage.removeItem(STORAGE_KEYS.DETACHED)
+          dockCallbacks.forEach((cb) => cb())
         }
       }
     }

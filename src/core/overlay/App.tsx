@@ -169,7 +169,9 @@ export function App({ config, popupManager }: AppProps) {
   useEffect(() => { renderHistorySizeRef.current = renderHistorySize }, [renderHistorySize])
   useEffect(() => { renderHistoryRecordingRef.current = renderHistoryRecording }, [renderHistoryRecording])
 
-  const [isDetached, setIsDetached] = useState(false)
+  const [isDetached, setIsDetached] = useState(() => {
+    return localStorage.getItem(STORAGE_KEYS.DETACHED) === '1'
+  })
   const [popupMountPoint, setPopupMountPoint] = useState<HTMLElement | null>(null)
   const sideChannelCleanupRef = useRef<(() => void) | null>(null)
 
