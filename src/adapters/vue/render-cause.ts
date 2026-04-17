@@ -89,7 +89,7 @@ export function flushTriggers(
 
   // Value diffs
   if (includeValues) {
-    buildValueDiffs(entry, triggers, cause)
+    buildValueDiffs(entry, cause, cause.ownTargets)
   }
 
   // Effect/watcher correlation
@@ -113,23 +113,50 @@ function toRaw(value: any): any {
 }
 
 /**
- * Build a set of raw inject target objects for the component.
- * Used to detect context-driven re-renders.
+ * Build maps for classifying trigger targets:
+ * - ownTargets: raw target → variable name (from setupState)
+ * - contextTargets: raw target → inject key name (from provides chain, not in own state)
+ *
+ * For Composition API inject(), instance.type.inject is NOT set.
+ * Instead, we detect context by checking if a trigger target matches a value
+ * from the provides chain but is NOT in the component's own setupState.
  */
-function getInjectTargets(instance: any): Map<object, string> {
-  const targets = new Map<object, string>()
-  const injectDef = instance.type?.inject
-  if (!injectDef) return targets
+function buildTargetMaps(instance: any): {
+  ownTargets: Map<object, string>
+  contextTargets: Map<object, string>
+} {
+  const ownTargets = new Map<object, string>()
+  const contextTargets = new Map<object, string>()
 
-  const keys = Array.isArray(injectDef) ? injectDef : Object.keys(injectDef)
-  for (const key of keys) {
-    const stringKey = String(key)
-    const value = instance.proxy?.[stringKey]
-    if (value !== null && typeof value === 'object') {
-      targets.set(toRaw(value), stringKey)
+  // Map own setupState values → variable names
+  const setupState = instance.setupState
+  if (setupState) {
+    const raw = setupState.__v_raw ?? setupState
+    for (const key of Object.keys(raw)) {
+      if (key.startsWith('__') || key.startsWith('$')) continue
+      const val = raw[key]
+      if (val !== null && typeof val === 'object') {
+        ownTargets.set(toRaw(val), key)
+      }
     }
   }
-  return targets
+
+  // Walk the provides chain to find injected reactive values.
+  // A value is "injected" if it's in an ancestor's provides but NOT in our own setupState.
+  const parentProvides = instance.parent?.provides
+  if (parentProvides && typeof parentProvides === 'object') {
+    for (const key of Reflect.ownKeys(parentProvides)) {
+      const val = parentProvides[key]
+      if (val !== null && typeof val === 'object') {
+        const rawVal = toRaw(val)
+        if (!ownTargets.has(rawVal)) {
+          contextTargets.set(rawVal, typeof key === 'symbol' ? key.description ?? 'inject' : String(key))
+        }
+      }
+    }
+  }
+
+  return { ownTargets, contextTargets }
 }
 
 interface ClassifyResult {
@@ -142,6 +169,8 @@ interface ClassifyResult {
   propTriggers: TriggerEvent[]
   stateTriggers: TriggerEvent[]
   contextTriggers: TriggerEvent[]
+  /** Raw target → variable name map from setupState */
+  ownTargets: Map<object, string>
 }
 
 /**
@@ -158,27 +187,32 @@ function classifyTriggers(triggers: TriggerEvent[], instance: any): ClassifyResu
   const stateTriggers: TriggerEvent[] = []
   const contextTriggers: TriggerEvent[] = []
 
-  const injectTargets = getInjectTargets(instance)
+  const { ownTargets, contextTargets } = buildTargetMaps(instance)
 
   for (const trigger of triggers) {
-    const keyStr = trigger.key != null ? String(trigger.key) : undefined
+    // Skip triggers with no key (spurious events)
+    if (trigger.key == null) continue
+
+    const keyStr = String(trigger.key)
     const rawTarget = toRaw(trigger.target)
 
-    // Check if this trigger is from an injected reactive value
-    const injectKey = injectTargets.get(rawTarget)
-    if (injectKey) {
+    // Check if this trigger is from an injected/provided reactive value
+    const contextLabel = contextTargets.get(rawTarget)
+    if (contextLabel) {
       contributors.add('context')
-      if (keyStr && !contextKeys.includes(keyStr)) contextKeys.push(injectKey)
+      if (!contextKeys.includes(contextLabel)) contextKeys.push(contextLabel)
       contextTriggers.push(trigger)
     } else if (trigger.target && (trigger.target as any).__v_isReadonly) {
       // Props object (readonly proxy)
       contributors.add('props')
-      if (keyStr && !propKeys.includes(keyStr)) propKeys.push(keyStr)
+      if (!propKeys.includes(keyStr)) propKeys.push(keyStr)
       propTriggers.push(trigger)
     } else {
       // ref/reactive mutations are state changes
       contributors.add('state')
-      if (keyStr && !stateKeys.includes(keyStr)) stateKeys.push(keyStr)
+      // Resolve variable name: for refs, trigger.key is "value" — map to actual var name
+      const varName = ownTargets.get(rawTarget) ?? keyStr
+      if (!stateKeys.includes(varName)) stateKeys.push(varName)
       stateTriggers.push(trigger)
     }
   }
@@ -201,16 +235,18 @@ function classifyTriggers(triggers: TriggerEvent[], instance: any): ClassifyResu
     propTriggers,
     stateTriggers,
     contextTriggers,
+    ownTargets,
   }
 }
 
 /**
  * Build value diff fields on a CommitComponentEntry from trigger events.
+ * Uses ownTargets to resolve variable names for ref triggers (key="value" → varName).
  */
 function buildValueDiffs(
   entry: CommitComponentEntry,
-  _triggers: TriggerEvent[],
   cause: ClassifyResult,
+  ownTargets: Map<object, string>,
 ): void {
   // Props value diffs
   if (cause.propTriggers.length > 0) {
@@ -219,7 +255,8 @@ function buildValueDiffs(
     const fullPrev: Record<string, string> = {}
     const fullNext: Record<string, string> = {}
     for (const t of cause.propTriggers) {
-      const k = t.key != null ? String(t.key) : 'unknown'
+      if (t.key == null) continue
+      const k = String(t.key)
       prev[k] = safeStringify(t.oldValue)
       next[k] = safeStringify(t.newValue)
       fullPrev[k] = prettyStringify(t.oldValue)
@@ -239,7 +276,9 @@ function buildValueDiffs(
     const fullPrev: Record<string, string> = {}
     const fullNext: Record<string, string> = {}
     for (const t of hookTriggers) {
-      const k = t.key != null ? String(t.key) : 'unknown'
+      if (t.key == null) continue
+      // Resolve variable name: for refs, trigger key is "value" — use setupState mapping
+      const k = ownTargets.get(toRaw(t.target)) ?? String(t.key)
       prev[k] = safeStringify(t.oldValue)
       next[k] = safeStringify(t.newValue)
       fullPrev[k] = prettyStringify(t.oldValue)
@@ -294,6 +333,8 @@ function correlateWatcherDeps(
   let watcherIndex = 0
   for (const effect of scope.effects) {
     if (typeof effect.fn !== 'function' || typeof effect.scheduler !== 'function') continue
+    // Skip the component's own render effect
+    if (effect === instance.effect) continue
 
     const hookName = 'watcher'
     const depKeys = getEffectDepKeys(effect)

@@ -21,7 +21,7 @@ function buildLineStarts(code: string): LineStarts {
   return starts
 }
 
-function offsetToLineCol(lineStarts: LineStarts, offset: number): { line: number; column: number } {
+export function offsetToLineCol(lineStarts: LineStarts, offset: number): { line: number; column: number } {
   let lo = 0, hi = lineStarts.length - 1
   while (lo < hi) {
     const mid = (lo + hi + 1) >> 1
@@ -46,6 +46,8 @@ export interface HookCall {
   firstArgRange: [number, number] | null
   /** Dependency array variable names (for useEffect/useMemo/useCallback) */
   depNames?: string[]
+  /** All destructured variable names when result is destructured (ObjectPattern/ArrayPattern) */
+  destructuredNames?: string[]
 }
 
 export interface JSXElementInfo {

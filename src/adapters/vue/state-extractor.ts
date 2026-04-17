@@ -252,6 +252,8 @@ function extractWatchers(instance: any): InspectorItem[] {
 
   let watcherIndex = 0
   for (const effect of scope.effects) {
+    // Skip the component's own render effect (also has fn + scheduler)
+    if (effect === instance.effect) continue
     if (typeof effect.fn === 'function' && typeof effect.scheduler === 'function') {
       const depNames = extractWatcherDeps(effect)
 

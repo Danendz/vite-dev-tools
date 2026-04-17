@@ -1076,11 +1076,23 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
           {propEntries.map(([key, value]) => {
             const valueType = typeof value
             const isPrimitive = value === null || valueType === 'string' || valueType === 'number' || valueType === 'boolean'
+            const propSource = node.isHostElement
+              ? (node.source ?? undefined)
+              : (node.usageSource ?? node.source ?? undefined)
+            const propKeyEl = propSource?.fileName ? (
+              <span
+                class="detail-key detail-key-clickable"
+                title={`${propSource.fileName}:${propSource.lineNumber}`}
+                onClick={() => openInEditor(propSource)}
+              >{key}:</span>
+            ) : (
+              <span class="detail-key">{key}:</span>
+            )
             // Host elements: editable only when source exists and value is primitive
             if (node.isHostElement && (!node.source || !isPrimitive)) {
               return (
                 <div class="detail-row" key={`${node.id}-${key}`}>
-                  <span class="detail-key">{key}:</span>
+                  {propKeyEl}
                   <ValueDisplay value={value} />
                 </div>
               )
@@ -1089,7 +1101,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
             const propOrigin = node.propOrigins?.[key]
             return (
               <div class="detail-row" key={`${node.id}-${key}`}>
-                <span class="detail-key">{key}:</span>
+                {propKeyEl}
                 <EditablePropValue
                   propKey={key}
                   value={value}

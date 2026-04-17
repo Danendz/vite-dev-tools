@@ -113,11 +113,11 @@ describe('Vue render-cause', () => {
   })
 
   describe('context classification', () => {
-    it('classifies injected reactive target triggers as context', () => {
+    it('classifies triggers from parent provides as context', () => {
       const themeObj = { color: 'dark' }
       const instance = createInstance({
-        type: { inject: ['theme'] },
-        proxy: { theme: themeObj },
+        // Component has no own setupState referencing themeObj
+        parent: { provides: { theme: themeObj } },
       })
       flushTriggers(1, 'Button', null, 1, instance, false)
 
@@ -128,12 +128,11 @@ describe('Vue render-cause', () => {
       expect(entry!.changedContexts).toEqual(['theme'])
     })
 
-    it('unwraps proxied inject targets via __v_raw', () => {
+    it('unwraps proxied provide targets via __v_raw', () => {
       const rawObj = { color: 'blue' }
       const proxyObj = { __v_raw: rawObj }
       const instance = createInstance({
-        type: { inject: ['style'] },
-        proxy: { style: proxyObj },
+        parent: { provides: { style: proxyObj } },
       })
       flushTriggers(1, 'Box', null, 1, instance, false)
 
@@ -160,16 +159,17 @@ describe('Vue render-cause', () => {
   describe('precedence', () => {
     it('state > context > props', () => {
       const themeObj = { color: 'dark' }
+      const stateRef = { __v_isRef: true, value: 0 }
       const propsTarget = { __v_isReadonly: true }
       const instance = createInstance({
-        type: { inject: ['theme'] },
-        proxy: { theme: themeObj },
+        setupState: { count: stateRef, __v_raw: { count: stateRef } },
+        parent: { provides: { theme: themeObj } },
       })
       flushTriggers(1, 'Multi', null, 1, instance, false)
 
       // All three types of triggers
-      recordTrigger(1, trigger({ key: 'count', target: {} })) // state
-      recordTrigger(1, trigger({ key: 'color', target: themeObj })) // context
+      recordTrigger(1, trigger({ key: 'value', target: stateRef })) // state (ref)
+      recordTrigger(1, trigger({ key: 'color', target: themeObj })) // context (from provides)
       recordTrigger(1, trigger({ key: 'title', target: propsTarget })) // props
 
       const entry = flushTriggers(1, 'Multi', null, 1, instance, false)
