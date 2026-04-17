@@ -64,3 +64,34 @@ function truncate(s: string, max: number): string {
   if (s.length <= max) return s
   return s.slice(0, max - 1) + '…'
 }
+
+/**
+ * Pretty-print a value using JSON.stringify with 2-space indent and a custom
+ * replacer that handles non-JSON types. Used for modal value inspection.
+ */
+export function prettyStringify(value: unknown): string {
+  const seen = new WeakSet<object>()
+  try {
+    return JSON.stringify(value, function (_key: string, val: unknown) {
+      if (val === undefined) return '[undefined]'
+      if (typeof val === 'function') {
+        const name = (val as Function).name
+        return name ? `ƒ ${name}()` : 'ƒ()'
+      }
+      if (typeof val === 'symbol') return val.toString()
+      if (typeof val === 'bigint') return `${val}n`
+      if (val !== null && typeof val === 'object') {
+        if (seen.has(val)) return '[Circular]'
+        seen.add(val)
+        if ((val as any).$$typeof === REACT_ELEMENT) {
+          const t = (val as any).type
+          const name = typeof t === 'string' ? t : t?.displayName || t?.name || 'Component'
+          return `<${name} />`
+        }
+      }
+      return val
+    }, 2) ?? 'undefined'
+  } catch {
+    return safeStringify(value, { maxDepth: 6, maxLength: 5000 })
+  }
+}

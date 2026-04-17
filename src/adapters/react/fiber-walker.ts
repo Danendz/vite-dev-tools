@@ -8,7 +8,7 @@ import type {
 } from '../../core/types'
 import { computeRenderCause, isComponentFiber as isCauseComponentFiber } from './render-cause'
 import { getPersistentId } from './persistent-id'
-import { safeStringify } from '../../shared/preview-value'
+import { safeStringify, prettyStringify } from '../../shared/preview-value'
 
 // React fiber tag constants
 const FunctionComponent = 0
@@ -60,7 +60,7 @@ function getComponentName(fiber: any): string {
  * the current component name in that file's usage map.
  * Populated by the Vite transform for React 19+ (where _debugSource is unavailable).
  */
-function parseUsageSourceFromMap(fiber: any): { fileName: string; lineNumber: number; columnNumber: number } | null {
+function lookupUsageMapEntry(fiber: any): { line: number; col: number; propOrigins?: Record<string, any>; filePath: string } | null {
   const map = (globalThis as any).__DEVTOOLS_USAGE_MAP__
   if (!map) return null
 
@@ -71,18 +71,14 @@ function parseUsageSourceFromMap(fiber: any): { fileName: string; lineNumber: nu
   let parent = fiber.return
   while (parent) {
     if (COMPONENT_TAGS.has(parent.tag)) {
-      const parentFile = parent.type?.__devtools_source?.fileName
+      const parentFile = parent.type?.__devtools_source?.fileName ?? parent.elementType?.__devtools_source?.fileName
       if (parentFile) {
         for (const [filePath, fileUsages] of Object.entries(map)) {
           if (!parentFile.endsWith(filePath)) continue
 
           const locations = (fileUsages as any)[componentName]
           if (locations && locations.length > 0) {
-            return {
-              fileName: filePath.startsWith('/') ? filePath : `/${filePath}`,
-              lineNumber: locations[0].line,
-              columnNumber: locations[0].col,
-            }
+            return { ...locations[0], filePath }
           }
         }
       }
@@ -91,6 +87,21 @@ function parseUsageSourceFromMap(fiber: any): { fileName: string; lineNumber: nu
   }
 
   return null
+}
+
+function parseUsageSourceFromMap(fiber: any): { fileName: string; lineNumber: number; columnNumber: number } | null {
+  const entry = lookupUsageMapEntry(fiber)
+  if (!entry) return null
+  return {
+    fileName: entry.filePath.startsWith('/') ? entry.filePath : `/${entry.filePath}`,
+    lineNumber: entry.line,
+    columnNumber: entry.col,
+  }
+}
+
+function getPropOriginsFromMap(fiber: any): Record<string, any> | undefined {
+  const entry = lookupUsageMapEntry(fiber)
+  return entry?.propOrigins
 }
 
 /**
@@ -125,7 +136,7 @@ function getReactSource(fiber: any) {
  * - usageSource: React source (usage) only when __devtools_source was used as primary
  */
 function getSourceLocations(fiber: any): { source: ReturnType<typeof getReactSource>, usageSource: ReturnType<typeof getReactSource> } {
-  const definitionSource = fiber.type?.__devtools_source ?? null
+  const definitionSource = fiber.type?.__devtools_source ?? fiber.elementType?.__devtools_source ?? null
   const reactSource = getReactSource(fiber)
 
   if (definitionSource) {
@@ -323,17 +334,21 @@ function buildHookItems(
 
       const persistable = inferred.name === 'useState' && editable
 
+      // Prefer metadata hook type over inferred (inferred can miss React 19 effect structure)
+      const hookName = inferred.name !== 'hook' ? inferred.name : (meta.h ?? 'hook')
+      const value = inferred.name !== 'hook' ? inferred.value : undefined
+
       const item: InspectorItem = {
-        key: meta.n ?? inferred.name,
-        value: inferred.value,
+        key: meta.n ?? hookName,
+        value,
         editable,
         persistable,
         editHint: editable ? {
           kind: 'react-hook',
           hookIndex,
-          hookType: inferred.name as 'useState' | 'useRef',
+          hookType: hookName as 'useState' | 'useRef',
         } : undefined,
-        badge: meta.n ? inferred.name : undefined,
+        badge: meta.n ? hookName : undefined,
         lineNumber: meta.l,
       }
 
@@ -363,9 +378,10 @@ function buildHookItems(
 
 function getHooksSection(fiber: any): InspectorSection | null {
   // Only function components have hooks in memoizedState as linked list
-  if (fiber.tag !== FunctionComponent) return null
+  if (fiber.tag !== FunctionComponent && fiber.tag !== SimpleMemoComponent && fiber.tag !== MemoComponent) return null
 
-  const meta: DevtoolsMeta | undefined = fiber.type?.__devtools_meta
+  // For memo() components, __devtools_meta is on the memo wrapper (elementType), not the inner function (type)
+  const meta: DevtoolsMeta | undefined = fiber.type?.__devtools_meta ?? fiber.elementType?.__devtools_meta
   const flatHooks = collectHookList(fiber)
   if (flatHooks.length === 0) return null
 
@@ -690,6 +706,7 @@ function attachRenderCause(
     changedProps: cause.changedProps,
     changedHooks: cause.changedHooks,
     changedContexts: cause.changedContexts,
+    effectChanges: cause.effectChanges,
   }
 
   if (opts.includeValues && cause.changedProps && cause.changedProps.length > 0) {
@@ -697,18 +714,26 @@ function attachRenderCause(
     const nextProps = fiber.memoizedProps ?? {}
     const previousValues: Record<string, string> = {}
     const nextValues: Record<string, string> = {}
+    const fullPrev: Record<string, string> = {}
+    const fullNext: Record<string, string> = {}
     for (const key of cause.changedProps) {
       previousValues[key] = safeStringify(prevProps[key])
       nextValues[key] = safeStringify(nextProps[key])
+      fullPrev[key] = prettyStringify(prevProps[key])
+      fullNext[key] = prettyStringify(nextProps[key])
     }
     entry.previousValues = previousValues
     entry.nextValues = nextValues
+    entry.fullPreviousValues = fullPrev
+    entry.fullNextValues = fullNext
   }
 
   if (opts.includeValues && cause.changedHooks && cause.changedHooks.length > 0) {
     const changedIndices = new Set(cause.changedHooks.map((h) => h.index))
     const previousHookValues: Record<string, string> = {}
     const nextHookValues: Record<string, string> = {}
+    const fullPrevHook: Record<string, string> = {}
+    const fullNextHook: Record<string, string> = {}
     let prevHook = fiber.alternate?.memoizedState
     let nextHook = fiber.memoizedState
     let idx = 0
@@ -720,6 +745,8 @@ function attachRenderCause(
         const nextInferred = inferHookType(nextHook)
         previousHookValues[key] = safeStringify(prevInferred.value)
         nextHookValues[key] = safeStringify(nextInferred.value)
+        fullPrevHook[key] = prettyStringify(prevInferred.value)
+        fullNextHook[key] = prettyStringify(nextInferred.value)
       }
       prevHook = prevHook.next
       nextHook = nextHook.next
@@ -727,6 +754,8 @@ function attachRenderCause(
     }
     entry.previousHookValues = previousHookValues
     entry.nextHookValues = nextHookValues
+    entry.fullPreviousHookValues = fullPrevHook
+    entry.fullNextHookValues = fullNextHook
   }
 
   opts.entries.push(entry)
@@ -764,8 +793,8 @@ function walkFiberChildren(
         const stateSection = getStateSection(child)
         if (stateSection) sections.push(stateSection)
 
-        // Extract local variables from __devtools_meta
-        const metaLocals = child.type?.__devtools_meta?.locals as Array<{ n: string; l: number }> | undefined
+        // Extract local variables from __devtools_meta (check elementType for memo() components)
+        const metaLocals = (child.type?.__devtools_meta?.locals ?? child.elementType?.__devtools_meta?.locals) as Array<{ n: string; l: number }> | undefined
         const locals = metaLocals?.map((l: { n: string; l: number }) => ({ name: l.n, line: l.l }))
 
         const node: NormalizedNode = {
@@ -782,6 +811,7 @@ function walkFiberChildren(
           textFragments: texts.length > 0 ? texts : undefined,
           _textFibers: textFibers.length > 0 ? textFibers : undefined,
           locals: locals && locals.length > 0 ? locals : undefined,
+          propOrigins: getPropOriginsFromMap(child),
         }
         fiberRefMap.set(node.id, child)
         if (causeOpts) attachRenderCause(node, child, causeOpts)

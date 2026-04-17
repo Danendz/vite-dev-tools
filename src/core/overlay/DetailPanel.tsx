@@ -1,6 +1,6 @@
 import { h } from 'preact'
-import { useState, useRef, useEffect } from 'preact/hooks'
-import type { NormalizedNode, SourceLocation, InspectorItem, EditHint } from '../types'
+import { useState, useRef, useEffect, useMemo } from 'preact/hooks'
+import type { NormalizedNode, SourceLocation, InspectorItem, EditHint, CommitRecord, CommitComponentEntry } from '../types'
 import { openInEditor, persistEdit, persistPropValue, persistTextValue, persistHookValue, undoEdit } from '../communication'
 import type { DiffData, PreviewResult } from '../communication'
 import { EVENTS, STORAGE_KEYS } from '../../shared/constants'
@@ -33,6 +33,8 @@ interface DetailPanelProps {
   editedProps?: Map<string, Set<string>>
   onPropEdit?: (nodeId: string, propKey: string) => void
   onPropPersisted?: (nodeId: string, propKey: string) => void
+  renderHistory?: CommitRecord[]
+  onNavigateToCommit?: (commitIndex: number) => void
 }
 
 function formatPrimitive(value: unknown): { text: string; className: string } | null {
@@ -860,7 +862,41 @@ function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
   )
 }
 
-export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: DetailPanelProps) {
+function summarizeEntry(entry: CommitComponentEntry): string {
+  if (entry.cause === 'mount') return 'Mounted'
+  const parts: string[] = []
+  if (entry.changedProps?.length) parts.push(`props: ${entry.changedProps.join(', ')}`)
+  if (entry.changedHooks?.length) {
+    parts.push(`state: ${entry.changedHooks.map(h => h.varName ?? h.hookName).join(', ')}`)
+  }
+  if (entry.changedContexts?.length) parts.push(`ctx: ${entry.changedContexts.join(', ')}`)
+  if (parts.length === 0) return causeLabel(entry.cause)
+  return parts.join(' · ')
+}
+
+export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, renderHistory, onNavigateToCommit }: DetailPanelProps) {
+  // 0 = collapsed, 5 = preview (first 5), Infinity = show all
+  const [historyLimit, setHistoryLimit] = useState<number>(0)
+  const prevNodeId = useRef<number | undefined>(undefined)
+
+  // Reset expanded state when selected component changes
+  if (node?.persistentId !== prevNodeId.current) {
+    prevNodeId.current = node?.persistentId
+    if (historyLimit !== 0) setHistoryLimit(0)
+  }
+
+  const componentHistory = useMemo(() => {
+    if (!renderHistory || !node?.persistentId) return []
+    return renderHistory
+      .filter(c => c.components.some(e => e.persistentId === node.persistentId))
+      .map(c => ({
+        commitIndex: c.commitIndex,
+        timestampMs: c.timestampMs,
+        entry: c.components.find(e => e.persistentId === node.persistentId)!,
+      }))
+      .reverse()
+  }, [renderHistory, node?.persistentId])
+
   if (!node) {
     return <div class="detail-pane-empty">Select a component to inspect</div>
   }
@@ -931,7 +967,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
             <div class={`detail-why-primary cause-${node.renderCause.primary}`}>
               <span class={`tree-cause-pip cause-${node.renderCause.primary}`} />
               <span class="detail-why-primary-label">{causeLabel(node.renderCause.primary)}</span>
-              <span class="detail-why-commit">commit #{node.renderCause.commitIndex}</span>
+              <span class="detail-why-commit detail-why-history-link" onClick={() => onNavigateToCommit?.(node.renderCause!.commitIndex)}>commit #{node.renderCause.commitIndex}</span>
             </div>
             {node.renderCause.changedProps && node.renderCause.changedProps.length > 0 && (
               <div class="detail-why-row">
@@ -965,6 +1001,23 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
                 )}
               </div>
             )}
+            {node.renderCause.effectChanges && node.renderCause.effectChanges.length > 0 && (
+              <div class="detail-why-row">
+                <span class="detail-why-row-label">Effects re-ran:</span>
+                <div class="detail-why-deps">
+                  {node.renderCause.effectChanges.map((ec, i) => (
+                    <div class="detail-why-dep-row" key={i}>
+                      <span class="detail-why-dep-hook">{ec.varName ?? ec.hookName}:</span>
+                      {ec.changedDeps.map((d, j) => (
+                        <span class="detail-why-dep-change" key={j}>
+                          {d.name} ({String(d.prev)} → {String(d.next)})
+                        </span>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {node.renderCause.changedContexts && node.renderCause.changedContexts.length > 0 && (
               <div class="detail-why-row">
                 <span class="detail-why-row-label">Context changed:</span>
@@ -979,7 +1032,36 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
                 }
               </div>
             )}
-            {node.renderCause.primary === 'bailout' && node.renderCause.lastRenderedCommit != null && (
+            {componentHistory.length > 0 && (
+              <>
+                <div class="detail-why-history-toggle" onClick={() => setHistoryLimit(historyLimit === 0 ? 5 : 0)}>
+                  <span class={`detail-why-history-toggle-arrow${historyLimit > 0 ? ' is-open' : ''}`}>&#9654;</span>
+                  {node.renderCause.primary === 'bailout' && node.renderCause.lastRenderedCommit != null
+                    ? <>Last rendered on <span class="detail-why-history-link" onClick={(e) => { e.stopPropagation(); onNavigateToCommit?.(node.renderCause!.lastRenderedCommit!) }}>commit #{node.renderCause.lastRenderedCommit}</span> — show history</>
+                    : <>Recent renders ({componentHistory.length})</>
+                  }
+                </div>
+                {historyLimit > 0 && (
+                  <div class="detail-why-history-list">
+                    {componentHistory.slice(0, historyLimit === Infinity ? undefined : historyLimit).map((h) => (
+                      <div class="detail-why-history-entry" key={h.commitIndex}>
+                        <span class={`tree-cause-pip cause-${h.entry.cause}`} />
+                        <span class="detail-why-history-link" onClick={() => onNavigateToCommit?.(h.commitIndex)}>
+                          commit #{h.commitIndex}
+                        </span>
+                        <span class="detail-why-history-summary">{summarizeEntry(h.entry)}</span>
+                      </div>
+                    ))}
+                    {componentHistory.length > 5 && historyLimit !== Infinity && (
+                      <div class="detail-why-history-more" onClick={() => setHistoryLimit(Infinity)}>
+                        Show all ({componentHistory.length})
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+            {node.renderCause.primary === 'bailout' && node.renderCause.lastRenderedCommit != null && componentHistory.length === 0 && (
               <div class="detail-why-hint">
                 Last actually rendered on commit #{node.renderCause.lastRenderedCommit}.
               </div>
@@ -1099,9 +1181,10 @@ function renderInspectorItem(
   sectionId: string,
   node: import('../../core/types').NormalizedNode,
   depth: number = 0,
+  parentSourceFile?: string,
 ): any {
-  const canNavigate = item.lineNumber != null && node.source != null
-  const sourceFile = item.sourceFile ?? node.source?.fileName
+  const canNavigate = item.lineNumber != null && (item.sourceFile || parentSourceFile || node.source)
+  const sourceFile = item.sourceFile ?? parentSourceFile ?? node.source?.fileName
 
   // Custom hook / composable group with inner hooks
   if (item.innerHooks && item.innerHooks.length > 0) {
@@ -1126,7 +1209,7 @@ function renderInspectorItem(
           )}
         </div>
         <div class="detail-hook-group-children">
-          {item.innerHooks.map((inner, j) => renderInspectorItem(inner, j, sectionId, node, depth + 1))}
+          {item.innerHooks.map((inner, j) => renderInspectorItem(inner, j, sectionId, node, depth + 1, sourceFile))}
         </div>
       </div>
     )

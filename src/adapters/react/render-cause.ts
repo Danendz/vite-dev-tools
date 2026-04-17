@@ -71,12 +71,24 @@ export function computeRenderCause(fiber: any, commitIndex: number): RenderCause
   const contributors: RenderCauseKind[] = []
 
   const changedProps = diffProps(alternate.memoizedProps, fiber.memoizedProps)
-  const changedHooks = diffHooks(alternate.memoizedState, fiber.memoizedState, fiber.type)
+  // For memo() components, __devtools_meta is on elementType (the memo wrapper), not type (the inner fn)
+  const fiberTypeWithMeta = fiber.type?.__devtools_meta ? fiber.type : (fiber.elementType ?? fiber.type)
+  const changedHooks = diffHooks(alternate.memoizedState, fiber.memoizedState, fiberTypeWithMeta)
   const changedContexts = diffContexts(alternate.dependencies, fiber.dependencies)
 
-  if (changedHooks.length > 0) contributors.push('state')
+  // Exclude hooks we can positively identify as effects/memos — their memoizedState
+  // always changes each render and they're consequences, not causes.
+  const NON_STATE_HOOKS = new Set(['useEffect', 'useLayoutEffect', 'useInsertionEffect', 'useMemo', 'useCallback'])
+  const stateHooks = changedHooks.filter(h => !NON_STATE_HOOKS.has(h.hookName))
+  if (stateHooks.length > 0) contributors.push('state')
   if (changedContexts.length > 0) contributors.push('context')
   if (changedProps.length > 0) contributors.push('props')
+
+  // Pre-compute effect dep diffs (attached to all non-bailout causes)
+  const effectHooks = changedHooks.filter(h => NON_STATE_HOOKS.has(h.hookName) && h.changedDeps && h.changedDeps.length > 0)
+  const effectChanges = effectHooks.length > 0
+    ? effectHooks.map(h => ({ hookIndex: h.index, hookName: h.hookName, varName: h.varName, changedDeps: h.changedDeps! }))
+    : undefined
 
   // Bailout: no PerformedWork flag + nothing locally changed.
   // React doesn't clear flags on bailed-out subtrees, so PerformedWork can be
@@ -98,7 +110,7 @@ export function computeRenderCause(fiber: any, commitIndex: number): RenderCause
     // Re-rendered but no local cause ⇒ parent cascade
     lastRenderedCommitMap.set(fiber, commitIndex)
     if (fiber.alternate) lastRenderedCommitMap.set(fiber.alternate, commitIndex)
-    return { primary: 'parent', contributors: ['parent'], commitIndex, isMemo: isMemo || undefined }
+    return { primary: 'parent', contributors: ['parent'], commitIndex, isMemo: isMemo || undefined, effectChanges }
   }
 
   // Precedence: state > context > props
@@ -108,8 +120,10 @@ export function computeRenderCause(fiber: any, commitIndex: number): RenderCause
   if (fiber.alternate) lastRenderedCommitMap.set(fiber.alternate, commitIndex)
   const cause: RenderCause = { primary, contributors, commitIndex, isMemo: isMemo || undefined }
   if (changedProps.length > 0) cause.changedProps = changedProps
-  if (changedHooks.length > 0) cause.changedHooks = changedHooks
+  if (stateHooks.length > 0) cause.changedHooks = stateHooks
   if (changedContexts.length > 0) cause.changedContexts = changedContexts
+  if (effectChanges) cause.effectChanges = effectChanges
+
   return cause
 }
 
@@ -172,10 +186,13 @@ export function diffHooks(prevHead: any, nextHead: any, fiberType: any): Changed
   while (a && b) {
     if (a.memoizedState !== b.memoizedState) {
       const inferred = inferHookType(b)
-      const entry: ChangedHook = { index, hookName: inferred.name }
+      // Prefer metadata hook name over inferred (inferred misses React 19 effect structure)
+      const metaEntry = flatMeta?.[index]
+      const hookName = (inferred.name !== 'hook' ? inferred.name : metaEntry?.hookName) ?? inferred.name
+      const entry: ChangedHook = { index, hookName }
 
-      if (flatMeta && flatMeta[index]) {
-        const meta = flatMeta[index]
+      if (metaEntry) {
+        const meta = metaEntry
         if (meta.varName) entry.varName = meta.varName
 
         // Dep-level diffing for effect/memo/callback hooks

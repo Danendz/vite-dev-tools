@@ -503,8 +503,15 @@ export function App({ config }: AppProps) {
     localStorage.setItem(STORAGE_KEYS.PANEL_SIZE, String(newSize))
   }, [])
 
+  const [focusCommitIndex, setFocusCommitIndex] = useState<number | null>(null)
+
   const handleTabChange = useCallback((tab: ActiveTab) => {
     setActiveTab(tab)
+  }, [])
+
+  const handleNavigateToCommit = useCallback((commitIndex: number) => {
+    setActiveTab('renders')
+    setFocusCommitIndex(commitIndex)
   }, [])
 
   const handleClearConsole = useCallback(() => {
@@ -833,6 +840,9 @@ export function App({ config }: AppProps) {
           onRenderHistoryRecordingToggle={handleRenderHistoryRecordingToggle}
           onClearRenderHistory={handleClearRenderHistory}
           onPinRenderComponent={handlePinRenderComponent}
+          onNavigateToCommit={handleNavigateToCommit}
+          focusCommitIndex={focusCommitIndex}
+          onFocusCommitConsumed={() => setFocusCommitIndex(null)}
         />
       )}
 

@@ -151,6 +151,13 @@ export interface RenderCause {
   commitIndex: number
   /** For bailed-out nodes: the last commit on which this component actually rendered */
   lastRenderedCommit?: number
+  /** Dep-level changes for effects/memos/callbacks */
+  effectChanges?: Array<{
+    hookIndex: number
+    hookName: string
+    varName?: string
+    changedDeps: Array<{ name: string; prev: unknown; next: unknown }>
+  }>
   /** True when the component is wrapped in React.memo (MemoComponent or SimpleMemoComponent) */
   isMemo?: boolean
 }
@@ -164,11 +171,16 @@ export interface CommitComponentEntry {
   changedProps?: string[]
   changedHooks?: ChangedHook[]
   changedContexts?: string[]
-  /** Only populated when includeValues is requested */
+  /** Only populated when includeValues is requested — truncated previews */
   previousValues?: Record<string, string>
   nextValues?: Record<string, string>
   previousHookValues?: Record<string, string>
   nextHookValues?: Record<string, string>
+  /** Full pretty-printed values for modal inspection */
+  fullPreviousValues?: Record<string, string>
+  fullNextValues?: Record<string, string>
+  fullPreviousHookValues?: Record<string, string>
+  fullNextHookValues?: Record<string, string>
   /** Dep-level changes for effects/memos/callbacks */
   effectChanges?: Array<{
     hookIndex: number

@@ -131,12 +131,14 @@ describe('computeRenderCause', () => {
     next.memoizedState.next = { memoizedState: nextEffect, queue: null, next: null }
 
     const cause = computeRenderCause(next, 1)
-    expect(cause.primary).toBe('state')
-    expect(cause.changedHooks).toHaveLength(1)
+    // useEffect dep changes are not "state" — they go into effectChanges
+    expect(cause.primary).toBe('parent')
+    expect(cause.changedHooks).toBeUndefined()
+    expect(cause.effectChanges).toHaveLength(1)
 
-    const hook = cause.changedHooks![0]
-    expect(hook.hookName).toBe('useEffect')
-    expect(hook.changedDeps).toEqual([
+    const ec = cause.effectChanges![0]
+    expect(ec.hookName).toBe('useEffect')
+    expect(ec.changedDeps).toEqual([
       { name: 'token', prev: 'abc', next: 'xyz' },
     ])
   })

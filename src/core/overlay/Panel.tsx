@@ -82,6 +82,9 @@ interface PanelProps {
   onRenderHistoryRecordingToggle: () => void
   onClearRenderHistory: () => void
   onPinRenderComponent: (persistentId: number | null) => void
+  onNavigateToCommit?: (commitIndex: number) => void
+  focusCommitIndex?: number | null
+  onFocusCommitConsumed?: () => void
 }
 
 export function Panel({
@@ -151,6 +154,9 @@ export function Panel({
   onRenderHistoryRecordingToggle,
   onClearRenderHistory,
   onPinRenderComponent,
+  onNavigateToCommit,
+  focusCommitIndex,
+  onFocusCommitConsumed,
 }: PanelProps) {
   const [detailSize, setDetailSize] = useState(() => {
     const stored = localStorage.getItem(STORAGE_KEYS.DETAIL_SIZE)
@@ -433,7 +439,7 @@ export function Panel({
                 onPointerMove={handleDetailPointerMove}
                 onPointerUp={handleDetailPointerUp}
               />
-              <DetailPanel node={selectedNode} editedProps={editedProps} onPropEdit={onPropEdit} onPropPersisted={onPropPersisted} />
+              <DetailPanel node={selectedNode} editedProps={editedProps} onPropEdit={onPropEdit} onPropPersisted={onPropPersisted} renderHistory={renderHistory} onNavigateToCommit={onNavigateToCommit} />
             </div>
           </div>
         ) : activeTab === 'console' ? (
@@ -449,6 +455,7 @@ export function Panel({
             history={renderHistory}
             recording={renderHistoryRecording}
             pinnedPersistentId={pinnedRenderComponentId}
+            focusCommitIndex={focusCommitIndex}
             onToggleRecording={onRenderHistoryRecordingToggle}
             onClear={onClearRenderHistory}
             onJumpToComponent={(node) => {
@@ -456,6 +463,7 @@ export function Panel({
               onTabChange('inspect')
             }}
             onPin={onPinRenderComponent}
+            onFocusCommitConsumed={onFocusCommitConsumed}
           />
         )}
       </div>
