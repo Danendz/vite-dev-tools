@@ -106,12 +106,21 @@ export interface TreeUpdateEvent {
 
 export type ConsoleEntryType = 'error' | 'warning' | 'log'
 
+export interface StackFrame {
+  fn: string | null
+  file: string
+  line: number
+  col: number
+  isLibrary: boolean
+}
+
 export interface ConsoleEntry {
   id: string
   type: ConsoleEntryType
   timestamp: number
   message: string
   stack: string | null
+  frames: StackFrame[] | null
 }
 
 export interface ToastItem {
