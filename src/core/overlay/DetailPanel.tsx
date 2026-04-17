@@ -947,6 +947,22 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
                     .map((h) => h.varName ? `${h.varName} (${h.hookName})` : `${h.hookName} #${h.index}`)
                     .join(', ')}
                 </span>
+                {node.renderCause.changedHooks.some(h => h.changedDeps) && (
+                  <div class="detail-why-deps">
+                    {node.renderCause.changedHooks
+                      .filter(h => h.changedDeps)
+                      .map((h, i) => (
+                        <div class="detail-why-dep-row" key={i}>
+                          <span class="detail-why-dep-hook">{h.varName ?? h.hookName}:</span>
+                          {h.changedDeps!.map((d, j) => (
+                            <span class="detail-why-dep-change" key={j}>
+                              {d.name} ({String(d.prev)} → {String(d.next)})
+                            </span>
+                          ))}
+                        </div>
+                      ))}
+                  </div>
+                )}
               </div>
             )}
             {node.renderCause.changedContexts && node.renderCause.changedContexts.length > 0 && (
@@ -988,6 +1004,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
               )
             }
             const isEdited = editedProps?.get(node.id)?.has(key) ?? false
+            const propOrigin = node.propOrigins?.[key]
             return (
               <div class="detail-row" key={`${node.id}-${key}`}>
                 <span class="detail-key">{key}:</span>
@@ -1001,6 +1018,24 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
                   onPropEdit={onPropEdit}
                   onPropPersisted={onPropPersisted}
                 />
+                {propOrigin && (
+                  <span
+                    class="detail-origin-tag detail-key-clickable"
+                    title={`${propOrigin.source === 'import' ? `from ${propOrigin.file}` : 'local'}: ${propOrigin.varName} (line ${propOrigin.line})`}
+                    onClick={() => {
+                      const fileName = propOrigin.source === 'import' && propOrigin.file
+                        ? propOrigin.file
+                        : node.source?.fileName
+                      if (fileName) {
+                        openInEditor({ fileName, lineNumber: propOrigin.line, columnNumber: 1 })
+                      }
+                    }}
+                  >
+                    {propOrigin.source === 'import'
+                      ? `from ${propOrigin.file?.split('/').pop() ?? '?'}`
+                      : `var ${propOrigin.varName}`}
+                  </span>
+                )}
               </div>
             )
           })}
@@ -1027,31 +1062,98 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
         return (
           <div class="detail-section" key={section.id}>
             <div class="detail-section-title">{section.label}</div>
-            {section.items.map((item, i) => {
-              const canNavigate = item.lineNumber != null && node.source != null
-
-              return (
-                <div class="detail-row" key={`${section.id}-${i}`}>
-                  <span
-                    class={`detail-key${canNavigate ? ' detail-key-clickable' : ''}`}
-                    onClick={canNavigate ? () => openInEditor({
-                      fileName: node.source!.fileName,
-                      lineNumber: item.lineNumber!,
-                      columnNumber: 1,
-                    }) : undefined}
-                  >
-                    {item.key}:
-                  </span>
-                  {item.editable
-                    ? <EditableValue item={item} nodeId={node.id} source={node.source} />
-                    : <ValueDisplay value={item.value} />}
-                  {item.badge && <span class="hook-type-tag">[{item.badge}]</span>}
-                </div>
-              )
-            })}
+            {section.items.map((item, i) => renderInspectorItem(item, i, section.id, node))}
           </div>
         )
       })}
+
+      {node.locals && node.locals.length > 0 && (
+        <div class="detail-section">
+          <div class="detail-section-title">Locals</div>
+          {node.locals.map((local, i) => {
+            const canNavigate = node.source != null
+            return (
+              <div class="detail-row detail-local-row" key={`local-${i}`}>
+                <span
+                  class={`detail-key${canNavigate ? ' detail-key-clickable' : ''}`}
+                  onClick={canNavigate ? () => openInEditor({
+                    fileName: node.source!.fileName,
+                    lineNumber: local.line,
+                    columnNumber: 1,
+                  }) : undefined}
+                >
+                  {local.name}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function renderInspectorItem(
+  item: import('../../core/types').InspectorItem,
+  index: number,
+  sectionId: string,
+  node: import('../../core/types').NormalizedNode,
+  depth: number = 0,
+): any {
+  const canNavigate = item.lineNumber != null && node.source != null
+  const sourceFile = item.sourceFile ?? node.source?.fileName
+
+  // Custom hook / composable group with inner hooks
+  if (item.innerHooks && item.innerHooks.length > 0) {
+    return (
+      <div class="detail-hook-group" key={`${sectionId}-${index}`} style={{ marginLeft: `${depth * 12}px` }}>
+        <div class="detail-hook-group-header">
+          <span
+            class={`detail-key${canNavigate ? ' detail-key-clickable' : ''}`}
+            onClick={canNavigate ? () => openInEditor({
+              fileName: sourceFile!,
+              lineNumber: item.lineNumber!,
+              columnNumber: 1,
+            }) : undefined}
+          >
+            {item.key}
+          </span>
+          {item.badge && <span class="hook-type-tag">[{item.badge}]</span>}
+          {item.sourceFile && (
+            <span class="detail-origin-tag" title={item.sourceFile}>
+              from {item.sourceFile.split('/').pop()}
+            </span>
+          )}
+        </div>
+        <div class="detail-hook-group-children">
+          {item.innerHooks.map((inner, j) => renderInspectorItem(inner, j, sectionId, node, depth + 1))}
+        </div>
+      </div>
+    )
+  }
+
+  // Leaf hook / state item
+  return (
+    <div class="detail-row" key={`${sectionId}-${index}`} style={depth > 0 ? { marginLeft: `${depth * 12}px` } : undefined}>
+      <span
+        class={`detail-key${canNavigate ? ' detail-key-clickable' : ''}`}
+        onClick={canNavigate ? () => openInEditor({
+          fileName: sourceFile!,
+          lineNumber: item.lineNumber!,
+          columnNumber: 1,
+        }) : undefined}
+      >
+        {item.key}:
+      </span>
+      {item.editable
+        ? <EditableValue item={item} nodeId={node.id} source={node.source} />
+        : <ValueDisplay value={item.value} />}
+      {item.badge && <span class="hook-type-tag">[{item.badge}]</span>}
+      {item.depNames && item.depNames.length > 0 && (
+        <span class="detail-deps">
+          deps: [{item.depNames.join(', ')}]
+        </span>
+      )}
     </div>
   )
 }

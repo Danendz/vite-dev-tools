@@ -215,13 +215,13 @@ export function RendersPane({
                           >
                             📌
                           </button>
-                          {(entry.previousValues || entry.previousHookValues) && (
+                          {(entry.previousValues || entry.previousHookValues || entry.effectChanges) && (
                             <button class="renders-entry-expand" onClick={() => toggleExpand(key)}>
                               {expanded ? '▼' : '▶'}
                             </button>
                           )}
                         </div>
-                        {expanded && (entry.previousValues || entry.previousHookValues) && (
+                        {expanded && (entry.previousValues || entry.previousHookValues || entry.effectChanges) && (
                           <div class="renders-entry-diff">
                             {entry.previousValues && entry.nextValues && Object.keys(entry.previousValues).map((k) => (
                               <div key={k} class="renders-entry-diff-row">
@@ -239,6 +239,26 @@ export function RendersPane({
                                 <span class="renders-entry-diff-next">{entry.nextHookValues![k]}</span>
                               </div>
                             ))}
+                            {entry.effectChanges && entry.effectChanges.length > 0 && (
+                              <div class="renders-entry-effects">
+                                <div class="renders-entry-effects-title">Effect deps changed:</div>
+                                {entry.effectChanges.map((ec, ecIdx) => (
+                                  <div key={ecIdx} class="renders-entry-effect">
+                                    <span class="renders-entry-effect-name">
+                                      {ec.varName ?? ec.hookName}
+                                    </span>
+                                    {ec.changedDeps.map((dep, depIdx) => (
+                                      <div key={depIdx} class="renders-entry-diff-row">
+                                        <span class="renders-entry-diff-key">{dep.name}</span>
+                                        <span class="renders-entry-diff-prev">{String(dep.prev)}</span>
+                                        <span class="renders-entry-diff-arrow">→</span>
+                                        <span class="renders-entry-diff-next">{String(dep.next)}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         )}
                       </li>
