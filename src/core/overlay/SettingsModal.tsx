@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback } from 'preact/hooks'
 import { STORAGE_KEYS } from '../../shared/constants'
 import { Tooltip } from './Tooltip'
 
-type SettingsCategory = 'general' | 'appearance' | 'mcp'
+type SettingsCategory = 'general' | 'console' | 'appearance' | 'mcp'
 
 const FONT_SIZES = [9, 10, 11, 12, 13, 14]
 
@@ -71,6 +71,8 @@ interface SettingsModalProps {
   onRenderCauseToggle: () => void
   onRenderHistorySizeChange: (size: number) => void
   onRenderIncludeValuesToggle: () => void
+  consoleStripLibrary: boolean
+  onConsoleStripLibraryToggle: () => void
   onClose: () => void
 }
 
@@ -112,6 +114,8 @@ export function SettingsModal({
   onRenderCauseToggle,
   onRenderHistorySizeChange,
   onRenderIncludeValuesToggle,
+  consoleStripLibrary,
+  onConsoleStripLibraryToggle,
   onClose,
 }: SettingsModalProps) {
   const [category, setCategory] = useState<SettingsCategory>('general')
@@ -141,6 +145,7 @@ export function SettingsModal({
 
   const categories: { id: SettingsCategory; label: string }[] = [
     { id: 'general', label: 'General' },
+    { id: 'console', label: 'Console' },
     { id: 'appearance', label: 'Appearance' },
     ...(mcpEnabled ? [{ id: 'mcp' as const, label: 'MCP' }] : []),
   ]
@@ -286,6 +291,18 @@ export function SettingsModal({
                     />
                   </div>
                 )}
+              </div>
+            )}
+
+            {category === 'console' && (
+              <div>
+                <div class="settings-row" onClick={onConsoleStripLibraryToggle}>
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">Hide library internals</div>
+                    <div class="settings-row-desc">Strip node_modules and Vite dependency lines from stack traces</div>
+                  </div>
+                  <Toggle checked={consoleStripLibrary} onClick={onConsoleStripLibraryToggle} />
+                </div>
               </div>
             )}
 

@@ -57,6 +57,22 @@ export const STYLES = /* css */ `
     fill: var(--accent);
   }
 
+  /* ── Detached floating button (popup mode) ── */
+
+  .detached-icon {
+    position: relative;
+  }
+
+  .detached-badge {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    width: 12px;
+    height: 12px;
+    color: var(--accent);
+    pointer-events: none;
+  }
+
   /* ── Docked panel ── */
 
   .panel-wrapper {
@@ -920,6 +936,10 @@ export const STYLES = /* css */ `
     color: #f59e0b;
   }
 
+  .console-entry-icon.log {
+    color: #60a5fa;
+  }
+
   .console-entry-time {
     color: #71717a;
     font-size: 10px;
@@ -944,6 +964,10 @@ export const STYLES = /* css */ `
 
   .console-entry.warning .console-entry-message {
     color: #fcd34d;
+  }
+
+  .console-entry.log .console-entry-message {
+    color: #93c5fd;
   }
 
   .console-entry-stack {
@@ -976,6 +1000,56 @@ export const STYLES = /* css */ `
   .console-entry-copy:hover {
     color: #a1a1aa;
     background: rgba(255, 255, 255, 0.06);
+  }
+
+  /* ── Console source links ── */
+
+  .console-entry-source {
+    color: #a1a1aa;
+    font-size: 10px;
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: color 0.15s;
+    white-space: nowrap;
+    opacity: 0;
+  }
+
+  .console-entry:hover .console-entry-source {
+    opacity: 1;
+  }
+
+  .console-entry-source:hover {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+
+  .console-entry-source.library {
+    color: #52525b;
+    cursor: default;
+  }
+
+  .console-entry-source.library:hover {
+    text-decoration: none;
+    color: #52525b;
+  }
+
+  .console-stack-line {
+    padding: 0 0 0 2px;
+    line-height: 1.6;
+  }
+
+  .console-stack-line:not(.library) {
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+
+  .console-stack-line:not(.library):hover {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+
+  .console-stack-line.library {
+    color: #52525b;
   }
 
   .console-empty {

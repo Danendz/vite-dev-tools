@@ -94,6 +94,8 @@ export interface DevToolsConfig {
   supportedSettings?: string[]
   /** Enable MCP server for AI agent integration (default: false) */
   mcp?: boolean
+  /** Framework name — set automatically by the adapter (e.g. 'react', 'vue') */
+  framework?: string
 }
 
 export interface TreeUpdateEvent {
@@ -102,7 +104,15 @@ export interface TreeUpdateEvent {
   commit?: CommitRecord
 }
 
-export type ConsoleEntryType = 'error' | 'warning'
+export type ConsoleEntryType = 'error' | 'warning' | 'log'
+
+export interface StackFrame {
+  fn: string | null
+  file: string
+  line: number
+  col: number
+  isLibrary: boolean
+}
 
 export interface ConsoleEntry {
   id: string
@@ -110,6 +120,7 @@ export interface ConsoleEntry {
   timestamp: number
   message: string
   stack: string | null
+  frames: StackFrame[] | null
 }
 
 export interface ToastItem {
@@ -214,6 +225,7 @@ export interface ConnectedTab {
   tabId: string
   path: string
   title?: string
+  framework?: string
   lastFocused: number
 }
 
