@@ -227,14 +227,22 @@ export function findHookCalls(
 
     // Extract variable name from parent VariableDeclarator
     let varName: string | null = null
+    let destructuredNames: string[] | undefined
     if (parent?.type === 'VariableDeclarator') {
       const id = parent.id
       if (id.type === 'Identifier') {
         varName = id.name
-      } else if (id.type === 'ArrayPattern' && id.elements?.[0]?.type === 'Identifier') {
-        varName = id.elements[0].name
-      } else if (id.type === 'ObjectPattern' && id.properties?.[0]?.value?.type === 'Identifier') {
-        varName = id.properties[0].value.name
+      } else if (id.type === 'ArrayPattern') {
+        if (id.elements?.[0]?.type === 'Identifier') varName = id.elements[0].name
+        destructuredNames = (id.elements || [])
+          .filter((el: any) => el?.type === 'Identifier')
+          .map((el: any) => el.name)
+      } else if (id.type === 'ObjectPattern') {
+        if (id.properties?.[0]?.value?.type === 'Identifier') varName = id.properties[0].value.name
+        destructuredNames = (id.properties || [])
+          .map((p: any) => p.type === 'RestElement' ? p.argument : p.value)
+          .filter((v: any) => v?.type === 'Identifier')
+          .map((v: any) => v.name)
       }
     }
 
@@ -246,6 +254,7 @@ export function findHookCalls(
       line: offsetToLineCol(ls, node.start).line,
       firstArgRange,
     }
+    if (destructuredNames?.length) hook.destructuredNames = destructuredNames
 
     // Extract dep array for effect/memo/callback hooks
     if (HOOKS_WITH_DEPS.has(hookName)) {
@@ -422,8 +431,12 @@ export interface HookMeta {
   line: number
   firstArgRange: [number, number] | null
   depNames?: string[]
+  /** All destructured variable names from the call site */
+  destructuredNames?: string[]
   /** Nested hooks inside a custom hook (recursive) */
   innerHooks?: HookMeta[]
+  /** Non-hook local variable declarations inside this composable's body */
+  locals?: LocalVarMeta[]
   /** Source file path if the hook is defined in a different file */
   sourceFile?: string
 }
@@ -466,6 +479,7 @@ export function findHookCallsDeep(
       line: call.line,
       firstArgRange: call.firstArgRange,
       depNames: call.depNames,
+      destructuredNames: call.destructuredNames,
     }
 
     // If this is a custom hook (not built-in), try to introspect it
@@ -479,6 +493,7 @@ export function findHookCallsDeep(
           program, funcDef.bodyRange[0], funcDef.bodyRange[1],
           ls, { builtIns, callFilter, resolveHook: options?.resolveHook, _visited: visited },
         )
+        meta.locals = findLocalVarDeclarations(program, funcDef.bodyRange[0], funcDef.bodyRange[1], ls)
       } else if (options?.resolveHook) {
         const resolved = options.resolveHook(call.hookName)
         if (resolved) {
@@ -486,6 +501,9 @@ export function findHookCallsDeep(
           meta.innerHooks = findHookCallsDeep(
             resolved.program, resolved.bodyRange[0], resolved.bodyRange[1],
             resolved.lineStarts, { builtIns, callFilter, resolveHook: options?.resolveHook, _visited: visited },
+          )
+          meta.locals = findLocalVarDeclarations(
+            resolved.program, resolved.bodyRange[0], resolved.bodyRange[1], resolved.lineStarts,
           )
         }
       }

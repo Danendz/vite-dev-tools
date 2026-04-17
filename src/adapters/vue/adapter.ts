@@ -36,9 +36,11 @@ function serializeComposableMeta(hooks: HookMeta[]): any[] {
   return hooks.map(h => {
     const entry: any = { n: h.varName, h: h.hookName, l: h.line }
     if (h.depNames) entry.d = h.depNames
+    if (h.destructuredNames?.length) entry.v = h.destructuredNames
     if (h.innerHooks && h.innerHooks.length > 0) {
       entry.i = serializeComposableMeta(h.innerHooks)
     }
+    if (h.locals?.length) entry.lc = h.locals.map(l => ({ n: l.name, l: l.line }))
     if (h.sourceFile) entry.f = h.sourceFile
     return entry
   })
@@ -289,54 +291,26 @@ function injectSourceAttributes(code: string, id: string, projectRoot: string): 
       // Build varLines: maps ALL variable names → line numbers
       // Includes ref/reactive/computed, destructured composable returns, function declarations, locals
       const varLines: Record<string, number> = {}
+      // From hook calls (ref, reactive, computed, composable returns)
       for (const c of composables) {
         if (c.varName) varLines[c.varName] = c.line + linesBeforeScript
-        // For composable calls with inner hooks, include inner variable names
-        if (c.innerHooks) {
-          for (const inner of c.innerHooks) {
-            if (inner.varName) varLines[inner.varName] = inner.line + linesBeforeScript
+        // Destructured composable returns (all names from the pattern)
+        if (c.destructuredNames) {
+          for (const name of c.destructuredNames) {
+            if (!varLines[name]) varLines[name] = c.line + linesBeforeScript
           }
         }
       }
+      // From non-hook local declarations
       for (const l of locals) {
         varLines[l.name] = l.line + linesBeforeScript
       }
-      // Capture function declarations (not covered by findHookCallsDeep or findLocalVarDeclarations)
+      // Function declarations
       walkAST(parsed.program, (node: any) => {
         if (node.type === 'FunctionDeclaration' && node.id?.name) {
           if (node.range[0] >= 0 && node.range[1] <= scriptContent.length) {
             const line = offsetToLineCol(parsed.lineStarts, node.start).line
             varLines[node.id.name] = line + linesBeforeScript
-          }
-        }
-      })
-      // Capture destructured composable returns (ObjectPattern/ArrayPattern in VariableDeclarator with hook call)
-      walkAST(parsed.program, (node: any) => {
-        if (node.type !== 'VariableDeclaration') return
-        if (node.range[0] < 0 || node.range[1] > scriptContent.length) return
-        for (const decl of node.declarations || []) {
-          if (!decl.id || !decl.init) continue
-          // Check if init is a hook/composable call
-          if (decl.init.type !== 'CallExpression') continue
-          const callee = decl.init.callee
-          const isHookCall = (callee?.type === 'Identifier' && /^use[A-Z]/.test(callee.name))
-            || (callee?.type === 'Identifier' && VUE_BUILT_IN_COMPOSABLES.has(callee.name))
-          if (!isHookCall) continue
-          const line = offsetToLineCol(parsed.lineStarts, decl.start).line + linesBeforeScript
-          // Extract ALL names from destructuring patterns
-          if (decl.id.type === 'ObjectPattern') {
-            for (const prop of decl.id.properties || []) {
-              const val = prop.type === 'RestElement' ? prop.argument : prop.value
-              if (val?.type === 'Identifier' && !varLines[val.name]) {
-                varLines[val.name] = line
-              }
-            }
-          } else if (decl.id.type === 'ArrayPattern') {
-            for (const el of decl.id.elements || []) {
-              if (el?.type === 'Identifier' && !varLines[el.name]) {
-                varLines[el.name] = line
-              }
-            }
           }
         }
       })

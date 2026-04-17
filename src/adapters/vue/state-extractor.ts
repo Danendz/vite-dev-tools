@@ -343,12 +343,20 @@ function enrichSetupWithMetadata(sections: InspectorSection[], instance: any): v
     depNames?: string[]
     innerNames: Set<string>
     innerMeta: any[]
+    locals: any[]
   }> = []
   for (const comp of meta.composables) {
     const innerNames = new Set<string>()
+    // Claim by inner hook variable names
     if (comp.i) {
       for (const inner of comp.i) {
         if (inner.n) innerNames.add(inner.n)
+      }
+    }
+    // Also claim by destructured variable names from the call site
+    if (comp.v) {
+      for (const name of comp.v) {
+        innerNames.add(name)
       }
     }
     composableGroups.push({
@@ -358,6 +366,7 @@ function enrichSetupWithMetadata(sections: InspectorSection[], instance: any): v
       depNames: comp.d?.length ? comp.d : undefined,
       innerNames,
       innerMeta: comp.i || [],
+      locals: comp.lc || [],
     })
   }
 
@@ -369,57 +378,72 @@ function enrichSetupWithMetadata(sections: InspectorSection[], instance: any): v
     }
   }
 
-  // Match setup items to composables
-  const claimed = new Set<string>()
-  const composableItems: InspectorItem[] = []
-
   // Read setup state for depValues resolution
   const rawSetup = getRawSetupState(instance)
 
-  for (const group of composableGroups) {
-    const innerItems: InspectorItem[] = []
-    for (const item of setupSection.items) {
-      if (group.innerNames.has(item.key) && !claimed.has(item.key)) {
-        // Enrich inner items with metadata
-        const innerInfo = innerMetaMap.get(item.key)
-        if (innerInfo) {
-          if (innerInfo.l) item.lineNumber = innerInfo.l
-          if (innerInfo.d?.length) item.depNames = innerInfo.d
-        }
-        innerItems.push(item)
-        claimed.add(item.key)
-      }
-    }
-
-    if (innerItems.length > 0) {
-      // Resolve depValues from current setup state
-      let depValues: unknown[] | undefined
-      if (group.depNames && rawSetup) {
-        depValues = group.depNames.map(name => {
-          const raw = rawSetup[name]
-          if (raw === undefined) return undefined
-          return serializeValue(isRef(raw) ? raw.value : raw)
-        })
-      }
-
-      composableItems.push({
-        key: group.name,
-        value: null,
-        editable: false,
-        persistable: false,
-        badge: group.name,
-        lineNumber: group.line,
-        sourceFile: group.sourceFile,
-        depNames: group.depNames,
-        depValues,
-        innerHooks: innerItems,
-      })
+  // Helper: enrich an item with composable metadata (line number, sourceFile)
+  function enrichItem(item: InspectorItem, group: typeof composableGroups[0]): void {
+    const innerInfo = innerMetaMap.get(item.key)
+    if (innerInfo) {
+      if (innerInfo.l) item.lineNumber = innerInfo.l
+      if (innerInfo.d?.length) item.depNames = innerInfo.d
+      if (group.sourceFile) item.sourceFile = group.sourceFile
+    } else {
+      const localInfo = group.locals.find((l: any) => l.n === item.key)
+      if (localInfo?.l) item.lineNumber = localInfo.l
+      if (group.sourceFile) item.sourceFile = group.sourceFile
     }
   }
 
-  if (composableItems.length === 0) return
+  // Helper: build a composable group item for a section
+  function buildGroupItem(group: typeof composableGroups[0], innerItems: InspectorItem[]): InspectorItem {
+    let depValues: unknown[] | undefined
+    if (group.depNames && rawSetup) {
+      depValues = group.depNames.map(name => {
+        const raw = rawSetup[name]
+        if (raw === undefined) return undefined
+        return serializeValue(isRef(raw) ? raw.value : raw)
+      })
+    }
+    return {
+      key: group.name,
+      value: null,
+      editable: false,
+      persistable: false,
+      badge: group.name,
+      lineNumber: group.line,
+      sourceFile: group.sourceFile,
+      depNames: group.depNames,
+      depValues,
+      innerHooks: innerItems,
+    }
+  }
 
-  // Replace setup section items: composable groups first, then unclaimed items
-  const unclaimed = setupSection.items.filter(item => !claimed.has(item.key))
-  setupSection.items = [...composableItems, ...unclaimed]
+  // Group items per section: each section gets its own composable groups
+  function groupSectionItems(section: InspectorSection): void {
+    const claimed = new Set<string>()
+    const groupItems: InspectorItem[] = []
+
+    for (const group of composableGroups) {
+      const innerItems: InspectorItem[] = []
+      for (const item of section.items) {
+        if (group.innerNames.has(item.key) && !claimed.has(item.key)) {
+          enrichItem(item, group)
+          innerItems.push(item)
+          claimed.add(item.key)
+        }
+      }
+      if (innerItems.length > 0) {
+        groupItems.push(buildGroupItem(group, innerItems))
+      }
+    }
+
+    if (groupItems.length > 0) {
+      const unclaimed = section.items.filter(item => !claimed.has(item.key))
+      section.items = [...groupItems, ...unclaimed]
+    }
+  }
+
+  groupSectionItems(setupSection)
+  if (computedSection) groupSectionItems(computedSection)
 }

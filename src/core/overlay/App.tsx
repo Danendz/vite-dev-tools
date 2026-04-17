@@ -9,6 +9,7 @@ import { ToastContainer } from './ToastContainer'
 import { startCapture } from '../console-capture'
 import { EVENTS, STORAGE_KEYS } from '../../shared/constants'
 import { devtoolsState } from './state-store'
+import { openInEditor } from '../communication'
 
 function findNodeById(nodes: NormalizedNode[], id: string): NormalizedNode | null {
   for (const node of nodes) {
@@ -850,8 +851,16 @@ export function App({ config }: AppProps) {
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          source={contextMenu.node.source}
-          usageSource={contextMenu.node.usageSource}
+          items={[
+            {
+              label: `Open source — ${contextMenu.node.source.fileName.replace(/^.*\/src\//, 'src/')}:${contextMenu.node.source.lineNumber}`,
+              onClick: () => openInEditor(contextMenu.node.source!),
+            },
+            ...(contextMenu.node.usageSource ? [{
+              label: `Open usage — ${contextMenu.node.usageSource.fileName.replace(/^.*\/src\//, 'src/')}:${contextMenu.node.usageSource.lineNumber}`,
+              onClick: () => openInEditor(contextMenu.node.usageSource!),
+            }] : []),
+          ]}
           onClose={closeContextMenu}
         />
       )}

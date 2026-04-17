@@ -6,6 +6,8 @@ import type { DiffData, PreviewResult } from '../communication'
 import { EVENTS, STORAGE_KEYS } from '../../shared/constants'
 import { PreviewModal } from './PreviewModal'
 import { Tooltip } from './Tooltip'
+import { ContextMenu } from './ContextMenu'
+import type { ContextMenuItem } from './ContextMenu'
 
 function formatPath(source: SourceLocation): string {
   return `${source.fileName.replace(/^.*\/src\//, 'src/')}:${source.lineNumber}`
@@ -879,6 +881,11 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
   const [historyLimit, setHistoryLimit] = useState<number>(0)
   const prevNodeId = useRef<number | undefined>(undefined)
 
+  // Context menu state for right-click navigation
+  const [detailContextMenu, setDetailContextMenu] = useState<{
+    x: number; y: number; items: ContextMenuItem[]
+  } | null>(null)
+
   // Reset expanded state when selected component changes
   if (node?.persistentId !== prevNodeId.current) {
     prevNodeId.current = node?.persistentId
@@ -1079,14 +1086,34 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
             const propSource = node.isHostElement
               ? (node.source ?? undefined)
               : (node.usageSource ?? node.source ?? undefined)
+            const propContextMenu = (e: MouseEvent) => {
+              e.preventDefault()
+              const menuItems: ContextMenuItem[] = []
+              if (node.source?.fileName) {
+                menuItems.push({
+                  label: `Open source — ${formatPath(node.source)}`,
+                  onClick: () => openInEditor(node.source!),
+                })
+              }
+              if (node.usageSource) {
+                menuItems.push({
+                  label: `Open usage — ${formatPath(node.usageSource)}`,
+                  onClick: () => openInEditor(node.usageSource!),
+                })
+              }
+              if (menuItems.length > 0) {
+                setDetailContextMenu({ x: e.clientX, y: e.clientY, items: menuItems })
+              }
+            }
             const propKeyEl = propSource?.fileName ? (
               <span
                 class="detail-key detail-key-clickable"
                 title={`${propSource.fileName}:${propSource.lineNumber}`}
                 onClick={() => openInEditor(propSource)}
+                onContextMenu={propContextMenu}
               >{key}:</span>
             ) : (
-              <span class="detail-key">{key}:</span>
+              <span class="detail-key" onContextMenu={propContextMenu}>{key}:</span>
             )
             // Host elements: editable only when source exists and value is primitive
             if (node.isHostElement && (!node.source || !isPrimitive)) {
@@ -1156,7 +1183,10 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
         return (
           <div class="detail-section" key={section.id}>
             <div class="detail-section-title">{section.label}</div>
-            {section.items.map((item, i) => renderInspectorItem(item, i, section.id, node))}
+            {section.items.map((item, i) => renderInspectorItem(
+              item, i, section.id, node, 0, undefined,
+              (e, items) => setDetailContextMenu({ x: e.clientX, y: e.clientY, items }),
+            ))}
           </div>
         )
       })}
@@ -1183,6 +1213,15 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
           })}
         </div>
       )}
+
+      {detailContextMenu && (
+        <ContextMenu
+          x={detailContextMenu.x}
+          y={detailContextMenu.y}
+          items={detailContextMenu.items}
+          onClose={() => setDetailContextMenu(null)}
+        />
+      )}
     </div>
   )
 }
@@ -1194,22 +1233,72 @@ function renderInspectorItem(
   node: import('../../core/types').NormalizedNode,
   depth: number = 0,
   parentSourceFile?: string,
+  onItemContextMenu?: (e: MouseEvent, items: ContextMenuItem[]) => void,
+  parentCallLine?: number,
 ): any {
   const canNavigate = item.lineNumber != null && (item.sourceFile || parentSourceFile || node.source)
   const sourceFile = item.sourceFile ?? parentSourceFile ?? node.source?.fileName
 
+  // Build context menu handler for right-click navigation
+  // "Open source" = where the item is defined (primary click target)
+  // "Open usage" = where the item is consumed in the component (for composable inner items)
+  const handleContextMenu = onItemContextMenu ? (e: MouseEvent) => {
+    e.preventDefault()
+    const menuItems: ContextMenuItem[] = []
+    // "Open source" — where the item is defined (composable file for inner items, component file otherwise)
+    if (item.lineNumber != null && sourceFile) {
+      menuItems.push({
+        label: `Open source — ${sourceFile.replace(/^.*\/src\//, 'src/')}:${item.lineNumber}`,
+        onClick: () => openInEditor({ fileName: sourceFile!, lineNumber: item.lineNumber!, columnNumber: 1 }),
+      })
+    }
+    // "Open usage" — for composable inner items, navigate to the call site in the component
+    if ((item.sourceFile || parentSourceFile) && node.source?.fileName && parentCallLine != null) {
+      menuItems.push({
+        label: `Open usage — ${node.source.fileName.replace(/^.*\/src\//, 'src/')}:${parentCallLine}`,
+        onClick: () => openInEditor({ fileName: node.source!.fileName, lineNumber: parentCallLine, columnNumber: 1 }),
+      })
+    }
+    if (menuItems.length > 0) onItemContextMenu(e, menuItems)
+  } : undefined
+
   // Custom hook / composable group with inner hooks
   if (item.innerHooks && item.innerHooks.length > 0) {
+    // For external composables: left-click opens the composable file (line 1)
+    // item.lineNumber is the call-site line in the component, used for inner items' "Open usage"
+    const groupClickTarget = item.sourceFile
+      ? { fileName: item.sourceFile, lineNumber: 1, columnNumber: 1 }
+      : item.lineNumber != null && node.source
+        ? { fileName: node.source.fileName, lineNumber: item.lineNumber, columnNumber: 1 }
+        : null
+    const canClickGroup = groupClickTarget != null
+
+    // Context menu for group header: source (composable file) + usage (call-site in component)
+    const handleGroupContextMenu = onItemContextMenu ? (e: MouseEvent) => {
+      e.preventDefault()
+      const menuItems: ContextMenuItem[] = []
+      if (item.sourceFile) {
+        menuItems.push({
+          label: `Open source — ${item.sourceFile.replace(/^.*\/src\//, 'src/')}`,
+          onClick: () => openInEditor({ fileName: item.sourceFile!, lineNumber: 1, columnNumber: 1 }),
+        })
+      }
+      if (item.lineNumber != null && node.source?.fileName) {
+        menuItems.push({
+          label: `Open usage — ${node.source.fileName.replace(/^.*\/src\//, 'src/')}:${item.lineNumber}`,
+          onClick: () => openInEditor({ fileName: node.source!.fileName, lineNumber: item.lineNumber!, columnNumber: 1 }),
+        })
+      }
+      if (menuItems.length > 0) onItemContextMenu(e, menuItems)
+    } : undefined
+
     return (
       <div class="detail-hook-group" key={`${sectionId}-${index}`} style={{ marginLeft: `${depth * 12}px` }}>
         <div class="detail-hook-group-header">
           <span
-            class={`detail-key${canNavigate ? ' detail-key-clickable' : ''}`}
-            onClick={canNavigate ? () => openInEditor({
-              fileName: sourceFile!,
-              lineNumber: item.lineNumber!,
-              columnNumber: 1,
-            }) : undefined}
+            class={`detail-key${canClickGroup ? ' detail-key-clickable' : ''}`}
+            onClick={canClickGroup ? () => openInEditor(groupClickTarget!) : undefined}
+            onContextMenu={handleGroupContextMenu}
           >
             {item.key}
           </span>
@@ -1221,7 +1310,7 @@ function renderInspectorItem(
           )}
         </div>
         <div class="detail-hook-group-children">
-          {item.innerHooks.map((inner, j) => renderInspectorItem(inner, j, sectionId, node, depth + 1, sourceFile))}
+          {item.innerHooks.map((inner, j) => renderInspectorItem(inner, j, sectionId, node, depth + 1, sourceFile, onItemContextMenu, item.lineNumber))}
         </div>
       </div>
     )
@@ -1237,6 +1326,7 @@ function renderInspectorItem(
           lineNumber: item.lineNumber!,
           columnNumber: 1,
         }) : undefined}
+        onContextMenu={handleContextMenu}
       >
         {item.key}:
       </span>
