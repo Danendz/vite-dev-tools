@@ -34,6 +34,9 @@ export const STORAGE_KEYS = {
   RENDER_CAUSE_ENABLED: 'danendz-devtools:render-cause-enabled',
   RENDER_HISTORY_SIZE: 'danendz-devtools:render-history-size',
   RENDER_INCLUDE_VALUES: 'danendz-devtools:render-include-values',
+  DETACHED: 'danendz-devtools:detached',
+  POPUP_WIDTH: 'danendz-devtools:popup-width',
+  POPUP_HEIGHT: 'danendz-devtools:popup-height',
 } as const
 
 export const RENDER_HISTORY_DEFAULTS = {
