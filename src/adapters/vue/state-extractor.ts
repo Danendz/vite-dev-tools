@@ -90,13 +90,14 @@ export function extractSections(instance: any): InspectorSection[] {
         continue
       }
 
-      // Reactive objects — editable but not persistable (complex)
+      // Reactive objects — editable at runtime, persistable via vue-reactive-path
       if (isReactive(rawValue)) {
         setupItems.push({
           key,
           value: serializeValue(rawValue),
-          editable: false,
-          persistable: false,
+          editable: true,
+          persistable: true,
+          editHint: { kind: 'vue-reactive-path', varName: key, propertyPath: [] },
           badge: 'reactive',
         })
         continue
@@ -194,5 +195,120 @@ export function extractSections(instance: any): InspectorSection[] {
     }
   }
 
+  // Watchers (Vue 3 scope effects)
+  const watcherItems = extractWatchers(instance)
+  if (watcherItems.length > 0) {
+    sections.push({ id: 'watchers', label: 'Watchers', items: watcherItems })
+  }
+
+  // Group setup items under composables if metadata available
+  groupSetupUnderComposables(sections, instance)
+
   return sections
+}
+
+/**
+ * Extract watchers from Vue 3's component scope effects.
+ * Watcher effects have specific shapes: watch() has a `cb` property,
+ * watchEffect has an effect function with no `cb`.
+ */
+function extractWatchers(instance: any): InspectorItem[] {
+  const items: InspectorItem[] = []
+  const scope = instance.scope
+  if (!scope?.effects) return items
+
+  let watcherIndex = 0
+  for (const effect of scope.effects) {
+    // watch() effects have a `cb` property (the callback function)
+    if (typeof effect.fn === 'function' && typeof effect.scheduler === 'function') {
+      const isWatch = typeof (effect as any).cb === 'function'
+      const label = isWatch ? 'watch' : 'watchEffect'
+
+      // Try to get current value for watch() sources
+      let value: unknown = '[active]'
+      if (isWatch && effect.getter) {
+        try { value = effect.getter() } catch { value = '[error]' }
+      }
+
+      items.push({
+        key: `${label} #${watcherIndex}`,
+        value: serializeValue(value),
+        editable: false,
+        persistable: false,
+        badge: label,
+      })
+      watcherIndex++
+    }
+  }
+
+  return items
+}
+
+/**
+ * If __DEVTOOLS_COMPOSABLES__ metadata is available, re-group setup items
+ * under their parent composable as nested InspectorItems.
+ */
+function groupSetupUnderComposables(sections: InspectorSection[], instance: any): void {
+  const filePath = instance.type?.__file
+  if (!filePath) return
+
+  // Try to find composable metadata by matching file path suffix
+  const composableMap = (globalThis as any).__DEVTOOLS_COMPOSABLES__
+  if (!composableMap) return
+
+  let meta: any = null
+  for (const key of Object.keys(composableMap)) {
+    if (filePath.endsWith(key) || key.endsWith(filePath.replace(/.*\//, ''))) {
+      meta = composableMap[key]
+      break
+    }
+  }
+  if (!meta?.composables?.length) return
+
+  const setupSection = sections.find(s => s.id === 'setup')
+  if (!setupSection) return
+
+  // Build a set of inner hook varNames for each composable
+  const composableGroups: Array<{ name: string; line: number; innerNames: Set<string>; innerMeta: any[] }> = []
+  for (const comp of meta.composables) {
+    const innerNames = new Set<string>()
+    if (comp.i) {
+      for (const inner of comp.i) {
+        if (inner.n) innerNames.add(inner.n)
+      }
+    }
+    composableGroups.push({ name: comp.h, line: comp.l, innerNames, innerMeta: comp.i || [] })
+  }
+
+  // Match setup items to composables
+  const claimed = new Set<string>()
+  const composableItems: InspectorItem[] = []
+
+  for (const group of composableGroups) {
+    const innerItems: InspectorItem[] = []
+    for (const item of setupSection.items) {
+      if (group.innerNames.has(item.key) && !claimed.has(item.key)) {
+        innerItems.push(item)
+        claimed.add(item.key)
+      }
+    }
+
+    if (innerItems.length > 0) {
+      composableItems.push({
+        key: group.name,
+        value: null,
+        editable: false,
+        persistable: false,
+        badge: group.name,
+        lineNumber: group.line,
+        innerHooks: innerItems,
+      })
+    }
+  }
+
+  if (composableItems.length === 0) return
+
+  // Replace setup section items: composable groups first, then unclaimed items
+  const unclaimed = setupSection.items.filter(item => !claimed.has(item.key))
+  setupSection.items = [...composableItems, ...unclaimed]
 }

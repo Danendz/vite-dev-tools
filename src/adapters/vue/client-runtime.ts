@@ -4,9 +4,18 @@
  */
 import { walkInstanceTree, instanceRefMap, hostElementRefMap } from './instance-walker'
 import { EVENTS, STORAGE_KEYS } from '../../shared/constants'
+import { recordTrigger, flushTriggers, getVuePersistentId, setLastRenderedCommit } from './render-cause'
+import { getRenderHistory } from './render-history'
+import type { CommitRecord, CommitComponentEntry } from '../../core/types'
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let appInstance: any = null
+
+/** Tracks which component UIDs have been patched with onRenderTriggered */
+const patchedComponents = new WeakSet<object>()
+
+/** Components that updated in the current batch (for commit record building) */
+const updatedComponentBatch = new Map<number, any>()
 
 /**
  * Stores unsaved prop edits so they survive HMR-triggered tree re-walks.
@@ -19,6 +28,74 @@ const pendingTextEdits = new Map<string, Map<number, string>>()
 
 function getHideLibrary(): boolean {
   return localStorage.getItem(STORAGE_KEYS.HIDE_LIBRARY) !== 'false'
+}
+
+function isRenderCauseEnabled(): boolean {
+  return localStorage.getItem(STORAGE_KEYS.RENDER_CAUSE_ENABLED) !== 'false'
+}
+
+/**
+ * Patch a component instance to record render triggers.
+ * Uses Vue 3's onRenderTriggered lifecycle hook.
+ */
+function patchComponentForRenderCause(instance: any): void {
+  if (!instance || patchedComponents.has(instance)) return
+  patchedComponents.add(instance)
+
+  // Vue 3 stores lifecycle hooks as arrays on the instance
+  // onRenderTriggered hooks are at instance.rtg (render triggered)
+  const rtgKey = 'rtg' // Vue 3 internal key for onRenderTriggered
+  if (!instance[rtgKey]) instance[rtgKey] = []
+  instance[rtgKey].push((event: any) => {
+    if (isRenderCauseEnabled()) {
+      recordTrigger(instance.uid, event)
+    }
+  })
+}
+
+/**
+ * Build a CommitRecord from the current batch of updated components.
+ */
+function buildCommitRecord(): CommitRecord | null {
+  if (updatedComponentBatch.size === 0) return null
+  if (!isRenderCauseEnabled()) return null
+
+  const history = getRenderHistory()
+  const commitIndex = history.advanceCommitIndex()
+  const components: CommitComponentEntry[] = []
+
+  for (const [uid, instance] of updatedComponentBatch) {
+    const name = instance.type?.__name ?? instance.type?.name ?? 'Anonymous'
+    const filePath = instance.type?.__file
+    const source = filePath
+      ? { fileName: filePath, lineNumber: 1, columnNumber: 1 }
+      : null
+    const persistentId = getVuePersistentId(uid)
+
+    const entry = flushTriggers(uid, name, source, persistentId)
+    if (entry) {
+      setLastRenderedCommit(uid, commitIndex)
+      components.push(entry)
+    } else {
+      // Updated but no trigger info — parent cascade
+      setLastRenderedCommit(uid, commitIndex)
+      components.push({
+        persistentId,
+        name,
+        source,
+        cause: 'parent',
+        contributors: ['parent'],
+      })
+    }
+  }
+
+  updatedComponentBatch.clear()
+
+  if (components.length === 0) return null
+
+  const commit: CommitRecord = { commitIndex, timestampMs: Date.now(), components }
+  history.record(commit)
+  return commit
 }
 
 function reapplyPendingEdits(nodes: import('../../core/types').NormalizedNode[]): Array<{nodeId: string, propKey: string}> {
@@ -94,8 +171,11 @@ function walkAndDispatch() {
     reverted = reapplyPendingEdits(tree)
   }
 
+  // Build commit record from batched component updates
+  const commit = buildCommitRecord()
+
   window.dispatchEvent(
-    new CustomEvent(EVENTS.TREE_UPDATE, { detail: { tree } }),
+    new CustomEvent(EVENTS.TREE_UPDATE, { detail: { tree, commit } }),
   )
 
   // Notify overlay to clear "edited" highlight for reverted props
@@ -118,19 +198,29 @@ window.addEventListener('__danendz_devtools_vue_init__', (event: Event) => {
   const { app } = (event as CustomEvent).detail
   if (app?._instance) {
     appInstance = app._instance
+    patchComponentForRenderCause(appInstance)
     scheduleWalk()
   }
 })
 
 // Listen for component updates
-window.addEventListener('__danendz_devtools_vue_update__', () => {
+window.addEventListener('__danendz_devtools_vue_update__', (event: Event) => {
   if (!appInstance) {
-    // Try to get the app instance if we haven't captured it yet
     const app = (window as any).__DANENDZ_DEVTOOLS_VUE_APP__
     if (app?._instance) {
       appInstance = app._instance
     }
   }
+
+  // Track the updated component for commit record building
+  const detail = (event as CustomEvent).detail
+  if (detail?.instance) {
+    patchComponentForRenderCause(detail.instance)
+    if (isRenderCauseEnabled()) {
+      updatedComponentBatch.set(detail.instance.uid, detail.instance)
+    }
+  }
+
   scheduleWalk()
 })
 
@@ -211,9 +301,6 @@ window.addEventListener(EVENTS.TEXT_EDIT, (event: Event) => {
 window.addEventListener(EVENTS.VALUE_EDIT, (event: Event) => {
   const { nodeId, editHint, newValue } = (event as CustomEvent).detail
 
-  if (editHint?.kind !== 'vue-path') return
-
-  const { path, stateType } = editHint
   const instance = instanceRefMap.get(nodeId)
   if (!instance) {
     window.dispatchEvent(new CustomEvent(EVENTS.TOAST, {
@@ -223,13 +310,33 @@ window.addEventListener(EVENTS.VALUE_EDIT, (event: Event) => {
   }
 
   try {
-    if (stateType === 'setup' && instance.setupState) {
-      // setupState uses proxyRefs — assigning to it auto-unwraps refs
-      const key = path[0]
-      instance.setupState[key] = newValue
-    } else if (stateType === 'data' && instance.data) {
-      const key = path[0]
-      instance.data[key] = newValue
+    if (editHint?.kind === 'vue-path') {
+      const { path, stateType } = editHint
+      if (stateType === 'setup' && instance.setupState) {
+        const key = path[0]
+        instance.setupState[key] = newValue
+      } else if (stateType === 'data' && instance.data) {
+        const key = path[0]
+        instance.data[key] = newValue
+      }
+    } else if (editHint?.kind === 'vue-reactive-path') {
+      const { varName, propertyPath } = editHint
+      if (instance.setupState) {
+        // Navigate the reactive proxy via the property path
+        let target = instance.setupState[varName]
+        if (target && propertyPath.length > 0) {
+          for (let i = 0; i < propertyPath.length - 1; i++) {
+            target = target[propertyPath[i]]
+            if (!target) break
+          }
+          if (target) {
+            target[propertyPath[propertyPath.length - 1]] = newValue
+          }
+        } else if (target !== undefined && propertyPath.length === 0) {
+          // Replacing the entire reactive object value
+          instance.setupState[varName] = newValue
+        }
+      }
     }
 
     // Vue's reactivity will trigger a re-render, which will fire component:updated

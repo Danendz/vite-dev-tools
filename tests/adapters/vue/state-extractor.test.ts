@@ -32,7 +32,7 @@ describe('extractSections', () => {
     expect(countItem!.persistable).toBe(true)
   })
 
-  it('extracts reactive values with badge and editable=false', () => {
+  it('extracts reactive values with badge and editable=true', () => {
     const reactiveObj = createReactive({ x: 1 })
     const instance = {
       setupState: { state: reactiveObj, __v_raw: { state: reactiveObj } },
@@ -43,7 +43,9 @@ describe('extractSections', () => {
     expect(setupSection).toBeDefined()
     const stateItem = setupSection!.items.find(i => i.key === 'state')
     expect(stateItem!.badge).toBe('reactive')
-    expect(stateItem!.editable).toBe(false)
+    expect(stateItem!.editable).toBe(true)
+    expect(stateItem!.persistable).toBe(true)
+    expect(stateItem!.editHint).toEqual({ kind: 'vue-reactive-path', varName: 'state', propertyPath: [] })
   })
 
   it('extracts computed values in separate section', () => {
