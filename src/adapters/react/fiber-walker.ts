@@ -242,49 +242,200 @@ export function inferHookType(hook: any): { name: string; value: unknown } {
   return { name: 'hook', value: memoizedState }
 }
 
+/** Compact metadata format injected at build time */
+interface MetaHook {
+  n: string | null  // varName
+  h: string         // hookName
+  l: number         // line
+  d?: string[]      // depNames
+  i?: MetaHook[]    // innerHooks
+  f?: string        // sourceFile
+}
+
+interface DevtoolsMeta {
+  hooks: MetaHook[]
+  locals?: Array<{ n: string; l: number }>
+}
+
+/**
+ * Collect all hooks from the fiber's memoizedState linked list into an array.
+ */
+function collectHookList(fiber: any): any[] {
+  const hooks: any[] = []
+  let hook = fiber.memoizedState
+  while (hook !== null && hook !== undefined) {
+    hooks.push(hook)
+    hook = hook.next
+  }
+  return hooks
+}
+
+/**
+ * Build InspectorItem[] from hook metadata, consuming hooks from the flat list.
+ * When a custom hook has innerHooks, it groups consecutive hooks from the flat list
+ * and nests them under the custom hook item.
+ */
+function buildHookItems(
+  metaHooks: MetaHook[],
+  flatHooks: any[],
+  startIndex: { value: number },
+): InspectorItem[] {
+  const items: InspectorItem[] = []
+
+  for (const meta of metaHooks) {
+    if (meta.i && meta.i.length > 0) {
+      // Custom hook with inner hooks — consume inner hooks from the flat list
+      const innerItems = buildHookItems(meta.i, flatHooks, startIndex)
+      items.push({
+        key: meta.n ?? meta.h,
+        value: null,
+        editable: false,
+        persistable: false,
+        badge: meta.h,
+        lineNumber: meta.l,
+        innerHooks: innerItems,
+        sourceFile: meta.f,
+      })
+    } else {
+      // Leaf hook — consume one from the flat list
+      const hook = flatHooks[startIndex.value]
+      const hookIndex = startIndex.value
+      startIndex.value++
+
+      if (!hook) {
+        // Hook metadata doesn't match runtime — skip gracefully
+        items.push({
+          key: meta.n ?? meta.h,
+          value: '[unavailable]',
+          editable: false,
+          persistable: false,
+          badge: meta.h,
+          lineNumber: meta.l,
+        })
+        continue
+      }
+
+      const inferred = inferHookType(hook)
+
+      const editable =
+        (inferred.name === 'useState' && typeof inferred.value !== 'function' && typeof hook.queue?.dispatch === 'function') ||
+        inferred.name === 'useRef'
+
+      const persistable = inferred.name === 'useState' && editable
+
+      const item: InspectorItem = {
+        key: meta.n ?? inferred.name,
+        value: inferred.value,
+        editable,
+        persistable,
+        editHint: editable ? {
+          kind: 'react-hook',
+          hookIndex,
+          hookType: inferred.name as 'useState' | 'useRef',
+        } : undefined,
+        badge: meta.n ? inferred.name : undefined,
+        lineNumber: meta.l,
+      }
+
+      // Attach dep names for effect/memo/callback hooks
+      if (meta.d) {
+        item.depNames = meta.d
+        // Extract current dep values from hook state
+        if (inferred.name === 'useEffect' || inferred.name === 'useLayoutEffect' || inferred.name === 'useInsertionEffect') {
+          const effect = hook.memoizedState
+          if (effect?.deps) item.depValues = effect.deps
+        } else if (inferred.name === 'useMemo' || inferred.name === 'useCallback') {
+          const ms = hook.memoizedState
+          if (Array.isArray(ms) && ms.length === 2 && Array.isArray(ms[1])) {
+            item.depValues = ms[1]
+          }
+        }
+      }
+
+      if (meta.f) item.sourceFile = meta.f
+
+      items.push(item)
+    }
+  }
+
+  return items
+}
+
 function getHooksSection(fiber: any): InspectorSection | null {
   // Only function components have hooks in memoizedState as linked list
   if (fiber.tag !== FunctionComponent) return null
 
-  const items: InspectorItem[] = []
-  const rawHookData: unknown[] | undefined = fiber.type?.__devtools_hooks
-  let hookIndex = 0
-  let hook = fiber.memoizedState
-  while (hook !== null && hook !== undefined) {
-    const inferred = inferHookType(hook)
-    const entry = rawHookData?.[hookIndex]
+  const meta: DevtoolsMeta | undefined = fiber.type?.__devtools_meta
+  const flatHooks = collectHookList(fiber)
+  if (flatHooks.length === 0) return null
 
-    let varName: string | undefined
-    let lineNumber: number | undefined
+  let items: InspectorItem[]
 
-    if (Array.isArray(entry)) {
-      varName = entry[0] ?? undefined
-      lineNumber = entry[1]
-    } else if (typeof entry === 'string') {
-      varName = entry
+  if (meta?.hooks && meta.hooks.length > 0) {
+    // New path: use __devtools_meta for nested tree with dep info
+    const indexRef = { value: 0 }
+    items = buildHookItems(meta.hooks, flatHooks, indexRef)
+
+    // If there are remaining unmatched hooks (metadata doesn't cover all), add them
+    while (indexRef.value < flatHooks.length) {
+      const hook = flatHooks[indexRef.value]
+      const inferred = inferHookType(hook)
+      const hookIndex = indexRef.value
+      indexRef.value++
+
+      const editable =
+        (inferred.name === 'useState' && typeof inferred.value !== 'function' && typeof hook.queue?.dispatch === 'function') ||
+        inferred.name === 'useRef'
+
+      items.push({
+        key: inferred.name,
+        value: inferred.value,
+        editable,
+        persistable: inferred.name === 'useState' && editable,
+        editHint: editable ? { kind: 'react-hook', hookIndex, hookType: inferred.name as 'useState' | 'useRef' } : undefined,
+      })
     }
+  } else {
+    // Legacy path: __devtools_hooks or no metadata
+    const rawHookData: unknown[] | undefined = fiber.type?.__devtools_hooks
+    items = []
+    let hookIndex = 0
 
-    const editable =
-      (inferred.name === 'useState' && typeof inferred.value !== 'function' && typeof hook.queue?.dispatch === 'function') ||
-      inferred.name === 'useRef'
+    for (const hook of flatHooks) {
+      const inferred = inferHookType(hook)
+      const entry = rawHookData?.[hookIndex]
 
-    const persistable = inferred.name === 'useState' && editable
+      let varName: string | undefined
+      let lineNumber: number | undefined
 
-    items.push({
-      key: varName ?? inferred.name,
-      value: inferred.value,
-      editable,
-      persistable,
-      editHint: editable ? {
-        kind: 'react-hook',
-        hookIndex,
-        hookType: inferred.name as 'useState' | 'useRef',
-      } : undefined,
-      badge: varName ? inferred.name : undefined,
-      lineNumber,
-    })
-    hookIndex++
-    hook = hook.next
+      if (Array.isArray(entry)) {
+        varName = entry[0] ?? undefined
+        lineNumber = entry[1]
+      } else if (typeof entry === 'string') {
+        varName = entry
+      }
+
+      const editable =
+        (inferred.name === 'useState' && typeof inferred.value !== 'function' && typeof hook.queue?.dispatch === 'function') ||
+        inferred.name === 'useRef'
+
+      const persistable = inferred.name === 'useState' && editable
+
+      items.push({
+        key: varName ?? inferred.name,
+        value: inferred.value,
+        editable,
+        persistable,
+        editHint: editable ? {
+          kind: 'react-hook',
+          hookIndex,
+          hookType: inferred.name as 'useState' | 'useRef',
+        } : undefined,
+        badge: varName ? inferred.name : undefined,
+        lineNumber,
+      })
+      hookIndex++
+    }
   }
 
   return items.length > 0 ? { id: 'hooks', label: 'Hooks', items } : null
@@ -613,6 +764,10 @@ function walkFiberChildren(
         const stateSection = getStateSection(child)
         if (stateSection) sections.push(stateSection)
 
+        // Extract local variables from __devtools_meta
+        const metaLocals = child.type?.__devtools_meta?.locals as Array<{ n: string; l: number }> | undefined
+        const locals = metaLocals?.map((l: { n: string; l: number }) => ({ name: l.n, line: l.l }))
+
         const node: NormalizedNode = {
           id: `fiber_${nodeIdCounter++}`,
           name,
@@ -626,6 +781,7 @@ function walkFiberChildren(
           textContent: texts.join(' ') || undefined,
           textFragments: texts.length > 0 ? texts : undefined,
           _textFibers: textFibers.length > 0 ? textFibers : undefined,
+          locals: locals && locals.length > 0 ? locals : undefined,
         }
         fiberRefMap.set(node.id, child)
         if (causeOpts) attachRenderCause(node, child, causeOpts)

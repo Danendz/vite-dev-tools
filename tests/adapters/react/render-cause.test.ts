@@ -99,6 +99,86 @@ describe('computeRenderCause', () => {
     expect(cause.changedHooks).toEqual([{ index: 0, hookName: 'useState', varName: 'count' }])
   })
 
+  it('detects dep-level changes with __devtools_meta', () => {
+    const type = function Fetcher() {}
+    ;(type as any).__devtools_meta = {
+      hooks: [
+        { n: 'userId', h: 'useState', l: 2 },
+        { n: null, h: 'useEffect', l: 4, d: ['userId', 'token'] },
+      ],
+      locals: [],
+    }
+
+    // Effect with deps [42, 'abc']
+    const prevEffect = { create: () => {}, destroy: undefined, deps: [42, 'abc'], tag: 0, next: null }
+    const nextEffect = { create: () => {}, destroy: undefined, deps: [42, 'xyz'], tag: 0, next: null }
+
+    const prev = fiber({
+      type,
+      hooks: [42],
+      hooksQueue: true,
+      // Manually set up the hook chain with effect
+    })
+    // Override the hook chain for effect
+    prev.memoizedState.next = { memoizedState: prevEffect, queue: null, next: null }
+
+    const next = fiber({
+      type,
+      hooks: [42], // useState unchanged
+      hooksQueue: true,
+      alternate: prev,
+    })
+    next.memoizedState.next = { memoizedState: nextEffect, queue: null, next: null }
+
+    const cause = computeRenderCause(next, 1)
+    expect(cause.primary).toBe('state')
+    expect(cause.changedHooks).toHaveLength(1)
+
+    const hook = cause.changedHooks![0]
+    expect(hook.hookName).toBe('useEffect')
+    expect(hook.changedDeps).toEqual([
+      { name: 'token', prev: 'abc', next: 'xyz' },
+    ])
+  })
+
+  it('reads __devtools_meta for varName (new format)', () => {
+    const type = function Counter() {}
+    ;(type as any).__devtools_meta = {
+      hooks: [{ n: 'count', h: 'useState', l: 5 }],
+      locals: [],
+    }
+    const prev = fiber({ type, hooks: [0], hooksQueue: true })
+    const next = fiber({ type, hooks: [1], hooksQueue: true, alternate: prev })
+    const cause = computeRenderCause(next, 1)
+    expect(cause.changedHooks).toEqual([{ index: 0, hookName: 'useState', varName: 'count' }])
+  })
+
+  it('flattens nested custom hooks in __devtools_meta for diffing', () => {
+    const type = function App() {}
+    ;(type as any).__devtools_meta = {
+      hooks: [
+        {
+          n: null, h: 'useCounter', l: 8, i: [
+            { n: 'count', h: 'useState', l: 3 },
+            { n: 'step', h: 'useState', l: 4 },
+          ],
+        },
+      ],
+      locals: [],
+    }
+    // Two useState hooks from useCounter
+    const prev = fiber({ type, hooks: [0], hooksQueue: true })
+    prev.memoizedState.next = { memoizedState: 1, queue: { dispatch: () => {} }, next: null }
+
+    const next = fiber({ type, hooks: [5], hooksQueue: true, alternate: prev })
+    next.memoizedState.next = { memoizedState: 1, queue: { dispatch: () => {} }, next: null }
+
+    const cause = computeRenderCause(next, 1)
+    expect(cause.changedHooks).toHaveLength(1)
+    expect(cause.changedHooks![0].varName).toBe('count')
+    expect(cause.changedHooks![0].hookName).toBe('useState')
+  })
+
   it('infers hook type from hook structure (useState via queue)', () => {
     const prev = fiber({ hooks: [0], hooksQueue: true })
     const next = fiber({ hooks: [1], hooksQueue: true, alternate: prev })

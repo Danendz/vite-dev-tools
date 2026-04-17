@@ -127,23 +127,85 @@ export function diffProps(prev: any, next: any): string[] {
   return changed
 }
 
+/**
+ * Flatten the __devtools_meta.hooks tree into a flat array aligned with React's hook list.
+ * Custom hooks with inner hooks are expanded; only leaf hooks appear in the result.
+ */
+function flattenMetaHooks(hooks: any[]): Array<{ varName: string | null; hookName: string; depNames?: string[] }> {
+  const flat: Array<{ varName: string | null; hookName: string; depNames?: string[] }> = []
+  for (const h of hooks) {
+    if (h.i && h.i.length > 0) {
+      flat.push(...flattenMetaHooks(h.i))
+    } else {
+      flat.push({ varName: h.n, hookName: h.h, depNames: h.d })
+    }
+  }
+  return flat
+}
+
+/** Extract the dependency array from a hook's memoizedState (effect or memo/callback) */
+function extractDepsFromHook(hook: any): unknown[] | null {
+  const ms = hook.memoizedState
+  // Effect hooks: { create, destroy, deps, tag }
+  if (ms && typeof ms === 'object' && !Array.isArray(ms) && 'deps' in ms) {
+    return ms.deps
+  }
+  // Memo/callback hooks: [value, deps]
+  if (Array.isArray(ms) && ms.length === 2 && Array.isArray(ms[1])) {
+    return ms[1]
+  }
+  return null
+}
+
 /** Walk two hook linked lists in lockstep, report indices whose memoizedState differs. */
 export function diffHooks(prevHead: any, nextHead: any, fiberType: any): ChangedHook[] {
   const changed: ChangedHook[] = []
   let a = prevHead
   let b = nextHead
   let index = 0
-  const hookMeta: unknown[] | undefined = fiberType?.__devtools_hooks
+
+  // Try new metadata format first, fall back to legacy
+  const devtoolsMeta = fiberType?.__devtools_meta
+  const flatMeta = devtoolsMeta?.hooks ? flattenMetaHooks(devtoolsMeta.hooks) : null
+  const legacyHookMeta: unknown[] | undefined = fiberType?.__devtools_hooks
+
   while (a && b) {
     if (a.memoizedState !== b.memoizedState) {
       const inferred = inferHookType(b)
       const entry: ChangedHook = { index, hookName: inferred.name }
-      const meta = hookMeta?.[index]
-      if (Array.isArray(meta)) {
-        if (typeof meta[0] === 'string') entry.varName = meta[0]
-      } else if (typeof meta === 'string') {
-        entry.varName = meta
+
+      if (flatMeta && flatMeta[index]) {
+        const meta = flatMeta[index]
+        if (meta.varName) entry.varName = meta.varName
+
+        // Dep-level diffing for effect/memo/callback hooks
+        if (meta.depNames && meta.depNames.length > 0) {
+          const prevDeps = extractDepsFromHook(a)
+          const nextDeps = extractDepsFromHook(b)
+          if (prevDeps && nextDeps) {
+            const changedDeps: Array<{ name: string; prev: unknown; next: unknown }> = []
+            const maxLen = Math.max(prevDeps.length, nextDeps.length)
+            for (let di = 0; di < maxLen; di++) {
+              if (!Object.is(prevDeps[di], nextDeps[di])) {
+                changedDeps.push({
+                  name: meta.depNames[di] ?? `dep[${di}]`,
+                  prev: prevDeps[di],
+                  next: nextDeps[di],
+                })
+              }
+            }
+            if (changedDeps.length > 0) entry.changedDeps = changedDeps
+          }
+        }
+      } else if (legacyHookMeta) {
+        const meta = legacyHookMeta[index]
+        if (Array.isArray(meta)) {
+          if (typeof meta[0] === 'string') entry.varName = meta[0]
+        } else if (typeof meta === 'string') {
+          entry.varName = meta
+        }
       }
+
       changed.push(entry)
     }
     a = a.next

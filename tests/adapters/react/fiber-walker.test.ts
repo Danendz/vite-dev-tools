@@ -180,6 +180,132 @@ describe('walkFiberTree', () => {
       expect(hooksSection!.items[0].badge).toBe('useState')
     })
 
+    it('reads __devtools_meta and builds nested hook tree', () => {
+      // Simulate a component that uses a custom hook useCounter
+      // which internally has useState + useCallback
+      const fiber = createFakeFiber({
+        tag: FunctionComponent,
+        type: {
+          name: 'App',
+          __devtools_source: { fileName: '/src/App.tsx', lineNumber: 1, columnNumber: 0 },
+          __devtools_meta: {
+            hooks: [
+              {
+                n: null, h: 'useCounter', l: 8, i: [
+                  { n: 'count', h: 'useState', l: 3 },
+                  { n: 'increment', h: 'useCallback', l: 4, d: [] },
+                ],
+              },
+            ],
+            locals: [{ n: 'total', l: 10 }],
+          },
+        },
+        // React's flat hook list: useState → useCallback (from useCounter)
+        memoizedState: {
+          memoizedState: 5,
+          queue: { dispatch: () => {} },
+          next: {
+            memoizedState: [() => {}, []],
+            queue: null,
+            next: null,
+          },
+        },
+      })
+
+      const tree = walkFiberTree(wrapInRoot(fiber))
+      const comp = tree[0]
+
+      // Should have locals
+      expect(comp.locals).toEqual([{ name: 'total', line: 10 }])
+
+      // Should have hooks section with nested structure
+      const hooksSection = comp.sections.find(s => s.id === 'hooks')
+      expect(hooksSection).toBeDefined()
+
+      // Top level: useCounter (custom hook)
+      expect(hooksSection!.items).toHaveLength(1)
+      const customHook = hooksSection!.items[0]
+      expect(customHook.key).toBe('useCounter')
+      expect(customHook.badge).toBe('useCounter')
+      expect(customHook.innerHooks).toBeDefined()
+      expect(customHook.innerHooks).toHaveLength(2)
+
+      // Inner: count [useState] — editable
+      const countHook = customHook.innerHooks![0]
+      expect(countHook.key).toBe('count')
+      expect(countHook.value).toBe(5)
+      expect(countHook.editable).toBe(true)
+      expect(countHook.badge).toBe('useState')
+
+      // Inner: increment [useCallback] — not editable, has deps
+      const cbHook = customHook.innerHooks![1]
+      expect(cbHook.key).toBe('increment')
+      expect(cbHook.editable).toBe(false)
+      expect(cbHook.depNames).toEqual([])
+    })
+
+    it('reads __devtools_meta with dep names on effects', () => {
+      const fiber = createFakeFiber({
+        tag: FunctionComponent,
+        type: {
+          name: 'Fetcher',
+          __devtools_source: { fileName: '/src/Fetcher.tsx', lineNumber: 1, columnNumber: 0 },
+          __devtools_meta: {
+            hooks: [
+              { n: 'userId', h: 'useState', l: 2 },
+              { n: null, h: 'useEffect', l: 4, d: ['userId', 'token'] },
+            ],
+            locals: [],
+          },
+        },
+        memoizedState: {
+          memoizedState: 42,
+          queue: { dispatch: () => {} },
+          next: {
+            memoizedState: {
+              create: () => {},
+              destroy: undefined,
+              deps: [42, 'abc'],
+              tag: 0,
+              next: null,
+            },
+            queue: null,
+            next: null,
+          },
+        },
+      })
+
+      const tree = walkFiberTree(wrapInRoot(fiber))
+      const hooksSection = tree[0].sections.find(s => s.id === 'hooks')!
+
+      const effect = hooksSection.items[1]
+      expect(effect.key).toBe('useEffect')
+      expect(effect.depNames).toEqual(['userId', 'token'])
+      expect(effect.depValues).toEqual([42, 'abc'])
+    })
+
+    it('falls back to __devtools_hooks when __devtools_meta is absent', () => {
+      const fiber = createFakeFiber({
+        tag: FunctionComponent,
+        type: {
+          name: 'Legacy',
+          __devtools_source: { fileName: '/src/Legacy.tsx', lineNumber: 1, columnNumber: 0 },
+          __devtools_hooks: [['count', 5]],
+        },
+        memoizedState: {
+          memoizedState: 10,
+          queue: { dispatch: () => {} },
+          next: null,
+        },
+      })
+
+      const tree = walkFiberTree(wrapInRoot(fiber))
+      const hooksSection = tree[0].sections.find(s => s.id === 'hooks')!
+      expect(hooksSection.items[0].key).toBe('count')
+      expect(hooksSection.items[0].value).toBe(10)
+      expect(hooksSection.items[0].lineNumber).toBe(5)
+    })
+
     it('extracts useRef hook', () => {
       const fiber = createFakeFiber({
         tag: FunctionComponent,

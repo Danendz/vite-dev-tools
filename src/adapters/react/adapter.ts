@@ -7,11 +7,19 @@ import {
   parseJSX,
   findComponentDeclarations as findComponentDeclarationsAST,
   findHookCalls,
+  findHookCallsDeep,
+  findLocalVarDeclarations,
   findJSXOpeningElements,
   findJSXAttribute,
   findStringLiterals,
+  traceJSXPropOrigins,
+  findImportSource,
+  findFunctionDefinition,
+  findExportedVariable,
   spliceSource,
+  REACT_BUILT_IN_HOOKS,
 } from '../../shared/ast-utils'
+import type { HookMeta, ResolvedHookSource, PropOriginInfo } from '../../shared/ast-utils'
 import { undoStore } from '../../shared/undo-store'
 import { buildDiff } from '../../shared/diff'
 
@@ -146,6 +154,91 @@ function getHookNames(
   }
   // Fallback to regex
   return findHookNamesRegex(code, componentLine)
+}
+
+/**
+ * Build a hook import resolver for the current file.
+ * Resolves imported custom hooks by reading their source files and parsing them.
+ */
+function buildHookResolver(
+  program: any,
+  filePath: string,
+  lineStarts: number[] | null,
+): ((hookName: string) => ResolvedHookSource | null) {
+  return (hookName: string) => {
+    const imp = findImportSource(program, hookName, lineStarts ?? undefined)
+    if (!imp || !imp.importPath.startsWith('.')) return null // only resolve relative imports
+
+    const dir = path.dirname(filePath)
+    const extensions = ['.ts', '.tsx', '.js', '.jsx', '']
+    let resolvedPath: string | null = null
+    let resolvedContent: string | null = null
+
+    for (const ext of extensions) {
+      const candidate = path.resolve(dir, imp.importPath + ext)
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        resolvedPath = candidate
+        resolvedContent = fs.readFileSync(candidate, 'utf-8')
+        break
+      }
+      // Try index file
+      const indexCandidate = path.resolve(dir, imp.importPath, 'index' + ext)
+      if (ext && fs.existsSync(indexCandidate) && fs.statSync(indexCandidate).isFile()) {
+        resolvedPath = indexCandidate
+        resolvedContent = fs.readFileSync(indexCandidate, 'utf-8')
+        break
+      }
+    }
+
+    if (!resolvedPath || !resolvedContent) return null
+
+    const parsed = parseJSX(resolvedPath, resolvedContent)
+    if (!parsed) return null
+
+    const funcDef = findFunctionDefinition(parsed.program, hookName, parsed.lineStarts)
+    if (!funcDef) return null
+
+    return {
+      program: parsed.program,
+      bodyRange: funcDef.bodyRange,
+      lineStarts: parsed.lineStarts,
+      sourceFile: resolvedPath,
+    }
+  }
+}
+
+/**
+ * Build rich hook metadata using deep introspection.
+ * Returns the __devtools_meta format or null if no hooks found.
+ */
+function getDeepHookMeta(
+  program: any,
+  bodyRange: [number, number],
+  lineStarts: number[] | null,
+  filePath: string,
+): { hooks: HookMeta[]; locals: Array<{ name: string; line: number }> } | null {
+  const resolveHook = buildHookResolver(program, filePath, lineStarts)
+  const hooks = findHookCallsDeep(
+    program, bodyRange[0], bodyRange[1], lineStarts ?? undefined,
+    { builtIns: REACT_BUILT_IN_HOOKS, resolveHook },
+  )
+  const locals = findLocalVarDeclarations(program, bodyRange[0], bodyRange[1], lineStarts ?? undefined)
+
+  if (hooks.length === 0 && locals.length === 0) return null
+  return { hooks, locals }
+}
+
+/** Serialize HookMeta[] to compact JSON for injection (short keys to minimize overhead) */
+function serializeHookMeta(hooks: HookMeta[]): any[] {
+  return hooks.map(h => {
+    const entry: any = { n: h.varName, h: h.hookName, l: h.line }
+    if (h.depNames) entry.d = h.depNames
+    if (h.innerHooks && h.innerHooks.length > 0) {
+      entry.i = serializeHookMeta(h.innerHooks)
+    }
+    if (h.sourceFile) entry.f = h.sourceFile
+    return entry
+  })
 }
 
 /** Known HTML element names — only inject __source on these to avoid false positives on lowercase component refs */
@@ -444,6 +537,30 @@ function rewritePropRegex(source: string, edit: RewriteEdit): string | null {
   return null
 }
 
+/**
+ * Rewrite a variable value in its source file (for imported variables).
+ * The editHint should contain: varName, importFile (absolute path).
+ */
+function rewriteImportedVariable(source: string, edit: RewriteEdit): string | null {
+  const hint = edit.editHint as any
+  const varName = hint.varName as string
+  if (!varName) return null
+
+  const serialized = typeof edit.value === 'string' ? JSON.stringify(edit.value) : String(edit.value)
+
+  const parsed = parseJSX('file.ts', source)
+  if (!parsed) return null
+
+  const exported = findExportedVariable(parsed.program, varName, hint.isDefault ?? false, parsed.lineStarts)
+  if (!exported) return null
+
+  return spliceSource(source, [{
+    start: exported.initRange[0],
+    end: exported.initRange[1],
+    replacement: serialized,
+  }])
+}
+
 export const reactAdapter: FrameworkAdapter = {
   name: 'react',
   accent: '#58c4dc',
@@ -470,13 +587,27 @@ export const reactAdapter: FrameworkAdapter = {
         )
       }
 
-      // __devtools_hooks: all React versions
-      const hookData = getHookNames(code, c.line - 1, program, c.bodyRange, lineStarts)
-      if (hookData) {
-        const hookArray = JSON.stringify(hookData.map(h => [h.varName, h.line]))
-        annotations.push(
-          `try { if (${guard}) ${c.name}.__devtools_hooks = ${hookArray}; } catch(e) {}`
-        )
+      // __devtools_meta: rich hook/local metadata (replaces __devtools_hooks)
+      if (program && c.bodyRange) {
+        const meta = getDeepHookMeta(program, c.bodyRange, lineStarts, id)
+        if (meta) {
+          const serialized = JSON.stringify({
+            hooks: serializeHookMeta(meta.hooks),
+            locals: meta.locals.map(l => ({ n: l.name, l: l.line })),
+          })
+          annotations.push(
+            `try { if (${guard}) ${c.name}.__devtools_meta = ${serialized}; } catch(e) {}`
+          )
+        }
+      } else {
+        // Fallback: inject legacy __devtools_hooks for regex-parsed files
+        const hookData = getHookNames(code, c.line - 1, null, undefined, null)
+        if (hookData) {
+          const hookArray = JSON.stringify(hookData.map(h => [h.varName, h.line]))
+          annotations.push(
+            `try { if (${guard}) ${c.name}.__devtools_hooks = ${hookArray}; } catch(e) {}`
+          )
+        }
       }
     }
 
@@ -489,10 +620,28 @@ export const reactAdapter: FrameworkAdapter = {
         lineStarts,
       )
       if (componentUsages.length > 0) {
-        const usageMap: Record<string, Array<{ line: number; col: number }>> = {}
+        const usageMap: Record<string, Array<{ line: number; col: number; propOrigins?: Record<string, any> }>> = {}
         for (const el of componentUsages) {
           if (!usageMap[el.tagName]) usageMap[el.tagName] = []
-          usageMap[el.tagName].push({ line: el.line, col: el.col })
+          const entry: { line: number; col: number; propOrigins?: Record<string, any> } = { line: el.line, col: el.col }
+
+          // Trace prop origins for this JSX element
+          const origins = traceJSXPropOrigins(program, el.line, 1, lineStarts)
+          if (origins) {
+            const compact: Record<string, any> = {}
+            for (const [key, origin] of Object.entries(origins)) {
+              compact[key] = {
+                s: origin.source,
+                v: origin.varName,
+                l: origin.line,
+                ...(origin.importPath ? { f: origin.importPath } : {}),
+                st: origin.isStatic,
+              }
+            }
+            entry.propOrigins = compact
+          }
+
+          usageMap[el.tagName].push(entry)
         }
         annotations.push(
           `;(globalThis.__DEVTOOLS_USAGE_MAP__||(globalThis.__DEVTOOLS_USAGE_MAP__={}))["${relativePath}"]=${JSON.stringify(usageMap)}`
@@ -534,6 +683,9 @@ export const reactAdapter: FrameworkAdapter = {
     }
     if (edit.editHint.kind === 'react-prop') {
       return rewriteProp(source, edit)
+    }
+    if (edit.editHint.kind === 'react-prop-import') {
+      return rewriteImportedVariable(source, edit)
     }
     return null
   },

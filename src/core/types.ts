@@ -12,6 +12,14 @@ export interface InspectorItem {
   badge?: string
   /** Line number for click-to-navigate */
   lineNumber?: number
+  /** Nested hooks inside a custom hook (for composable/custom hook introspection) */
+  innerHooks?: InspectorItem[]
+  /** Dependency array variable names (for useEffect/useMemo/useCallback) */
+  depNames?: string[]
+  /** Current dep values (for diff display in render-cause) */
+  depValues?: unknown[]
+  /** Source file path (for hooks defined in other files) */
+  sourceFile?: string
 }
 
 export interface InspectorSection {
@@ -55,6 +63,16 @@ export interface NormalizedNode {
     componentName: string
     source: SourceLocation
   }
+  /** Local variable names in this component's body (for jump-to-source, no runtime values) */
+  locals?: Array<{ name: string; line: number }>
+  /** Prop origins — which variable/import each prop value references */
+  propOrigins?: Record<string, {
+    source: 'local' | 'import'
+    varName: string
+    line: number
+    file?: string
+    isStatic: boolean
+  }>
 }
 
 export interface SourceLocation {
@@ -117,6 +135,8 @@ export interface ChangedHook {
   index: number
   hookName: string
   varName?: string
+  /** Which specific deps changed (for effect/memo/callback hooks) */
+  changedDeps?: Array<{ name: string; prev: unknown; next: unknown }>
 }
 
 export interface RenderCause {
@@ -149,6 +169,13 @@ export interface CommitComponentEntry {
   nextValues?: Record<string, string>
   previousHookValues?: Record<string, string>
   nextHookValues?: Record<string, string>
+  /** Dep-level changes for effects/memos/callbacks */
+  effectChanges?: Array<{
+    hookIndex: number
+    hookName: string
+    varName?: string
+    changedDeps: Array<{ name: string; prev: unknown; next: unknown }>
+  }>
 }
 
 export interface CommitRecord {

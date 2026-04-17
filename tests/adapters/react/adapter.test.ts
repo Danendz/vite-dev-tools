@@ -46,11 +46,11 @@ describe('reactAdapter.transform', () => {
     expect(result).toBeNull()
   })
 
-  it('injects __devtools_hooks for components with hooks', () => {
+  it('injects __devtools_meta for components with hooks', () => {
     const code = 'function Counter() {\n  const [count, setCount] = useState(0)\n  return <div>{count}</div>\n}'
     const result = reactAdapter.transform(code, '/src/Counter.tsx', '/project')
     expect(result).not.toBeNull()
-    expect(result!.code).toContain('__devtools_hooks')
+    expect(result!.code).toContain('__devtools_meta')
     expect(result!.code).toContain('count')
   })
 
