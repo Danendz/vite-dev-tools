@@ -22,6 +22,19 @@ function isComputed(value: any): boolean {
 }
 
 /**
+ * Check if a value is a Vue component definition (imported SFC in <script setup>).
+ * These have __name/__file/__hmrId set by @vitejs/plugin-vue.
+ */
+function isComponentDefinition(value: any): boolean {
+  if (value === null || typeof value !== 'object') return false
+  // SFC components have __name + (__file or __hmrId or render function)
+  if (value.__name && (value.__file || value.__hmrId || typeof value.setup === 'function' || typeof value.render === 'function')) return true
+  // Functional components are just functions with __name
+  if (typeof value === 'function' && value.__name) return true
+  return false
+}
+
+/**
  * Serialize a value for safe display.
  */
 function serializeValue(value: unknown): unknown {
@@ -64,6 +77,9 @@ export function extractSections(instance: any): InspectorSection[] {
       if (key.startsWith('__') || key.startsWith('$')) continue
 
       const rawValue = rawSetup[key]
+
+      // Skip imported Vue component definitions (SFC imports in <script setup>)
+      if (isComponentDefinition(rawValue)) continue
 
       // Computed values — read-only, not editable
       if (isComputed(rawValue)) {
@@ -201,16 +217,33 @@ export function extractSections(instance: any): InspectorSection[] {
     sections.push({ id: 'watchers', label: 'Watchers', items: watcherItems })
   }
 
-  // Group setup items under composables if metadata available
-  groupSetupUnderComposables(sections, instance)
+  // Wire line numbers and group setup items under composables if metadata available
+  enrichSetupWithMetadata(sections, instance)
 
   return sections
 }
 
 /**
+ * Walk a Vue 3.4+ ReactiveEffect's deps linked list and extract property key names.
+ * Returns deduplicated key names that this effect depends on.
+ */
+function extractWatcherDeps(effect: any): string[] {
+  const keys = new Set<string>()
+  let link = effect.deps
+  while (link) {
+    if (link.dep?.key != null) {
+      keys.add(String(link.dep.key))
+    }
+    link = link.nextDep
+  }
+  return [...keys]
+}
+
+/**
  * Extract watchers from Vue 3's component scope effects.
- * Watcher effects have specific shapes: watch() has a `cb` property,
- * watchEffect has an effect function with no `cb`.
+ * In Vue 3.5+, effect.cb and effect.getter are closure variables inside doWatch(),
+ * not properties on the effect. So we can't distinguish watch() from watchEffect().
+ * We label all watcher effects as "watcher" and show their tracked dep keys.
  */
 function extractWatchers(instance: any): InspectorItem[] {
   const items: InspectorItem[] = []
@@ -219,23 +252,21 @@ function extractWatchers(instance: any): InspectorItem[] {
 
   let watcherIndex = 0
   for (const effect of scope.effects) {
-    // watch() effects have a `cb` property (the callback function)
     if (typeof effect.fn === 'function' && typeof effect.scheduler === 'function') {
-      const isWatch = typeof (effect as any).cb === 'function'
-      const label = isWatch ? 'watch' : 'watchEffect'
+      const depNames = extractWatcherDeps(effect)
 
-      // Try to get current value for watch() sources
-      let value: unknown = '[active]'
-      if (isWatch && effect.getter) {
-        try { value = effect.getter() } catch { value = '[error]' }
-      }
+      // Show tracked dep keys if available, otherwise "[active]"
+      const value = depNames.length > 0
+        ? `tracking: ${depNames.join(', ')}`
+        : '[active]'
 
       items.push({
-        key: `${label} #${watcherIndex}`,
-        value: serializeValue(value),
+        key: `watcher #${watcherIndex}`,
+        value,
         editable: false,
         persistable: false,
-        badge: label,
+        badge: 'watcher',
+        depNames: depNames.length > 0 ? depNames : undefined,
       })
       watcherIndex++
     }
@@ -245,31 +276,72 @@ function extractWatchers(instance: any): InspectorItem[] {
 }
 
 /**
- * If __DEVTOOLS_COMPOSABLES__ metadata is available, re-group setup items
- * under their parent composable as nested InspectorItems.
+ * Look up the __DEVTOOLS_COMPOSABLES__ metadata for a component instance.
  */
-function groupSetupUnderComposables(sections: InspectorSection[], instance: any): void {
+function findComponentMeta(instance: any): any | null {
   const filePath = instance.type?.__file
-  if (!filePath) return
+  if (!filePath) return null
 
-  // Try to find composable metadata by matching file path suffix
   const composableMap = (globalThis as any).__DEVTOOLS_COMPOSABLES__
-  if (!composableMap) return
+  if (!composableMap) return null
 
-  let meta: any = null
   for (const key of Object.keys(composableMap)) {
     if (filePath.endsWith(key) || key.endsWith(filePath.replace(/.*\//, ''))) {
-      meta = composableMap[key]
-      break
+      return composableMap[key]
     }
   }
-  if (!meta?.composables?.length) return
+  return null
+}
+
+/**
+ * If __DEVTOOLS_COMPOSABLES__ metadata is available, wire line numbers to
+ * setup items and re-group under their parent composable as nested InspectorItems.
+ */
+function enrichSetupWithMetadata(sections: InspectorSection[], instance: any): void {
+  const meta = findComponentMeta(instance)
+  if (!meta) return
 
   const setupSection = sections.find(s => s.id === 'setup')
-  if (!setupSection) return
+  const computedSection = sections.find(s => s.id === 'computed')
 
-  // Build a set of inner hook varNames for each composable
-  const composableGroups: Array<{ name: string; line: number; innerNames: Set<string>; innerMeta: any[] }> = []
+  // Build varLines lookup: variable name → line number
+  // varLines includes ALL variables (ref, reactive, computed, plain const, etc.)
+  const varLines: Record<string, number> = meta.varLines ?? {}
+  // Merge locals for backward compat (older metadata without varLines)
+  if (meta.locals) {
+    for (const local of meta.locals) {
+      if (local.n && local.l && !varLines[local.n]) varLines[local.n] = local.l
+    }
+  }
+
+  // Wire line numbers to all setup and computed items
+  if (setupSection) {
+    for (const item of setupSection.items) {
+      if (!item.lineNumber && varLines[item.key]) {
+        item.lineNumber = varLines[item.key]
+      }
+    }
+  }
+  if (computedSection) {
+    for (const item of computedSection.items) {
+      if (!item.lineNumber && varLines[item.key]) {
+        item.lineNumber = varLines[item.key]
+      }
+    }
+  }
+
+  // Group under composables if any exist
+  if (!meta.composables?.length || !setupSection) return
+
+  // Build inner hook metadata lookup per composable
+  const composableGroups: Array<{
+    name: string
+    line: number
+    sourceFile?: string
+    depNames?: string[]
+    innerNames: Set<string>
+    innerMeta: any[]
+  }> = []
   for (const comp of meta.composables) {
     const innerNames = new Set<string>()
     if (comp.i) {
@@ -277,23 +349,57 @@ function groupSetupUnderComposables(sections: InspectorSection[], instance: any)
         if (inner.n) innerNames.add(inner.n)
       }
     }
-    composableGroups.push({ name: comp.h, line: comp.l, innerNames, innerMeta: comp.i || [] })
+    composableGroups.push({
+      name: comp.h,
+      line: comp.l,
+      sourceFile: comp.f || undefined,
+      depNames: comp.d?.length ? comp.d : undefined,
+      innerNames,
+      innerMeta: comp.i || [],
+    })
+  }
+
+  // Build a map from inner variable name → its metadata for line numbers and deps
+  const innerMetaMap = new Map<string, any>()
+  for (const group of composableGroups) {
+    for (const inner of group.innerMeta) {
+      if (inner.n) innerMetaMap.set(inner.n, inner)
+    }
   }
 
   // Match setup items to composables
   const claimed = new Set<string>()
   const composableItems: InspectorItem[] = []
 
+  // Read setup state for depValues resolution
+  const rawSetup = getRawSetupState(instance)
+
   for (const group of composableGroups) {
     const innerItems: InspectorItem[] = []
     for (const item of setupSection.items) {
       if (group.innerNames.has(item.key) && !claimed.has(item.key)) {
+        // Enrich inner items with metadata
+        const innerInfo = innerMetaMap.get(item.key)
+        if (innerInfo) {
+          if (innerInfo.l) item.lineNumber = innerInfo.l
+          if (innerInfo.d?.length) item.depNames = innerInfo.d
+        }
         innerItems.push(item)
         claimed.add(item.key)
       }
     }
 
     if (innerItems.length > 0) {
+      // Resolve depValues from current setup state
+      let depValues: unknown[] | undefined
+      if (group.depNames && rawSetup) {
+        depValues = group.depNames.map(name => {
+          const raw = rawSetup[name]
+          if (raw === undefined) return undefined
+          return serializeValue(isRef(raw) ? raw.value : raw)
+        })
+      }
+
       composableItems.push({
         key: group.name,
         value: null,
@@ -301,6 +407,9 @@ function groupSetupUnderComposables(sections: InspectorSection[], instance: any)
         persistable: false,
         badge: group.name,
         lineNumber: group.line,
+        sourceFile: group.sourceFile,
+        depNames: group.depNames,
+        depValues,
         innerHooks: innerItems,
       })
     }

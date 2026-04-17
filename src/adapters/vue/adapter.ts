@@ -284,10 +284,20 @@ function injectSourceAttributes(code: string, id: string, projectRoot: string): 
       const locals = findLocalVarDeclarations(parsed.program, 0, scriptContent.length, parsed.lineStarts)
         .filter(l => !VUE_BUILT_IN_COMPOSABLES.has(l.name))
 
-      if (customComposables.length > 0 || locals.length > 0) {
+      // Build varLines: maps ALL variable names → line numbers (including ref/reactive/computed)
+      const varLines: Record<string, number> = {}
+      for (const c of composables) {
+        if (c.varName) varLines[c.varName] = c.line + linesBeforeScript
+      }
+      for (const l of locals) {
+        varLines[l.name] = l.line + linesBeforeScript
+      }
+
+      if (customComposables.length > 0 || locals.length > 0 || Object.keys(varLines).length > 0) {
         const meta = JSON.stringify({
           composables: serializeComposableMeta(customComposables),
           locals: locals.map(l => ({ n: l.name, l: l.line + linesBeforeScript })),
+          varLines,
         })
         composableCode = `;(globalThis.__DEVTOOLS_COMPOSABLES__||(globalThis.__DEVTOOLS_COMPOSABLES__={}))["${relativePath}"]=${meta};`
       }

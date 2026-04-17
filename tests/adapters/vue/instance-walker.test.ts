@@ -43,7 +43,7 @@ describe('walkInstanceTree', () => {
   })
 
   it('returns empty array for null input', () => {
-    expect(walkInstanceTree(null)).toEqual([])
+    expect(walkInstanceTree(null).tree).toEqual([])
   })
 
   describe('component name extraction', () => {
@@ -51,7 +51,7 @@ describe('walkInstanceTree', () => {
       const instance = createInstance({
         subTree: createVNode({ shapeFlag: 0 }),
       })
-      const tree = walkInstanceTree(instance)
+      const tree = walkInstanceTree(instance).tree
       expect(tree[0].name).toBe('TestComponent')
     })
 
@@ -60,7 +60,7 @@ describe('walkInstanceTree', () => {
         type: { name: 'NamedComponent', __file: '/src/test.vue' },
         subTree: createVNode({ shapeFlag: 0 }),
       })
-      const tree = walkInstanceTree(instance)
+      const tree = walkInstanceTree(instance).tree
       expect(tree[0].name).toBe('NamedComponent')
     })
 
@@ -69,7 +69,7 @@ describe('walkInstanceTree', () => {
         type: { __file: '/src/components/MyWidget.vue' },
         subTree: createVNode({ shapeFlag: 0 }),
       })
-      const tree = walkInstanceTree(instance)
+      const tree = walkInstanceTree(instance).tree
       expect(tree[0].name).toBe('MyWidget')
     })
 
@@ -78,7 +78,7 @@ describe('walkInstanceTree', () => {
         type: {},
         subTree: createVNode({ shapeFlag: 0 }),
       })
-      const tree = walkInstanceTree(instance)
+      const tree = walkInstanceTree(instance).tree
       expect(tree[0].name).toBe('Anonymous')
     })
   })
@@ -88,7 +88,7 @@ describe('walkInstanceTree', () => {
       const instance = createInstance({
         subTree: createVNode({ shapeFlag: 0 }),
       })
-      const tree = walkInstanceTree(instance)
+      const tree = walkInstanceTree(instance).tree
       expect(tree.length).toBe(1)
       expect(tree[0].name).toBe('TestComponent')
     })
@@ -114,7 +114,7 @@ describe('walkInstanceTree', () => {
       })
       childInstance.parent = root
 
-      const tree = walkInstanceTree(root)
+      const tree = walkInstanceTree(root).tree
       expect(tree[0].children.length).toBe(1)
       expect(tree[0].children[0].name).toBe('ChildComp')
     })
@@ -158,7 +158,7 @@ describe('walkInstanceTree', () => {
       })
       libComponent.parent = root
 
-      const tree = walkInstanceTree(root, true)
+      const tree = walkInstanceTree(root, { hideLibrary: true }).tree
       // LibWrapper should be skipped, UserChild promoted
       expect(tree[0].children.length).toBe(1)
       expect(tree[0].children[0].name).toBe('UserChild')
@@ -171,7 +171,7 @@ describe('walkInstanceTree', () => {
         type: { __name: 'Test', __file: '/src/Test.vue' },
         subTree: createVNode({ shapeFlag: 0 }),
       })
-      const tree = walkInstanceTree(instance)
+      const tree = walkInstanceTree(instance).tree
       expect(tree[0].source).toEqual({
         fileName: '/src/Test.vue',
         lineNumber: 1,
@@ -186,7 +186,7 @@ describe('walkInstanceTree', () => {
         props: { title: 'hello', onClick: () => {} },
         subTree: createVNode({ shapeFlag: 0 }),
       })
-      const tree = walkInstanceTree(instance)
+      const tree = walkInstanceTree(instance).tree
       expect(tree[0].props.title).toBe('hello')
       expect(tree[0].props.onClick).toBe('fn()')
     })
@@ -196,7 +196,7 @@ describe('walkInstanceTree', () => {
         props: { child: { __v_skip: true, name: 'test' } },
         subTree: createVNode({ shapeFlag: 0 }),
       })
-      const tree = walkInstanceTree(instance)
+      const tree = walkInstanceTree(instance).tree
       expect(tree[0].props.child).toBe('[ComponentInstance]')
     })
   })
@@ -221,7 +221,7 @@ describe('walkInstanceTree', () => {
         }),
       })
 
-      const tree = walkInstanceTree(root)
+      const tree = walkInstanceTree(root).tree
       const divNode = tree[0].children.find(c => c.name === 'div')
       expect(divNode).toBeDefined()
       expect(divNode!.isHostElement).toBe(true)
@@ -232,7 +232,7 @@ describe('walkInstanceTree', () => {
     const instance = createInstance({
       subTree: createVNode({ shapeFlag: 0 }),
     })
-    const tree = walkInstanceTree(instance)
+    const tree = walkInstanceTree(instance).tree
     expect(instanceRefMap.size).toBeGreaterThan(0)
     expect(instanceRefMap.get(tree[0].id)).toBe(instance)
   })

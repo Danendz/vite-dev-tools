@@ -131,7 +131,7 @@ const label = 'test'
     expect(result!.code).toContain('useAuth')
   })
 
-  it('does not inject composables for only Vue built-in calls', () => {
+  it('injects varLines for Vue built-in calls without custom composables', () => {
     const code = `<template>
   <div>{{ count }}</div>
 </template>
@@ -142,10 +142,14 @@ const doubled = computed(() => count.value * 2)
 </script>`
 
     const result = vueAdapter.transform(code, '/project/src/App.vue', '/project')
-    // May still have usage map from template, but no composable map
-    if (result) {
-      expect(result.code).not.toContain('__DEVTOOLS_COMPOSABLES__')
-    }
+    // varLines should be present even without custom composables
+    expect(result).not.toBeNull()
+    expect(result!.code).toContain('__DEVTOOLS_COMPOSABLES__')
+    expect(result!.code).toContain('"varLines"')
+    expect(result!.code).toContain('"count"')
+    expect(result!.code).toContain('"doubled"')
+    // But no custom composables
+    expect(result!.code).toContain('"composables":[]')
   })
 })
 
