@@ -51,6 +51,8 @@ interface PanelProps {
   onTabChange: (tab: ActiveTab) => void
   onFilterChange: (filters: { errors: boolean; warnings: boolean; logs: boolean }) => void
   onClearConsole: () => void
+  consoleStripLibrary: boolean
+  onConsoleStripLibraryToggle: () => void
   editedProps: Map<string, Set<string>>
   expandedPropsSet: Set<string>
   onPropEdit: (nodeId: string, propKey: string) => void
@@ -127,6 +129,8 @@ export function Panel({
   onTabChange,
   onFilterChange,
   onClearConsole,
+  consoleStripLibrary,
+  onConsoleStripLibraryToggle,
   editedProps,
   expandedPropsSet,
   mcpEnabled,
@@ -411,6 +415,8 @@ export function Panel({
               onRenderCauseToggle={onRenderCauseToggle}
               onRenderHistorySizeChange={onRenderHistorySizeChange}
               onRenderIncludeValuesToggle={onRenderIncludeValuesToggle}
+              consoleStripLibrary={consoleStripLibrary}
+              onConsoleStripLibraryToggle={onConsoleStripLibraryToggle}
               onClose={onSettingsToggle}
             />
           )}
@@ -488,6 +494,7 @@ export function Panel({
             filters={consoleFilters}
             onFilterChange={onFilterChange}
             onClear={onClearConsole}
+            stripLibrary={consoleStripLibrary}
           />
         ) : (
           <RendersPane

@@ -4,11 +4,19 @@ import type { ConsoleEntry } from '../types'
 import { formatEntryForCopy, formatAllEntriesForCopy } from '../console-format'
 import { Tooltip } from './Tooltip'
 
+function stripLibraryLines(stack: string): string {
+  return stack
+    .split('\n')
+    .filter((line) => !line.includes('.vite/deps/') && !line.includes('node_modules/'))
+    .join('\n')
+}
+
 interface ConsolePaneProps {
   entries: ConsoleEntry[]
   filters: { errors: boolean; warnings: boolean; logs: boolean }
   onFilterChange: (filters: { errors: boolean; warnings: boolean; logs: boolean }) => void
   onClear: () => void
+  stripLibrary: boolean
 }
 
 function formatTimestamp(ms: number): string {
@@ -20,7 +28,7 @@ function copyToClipboard(text: string) {
   navigator.clipboard.writeText(text)
 }
 
-export function ConsolePane({ entries, filters, onFilterChange, onClear }: ConsolePaneProps) {
+export function ConsolePane({ entries, filters, onFilterChange, onClear, stripLibrary }: ConsolePaneProps) {
   const entriesRef = useRef<HTMLDivElement>(null)
 
   const filteredEntries = useMemo(() => {
@@ -97,7 +105,11 @@ export function ConsolePane({ entries, filters, onFilterChange, onClear }: Conso
               <span class="console-entry-time">{formatTimestamp(entry.timestamp)}</span>
               <div class="console-entry-content">
                 <div class="console-entry-message">{entry.message}</div>
-                {entry.stack && <div class="console-entry-stack">{entry.stack}</div>}
+                {entry.stack && (
+                  <div class="console-entry-stack">
+                    {stripLibrary ? stripLibraryLines(entry.stack) : entry.stack}
+                  </div>
+                )}
               </div>
               <Tooltip text="Copy for AI">
               <button

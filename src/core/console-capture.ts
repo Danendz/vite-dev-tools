@@ -38,11 +38,6 @@ function formatArgs(args: unknown[]): string {
 function cleanStack(stack: string): string {
   return stack
     .split('\n')
-    .filter((line) => {
-      if (line.includes('.vite/deps/')) return false
-      if (line.includes('node_modules/')) return false
-      return true
-    })
     .map((line) => line.replace(/https?:\/\/[^/]+/g, '').replace(/\?[^:)]*:/g, ':'))
     .join('\n')
 }

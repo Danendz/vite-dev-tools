@@ -59,25 +59,30 @@ describe('startCapture', () => {
     expect(entries[0].message).toBe('{"key":"value"}')
   })
 
-  it('cleans stack traces by removing node_modules and .vite/deps lines', () => {
+  it('cleans stack traces by stripping origin URLs but preserving library lines', () => {
     const entries: ConsoleEntry[] = []
     cleanup = startCapture((e) => entries.push(e))
     const err = new Error('test')
-    err.stack = 'Error: test\n  at foo (app.ts:1:1)\n  at bar (node_modules/lib.js:1:1)\n  at baz (.vite/deps/chunk.js:1:1)'
+    err.stack = 'Error: test\n  at foo (https://localhost:5173/app.ts:1:1)\n  at bar (node_modules/lib.js:1:1)\n  at baz (.vite/deps/chunk.js:1:1)'
     console.error(err)
     expect(entries[0].stack).toContain('at foo')
-    expect(entries[0].stack).not.toContain('node_modules')
-    expect(entries[0].stack).not.toContain('.vite/deps')
+    // Library lines are preserved (filtering is done at display time)
+    expect(entries[0].stack).toContain('node_modules')
+    expect(entries[0].stack).toContain('.vite/deps')
+    // Origin URLs are stripped
+    expect(entries[0].stack).not.toContain('https://localhost:5173')
   })
 
   it('restores console methods on cleanup', () => {
     const origError = console.error
     const origWarn = console.warn
+    const origLog = console.log
     cleanup = startCapture(() => {})
     expect(console.error).not.toBe(origError)
     cleanup()
     expect(console.error).toBe(origError)
     expect(console.warn).toBe(origWarn)
+    expect(console.log).toBe(origLog)
     cleanup = null
   })
 

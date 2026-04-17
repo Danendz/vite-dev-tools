@@ -97,6 +97,9 @@ export function App({ config, popupManager }: AppProps) {
     warnings: true,
     logs: true,
   })
+  const [consoleStripLibrary, setConsoleStripLibrary] = useState(() => {
+    return localStorage.getItem(STORAGE_KEYS.CONSOLE_STRIP_LIBRARY) === 'true'
+  })
   const [hideLibrary, setHideLibrary] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.HIDE_LIBRARY) !== 'false'
   })
@@ -588,6 +591,14 @@ export function App({ config, popupManager }: AppProps) {
     setConsoleFilters(filters)
   }, [])
 
+  const handleConsoleStripLibraryToggle = useCallback(() => {
+    setConsoleStripLibrary((prev) => {
+      const next = !prev
+      localStorage.setItem(STORAGE_KEYS.CONSOLE_STRIP_LIBRARY, String(next))
+      return next
+    })
+  }, [])
+
   const handlePropEdit = useCallback((nodeId: string, propKey: string) => {
     setEditedProps((prev) => {
       const next = new Map(prev)
@@ -882,6 +893,8 @@ export function App({ config, popupManager }: AppProps) {
       onTabChange={handleTabChange}
       onFilterChange={handleFilterChange}
       onClearConsole={handleClearConsole}
+      consoleStripLibrary={consoleStripLibrary}
+      onConsoleStripLibraryToggle={handleConsoleStripLibraryToggle}
       editedProps={editedProps}
       expandedPropsSet={expandedPropsSet}
       mcpEnabled={config.mcp ?? false}
