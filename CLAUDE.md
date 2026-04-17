@@ -54,3 +54,4 @@ Located at `~/Projects/test-devtools`. Uses the plugin via `pnpm link:../vite-de
 - Adapter-specific server endpoints: use `adapter.configureServer()`.
 - Modifying walkers (`fiber-walker.ts`, `instance-walker.ts`) or runtimes (`client-runtime.ts`) can break tree updates — verify the overlay still receives data.
 - **Always run `pnpm build` after changes.** The test app uses the built output, not source files. Without rebuilding, changes won't be visible. Run `pnpm typecheck` as well, then reload the test app.
+- **Do not commit after every change.** Only commit when the user explicitly asks to commit or when a logical feature is fully complete and verified.
