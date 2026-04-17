@@ -1,7 +1,9 @@
 import { h } from 'preact'
+import { createPortal } from 'preact/compat'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'preact/hooks'
 import type { NormalizedNode, DevToolsConfig, TreeUpdateEvent, DockPosition, ActiveTab, ConsoleEntry, ToastItem, ActionSource, HighlightEntry, CommitRecord } from '../types'
 import { FloatingIcon } from './FloatingIcon'
+import { DetachedButton } from './DetachedButton'
 import { Panel } from './Panel'
 import { Highlight } from './Highlight'
 import { ContextMenu } from './ContextMenu'
@@ -10,6 +12,8 @@ import { startCapture } from '../console-capture'
 import { EVENTS, STORAGE_KEYS } from '../../shared/constants'
 import { devtoolsState } from './state-store'
 import { openInEditor } from '../communication'
+import type { PopupManager } from './popup-manager'
+import { initPopupSideChannel } from './popup-manager'
 
 function findNodeById(nodes: NormalizedNode[], id: string): NormalizedNode | null {
   for (const node of nodes) {
@@ -65,9 +69,10 @@ function computeUnionRect(elements: HTMLElement[]): DOMRect | null {
 
 interface AppProps {
   config: DevToolsConfig
+  popupManager?: PopupManager
 }
 
-export function App({ config }: AppProps) {
+export function App({ config, popupManager }: AppProps) {
   const [isOpen, setIsOpen] = useState(() => {
     const stored = localStorage.getItem(STORAGE_KEYS.PANEL_OPEN)
     if (stored !== null) return stored === 'true'
@@ -154,6 +159,9 @@ export function App({ config }: AppProps) {
   const renderHistoryRecordingRef = useRef(renderHistoryRecording)
   useEffect(() => { renderHistorySizeRef.current = renderHistorySize }, [renderHistorySize])
   useEffect(() => { renderHistoryRecordingRef.current = renderHistoryRecording }, [renderHistoryRecording])
+
+  const [isDetached, setIsDetached] = useState(false)
+  const [popupMountPoint, setPopupMountPoint] = useState<HTMLElement | null>(null)
 
   // Listen for tree updates from the framework runtime
   useEffect(() => {
@@ -282,7 +290,7 @@ export function App({ config }: AppProps) {
       html.style.overflow = ''
     }
 
-    if (!isOpen) {
+    if (!isOpen || isDetached) {
       cleanup()
       return
     }
@@ -303,7 +311,55 @@ export function App({ config }: AppProps) {
     }
 
     return cleanup
-  }, [isOpen, dockPosition, panelSize])
+  }, [isOpen, isDetached, dockPosition, panelSize])
+
+  // Wire popup-manager lifecycle callbacks
+  useEffect(() => {
+    if (!popupManager) return
+
+    popupManager.onDetach((win) => {
+      // Create a mount point in the popup's body
+      const mount = win.document.createElement('div')
+      mount.className = 'devtools-root'
+      mount.style.width = '100%'
+      mount.style.height = '100vh'
+      win.document.body.appendChild(mount)
+      setPopupMountPoint(mount)
+      setIsDetached(true)
+      setIsOpen(false)
+
+      // Set up reconnection handling in the popup
+      initPopupSideChannel(
+        win.document,
+        (title) => {
+          win.document.title = `Vite DevTools — ${title}`
+        },
+        () => {
+          win.close()
+        },
+      )
+    })
+
+    popupManager.onDock(() => {
+      setPopupMountPoint(null)
+      setIsDetached(false)
+      setIsOpen(true)
+    })
+
+    popupManager.onReconnect(() => {
+      setPopupMountPoint(null)
+      setIsDetached(true)
+    })
+
+    const handleBeforeUnload = () => popupManager.notifyPageClosing()
+    window.addEventListener('beforeunload', handleBeforeUnload)
+
+    popupManager.attemptReconnect()
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [popupManager])
 
   const errorCount = useMemo(
     () => consoleEntries.filter((e) => e.type === 'error').length,
@@ -754,6 +810,18 @@ export function App({ config }: AppProps) {
     setActiveTab('renders')
   }, [])
 
+  const handleDetach = useCallback(() => {
+    popupManager?.detach()
+  }, [popupManager])
+
+  const handleDockBack = useCallback(() => {
+    popupManager?.dock()
+  }, [popupManager])
+
+  const handleRefocusPopup = useCallback(() => {
+    popupManager?.refocusPopup()
+  }, [popupManager])
+
   // Wire MCP control hooks so agents can toggle recording / clear history
   useEffect(() => {
     devtoolsState.onClearRenderHistory = handleClearRenderHistory
@@ -767,84 +835,97 @@ export function App({ config }: AppProps) {
     }
   }, [handleClearRenderHistory])
 
+  const panelElement = (
+    <Panel
+      tree={filteredTree}
+      selectedNode={selectedNode}
+      dockPosition={dockPosition}
+      panelSize={panelSize}
+      activeTab={activeTab}
+      searchQuery={searchQuery}
+      matchingNodeIds={matchingNodeIds}
+      searchAncestorIds={searchAncestorIds}
+      consoleEntries={consoleEntries}
+      consoleFilters={consoleFilters}
+      errorCount={errorCount}
+      isPickerActive={isPickerActive}
+      expandedNodeIds={expandedNodeIds}
+      elementExpandedNodeIds={elementExpandedNodeIds}
+      showElements={showElements}
+      settingsOpen={settingsOpen}
+      hideLibrary={hideLibrary}
+      hideProviders={hideProviders}
+      editor={editor}
+      fontSize={fontSize}
+      supportedSettings={config.supportedSettings}
+      onSearchChange={handleSearchChange}
+      onPickerToggle={handlePickerToggle}
+      onSettingsToggle={handleSettingsToggle}
+      onHideLibraryToggle={handleHideLibraryToggle}
+      onHideProvidersToggle={handleHideProvidersToggle}
+      onShowElementsToggle={handleShowElementsToggle}
+      showPreview={showPreview}
+      onShowPreviewToggle={handleShowPreviewToggle}
+      onEditorChange={handleEditorChange}
+      onFontSizeChange={handleFontSizeChange}
+      onDockChange={handleDockChange}
+      onResize={handleResize}
+      onTabChange={handleTabChange}
+      onFilterChange={handleFilterChange}
+      onClearConsole={handleClearConsole}
+      editedProps={editedProps}
+      expandedPropsSet={expandedPropsSet}
+      mcpEnabled={config.mcp ?? false}
+      mcpPaused={mcpPaused}
+      aiHighlightActive={highlights.has('ai')}
+      aiSelectedNodeIds={aiSelectedNodeIds}
+      showAiActions={showAiActions}
+      onClearAiHighlight={handleClearAiHighlight}
+      onMcpPausedToggle={handleMcpPausedToggle}
+      onShowAiActionsToggle={handleShowAiActionsToggle}
+      onPropEdit={handlePropEdit}
+      onPropPersisted={handlePropPersisted}
+      onExpandProps={handleExpandProps}
+      onSelect={handleSelect}
+      onHover={handleHover}
+      onContextMenu={handleContextMenu}
+      onClose={isDetached ? handleDockBack : togglePanel}
+      mode={isDetached ? 'popup' : 'docked'}
+      onDetach={popupManager ? handleDetach : undefined}
+      onDockBack={handleDockBack}
+      renderCauseEnabled={renderCauseEnabled}
+      renderHistorySize={renderHistorySize}
+      renderIncludeValues={renderIncludeValues}
+      renderHistory={renderHistory}
+      renderHistoryRecording={renderHistoryRecording}
+      pinnedRenderComponentId={pinnedRenderComponentId}
+      commitComponentIds={commitComponentIds}
+      onRenderCauseToggle={handleRenderCauseToggle}
+      onRenderHistorySizeChange={handleRenderHistorySizeChange}
+      onRenderIncludeValuesToggle={handleRenderIncludeValuesToggle}
+      onRenderHistoryRecordingToggle={handleRenderHistoryRecordingToggle}
+      onClearRenderHistory={handleClearRenderHistory}
+      onPinRenderComponent={handlePinRenderComponent}
+      onNavigateToCommit={handleNavigateToCommit}
+      focusCommitIndex={focusCommitIndex}
+      onFocusCommitConsumed={() => setFocusCommitIndex(null)}
+    />
+  )
+
   return (
     <div>
       <Highlight highlights={Array.from(highlights.values())} showAiActions={showAiActions} />
 
-      {!isOpen && <FloatingIcon onClick={togglePanel} />}
-
-      {isOpen && (
-        <Panel
-          tree={filteredTree}
-          selectedNode={selectedNode}
-          dockPosition={dockPosition}
-          panelSize={panelSize}
-          activeTab={activeTab}
-          searchQuery={searchQuery}
-          matchingNodeIds={matchingNodeIds}
-          searchAncestorIds={searchAncestorIds}
-          consoleEntries={consoleEntries}
-          consoleFilters={consoleFilters}
-          errorCount={errorCount}
-          isPickerActive={isPickerActive}
-          expandedNodeIds={expandedNodeIds}
-          elementExpandedNodeIds={elementExpandedNodeIds}
-          showElements={showElements}
-          settingsOpen={settingsOpen}
-          hideLibrary={hideLibrary}
-          hideProviders={hideProviders}
-          editor={editor}
-          fontSize={fontSize}
-          supportedSettings={config.supportedSettings}
-          onSearchChange={handleSearchChange}
-          onPickerToggle={handlePickerToggle}
-          onSettingsToggle={handleSettingsToggle}
-          onHideLibraryToggle={handleHideLibraryToggle}
-          onHideProvidersToggle={handleHideProvidersToggle}
-          onShowElementsToggle={handleShowElementsToggle}
-          showPreview={showPreview}
-          onShowPreviewToggle={handleShowPreviewToggle}
-          onEditorChange={handleEditorChange}
-          onFontSizeChange={handleFontSizeChange}
-          onDockChange={handleDockChange}
-          onResize={handleResize}
-          onTabChange={handleTabChange}
-          onFilterChange={handleFilterChange}
-          onClearConsole={handleClearConsole}
-          editedProps={editedProps}
-          expandedPropsSet={expandedPropsSet}
-          mcpEnabled={config.mcp ?? false}
-          mcpPaused={mcpPaused}
-          aiHighlightActive={highlights.has('ai')}
-          aiSelectedNodeIds={aiSelectedNodeIds}
-          showAiActions={showAiActions}
-          onClearAiHighlight={handleClearAiHighlight}
-          onMcpPausedToggle={handleMcpPausedToggle}
-          onShowAiActionsToggle={handleShowAiActionsToggle}
-          onPropEdit={handlePropEdit}
-          onPropPersisted={handlePropPersisted}
-          onExpandProps={handleExpandProps}
-          onSelect={handleSelect}
-          onHover={handleHover}
-          onContextMenu={handleContextMenu}
-          onClose={togglePanel}
-          renderCauseEnabled={renderCauseEnabled}
-          renderHistorySize={renderHistorySize}
-          renderIncludeValues={renderIncludeValues}
-          renderHistory={renderHistory}
-          renderHistoryRecording={renderHistoryRecording}
-          pinnedRenderComponentId={pinnedRenderComponentId}
-          commitComponentIds={commitComponentIds}
-          onRenderCauseToggle={handleRenderCauseToggle}
-          onRenderHistorySizeChange={handleRenderHistorySizeChange}
-          onRenderIncludeValuesToggle={handleRenderIncludeValuesToggle}
-          onRenderHistoryRecordingToggle={handleRenderHistoryRecordingToggle}
-          onClearRenderHistory={handleClearRenderHistory}
-          onPinRenderComponent={handlePinRenderComponent}
-          onNavigateToCommit={handleNavigateToCommit}
-          focusCommitIndex={focusCommitIndex}
-          onFocusCommitConsumed={() => setFocusCommitIndex(null)}
-        />
+      {isDetached ? (
+        <>
+          <DetachedButton onRefocus={handleRefocusPopup} />
+          {popupMountPoint && createPortal(panelElement, popupMountPoint)}
+        </>
+      ) : (
+        <>
+          {!isOpen && <FloatingIcon onClick={togglePanel} />}
+          {isOpen && panelElement}
+        </>
       )}
 
       {contextMenu && contextMenu.node.source && (

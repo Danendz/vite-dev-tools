@@ -3,6 +3,7 @@ import type { DevToolsConfig } from './types'
 import { App } from './overlay/App'
 import { STYLES } from './overlay/styles'
 import { initBridgeClient } from './mcp/bridge-client'
+import { createPopupManager } from './overlay/popup-manager'
 
 function hexToRgb(hex: string): string {
   const h = hex.replace('#', '')
@@ -36,7 +37,12 @@ export function mountOverlay(config: DevToolsConfig, container?: HTMLElement) {
   mountPoint.className = 'devtools-root'
   shadow.appendChild(mountPoint)
 
-  render(h(App, { config }), mountPoint)
+  const popupManager = createPopupManager({
+    accent: accent,
+    accentRgb: hexToRgb(accent),
+  })
+
+  render(h(App, { config, popupManager }), mountPoint)
 
   // Initialize MCP bridge if enabled
   if (config.mcp) {
