@@ -57,6 +57,22 @@ export const STYLES = /* css */ `
     fill: var(--accent);
   }
 
+  /* ── Detached floating button (popup mode) ── */
+
+  .detached-icon {
+    position: relative;
+  }
+
+  .detached-badge {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    width: 12px;
+    height: 12px;
+    color: var(--accent);
+    pointer-events: none;
+  }
+
   /* ── Docked panel ── */
 
   .panel-wrapper {
