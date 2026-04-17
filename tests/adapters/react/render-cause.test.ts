@@ -6,12 +6,17 @@ import { getPersistentId } from '@/adapters/react/persistent-id'
 
 interface FakeHook {
   memoizedState: unknown
+  queue?: unknown
   next: FakeHook | null
 }
 
-function makeHooks(values: unknown[]): FakeHook | null {
+function makeHooks(values: unknown[], opts?: { queue?: boolean }): FakeHook | null {
   if (values.length === 0) return null
-  const nodes: FakeHook[] = values.map((v) => ({ memoizedState: v, next: null }))
+  const nodes: FakeHook[] = values.map((v) => ({
+    memoizedState: v,
+    next: null,
+    ...(opts?.queue ? { queue: { dispatch: () => {} } } : {}),
+  }))
   for (let i = 0; i < nodes.length - 1; i++) nodes[i].next = nodes[i + 1]
   return nodes[0]
 }
@@ -38,6 +43,7 @@ function fiber(opts: {
   memoizedProps?: any
   alternate?: any
   hooks?: unknown[]
+  hooksQueue?: boolean
   contexts?: Array<{ name?: string; value: unknown }>
   flags?: number
   tag?: number
@@ -46,7 +52,7 @@ function fiber(opts: {
     tag: opts.tag ?? 0, // FunctionComponent
     type: opts.type ?? function Named() {},
     memoizedProps: opts.memoizedProps ?? {},
-    memoizedState: opts.hooks ? makeHooks(opts.hooks) : null,
+    memoizedState: opts.hooks ? makeHooks(opts.hooks, { queue: opts.hooksQueue }) : null,
     dependencies: opts.contexts ? { firstContext: makeContextDeps(opts.contexts) } : null,
     alternate: opts.alternate ?? null,
     flags: opts.flags ?? PERFORMED_WORK_FLAG,
@@ -86,14 +92,22 @@ describe('computeRenderCause', () => {
   it('detects useState change and attaches varName from __devtools_hooks', () => {
     const type = function User() {}
     ;(type as any).__devtools_hooks = [['count', 10]]
-    const prev = fiber({ type, hooks: [0] })
-    const next = fiber({ type, hooks: [1], alternate: prev })
+    const prev = fiber({ type, hooks: [0], hooksQueue: true })
+    const next = fiber({ type, hooks: [1], hooksQueue: true, alternate: prev })
     const cause = computeRenderCause(next, 1)
     expect(cause.primary).toBe('state')
-    expect(cause.changedHooks).toEqual([{ index: 0, hookName: 'hook', varName: 'count' }])
+    expect(cause.changedHooks).toEqual([{ index: 0, hookName: 'useState', varName: 'count' }])
   })
 
-  it('falls back to index-only label when varName metadata is missing', () => {
+  it('infers hook type from hook structure (useState via queue)', () => {
+    const prev = fiber({ hooks: [0], hooksQueue: true })
+    const next = fiber({ hooks: [1], hooksQueue: true, alternate: prev })
+    const cause = computeRenderCause(next, 1)
+    expect(cause.primary).toBe('state')
+    expect(cause.changedHooks).toEqual([{ index: 0, hookName: 'useState' }])
+  })
+
+  it('falls back to generic hookName when hook type cannot be inferred', () => {
     const prev = fiber({ hooks: [0] })
     const next = fiber({ hooks: [1], alternate: prev })
     const cause = computeRenderCause(next, 1)
@@ -234,5 +248,44 @@ describe('computeRenderCause', () => {
     expect(cause.contributors).toEqual(
       expect.arrayContaining(['state', 'context', 'props']),
     )
+  })
+
+  it('populates lastRenderedCommit on bailout from a previous non-bailout commit', () => {
+    const props = { a: 1 }
+    const f = fiber({ memoizedProps: props })
+    // Commit 5: mount
+    const mountCause = computeRenderCause(f, 5)
+    expect(mountCause.primary).toBe('mount')
+
+    getPersistentId(f)
+
+    // Commit 6: same props/state → bailout, should reference commit 5
+    const bailoutCause = computeRenderCause(f, 6)
+    expect(bailoutCause.primary).toBe('bailout')
+    expect(bailoutCause.lastRenderedCommit).toBe(5)
+  })
+
+  it('sets isMemo for MemoComponent (tag 14) on parent cascade', () => {
+    const prev = fiber({ tag: 14 })
+    const next = fiber({ tag: 14, alternate: prev })
+    const cause = computeRenderCause(next, 1)
+    expect(cause.primary).toBe('parent')
+    expect(cause.isMemo).toBe(true)
+  })
+
+  it('sets isMemo for SimpleMemoComponent (tag 15) on parent cascade', () => {
+    const prev = fiber({ tag: 15 })
+    const next = fiber({ tag: 15, alternate: prev })
+    const cause = computeRenderCause(next, 1)
+    expect(cause.primary).toBe('parent')
+    expect(cause.isMemo).toBe(true)
+  })
+
+  it('does not set isMemo for regular FunctionComponent', () => {
+    const prev = fiber({ tag: 0 })
+    const next = fiber({ tag: 0, alternate: prev })
+    const cause = computeRenderCause(next, 1)
+    expect(cause.primary).toBe('parent')
+    expect(cause.isMemo).toBeUndefined()
   })
 })

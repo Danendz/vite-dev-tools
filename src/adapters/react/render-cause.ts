@@ -1,4 +1,5 @@
 import type { ChangedHook, RenderCause, RenderCauseKind } from '../../core/types'
+import { inferHookType } from './fiber-walker'
 import { isKnownFiber } from './persistent-id'
 
 /**
@@ -31,6 +32,12 @@ const COMPONENT_TAGS = new Set([
 const fiberSnapshot = new WeakMap<object, { props: any; state: any }>()
 
 /**
+ * Tracks the last commit index where each fiber actually rendered (non-bailout).
+ * Used to populate `lastRenderedCommit` on bailout causes.
+ */
+const lastRenderedCommitMap = new WeakMap<object, number>()
+
+/**
  * Given a current-commit fiber, decide WHY it re-rendered.
  * Assumes the fiber is a component fiber (not host). Callers should filter.
  */
@@ -44,7 +51,8 @@ export function computeRenderCause(fiber: any, commitIndex: number): RenderCause
   // React never cloned it this commit. This catches cases where the alternate
   // has stale data from a prior commit that would cause false diffs.
   if (prevSnap && fiber.memoizedProps === prevSnap.props && fiber.memoizedState === prevSnap.state) {
-    return { primary: 'bailout', contributors: ['bailout'], commitIndex }
+    const lastRendered = lastRenderedCommitMap.get(fiber)
+    return { primary: 'bailout', contributors: ['bailout'], commitIndex, lastRenderedCommit: lastRendered }
   }
 
   // Mount — but only if we haven't seen this fiber before.
@@ -52,10 +60,10 @@ export function computeRenderCause(fiber: any, commitIndex: number): RenderCause
   // so alternate === null does NOT always mean "first mount".
   if (!fiber.alternate) {
     if (isKnownFiber(fiber)) {
-      // Known fiber, no alternate, props/state changed since last walk →
-      // React 19 detached the alternate. Can't diff, label as parent cascade.
+      lastRenderedCommitMap.set(fiber, commitIndex)
       return { primary: 'parent', contributors: ['parent'], commitIndex }
     }
+    lastRenderedCommitMap.set(fiber, commitIndex)
     return { primary: 'mount', contributors: ['mount'], commitIndex }
   }
 
@@ -80,18 +88,25 @@ export function computeRenderCause(fiber: any, commitIndex: number): RenderCause
   const stateIdentical = fiber.memoizedState === alternate.memoizedState
 
   if (contributors.length === 0 && (!performedWork || (propsIdentical && stateIdentical))) {
-    return { primary: 'bailout', contributors: ['bailout'], commitIndex }
+    const lastRendered = lastRenderedCommitMap.get(fiber) ?? lastRenderedCommitMap.get(alternate)
+    return { primary: 'bailout', contributors: ['bailout'], commitIndex, lastRenderedCommit: lastRendered }
   }
+
+  const isMemo = fiber.tag === MemoComponent || fiber.tag === SimpleMemoComponent
 
   if (contributors.length === 0) {
     // Re-rendered but no local cause ⇒ parent cascade
-    return { primary: 'parent', contributors: ['parent'], commitIndex }
+    lastRenderedCommitMap.set(fiber, commitIndex)
+    if (fiber.alternate) lastRenderedCommitMap.set(fiber.alternate, commitIndex)
+    return { primary: 'parent', contributors: ['parent'], commitIndex, isMemo: isMemo || undefined }
   }
 
   // Precedence: state > context > props
   const primary: RenderCauseKind = contributors[0]
 
-  const cause: RenderCause = { primary, contributors, commitIndex }
+  lastRenderedCommitMap.set(fiber, commitIndex)
+  if (fiber.alternate) lastRenderedCommitMap.set(fiber.alternate, commitIndex)
+  const cause: RenderCause = { primary, contributors, commitIndex, isMemo: isMemo || undefined }
   if (changedProps.length > 0) cause.changedProps = changedProps
   if (changedHooks.length > 0) cause.changedHooks = changedHooks
   if (changedContexts.length > 0) cause.changedContexts = changedContexts
@@ -121,7 +136,8 @@ export function diffHooks(prevHead: any, nextHead: any, fiberType: any): Changed
   const hookMeta: unknown[] | undefined = fiberType?.__devtools_hooks
   while (a && b) {
     if (a.memoizedState !== b.memoizedState) {
-      const entry: ChangedHook = { index, hookName: 'hook' }
+      const inferred = inferHookType(b)
+      const entry: ChangedHook = { index, hookName: inferred.name }
       const meta = hookMeta?.[index]
       if (Array.isArray(meta)) {
         if (typeof meta[0] === 'string') entry.varName = meta[0]

@@ -944,7 +944,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
                 <span class="detail-why-row-label">State changed:</span>
                 <span class="detail-why-row-keys">
                   {node.renderCause.changedHooks
-                    .map((h) => h.varName ?? `${h.hookName} #${h.index}`)
+                    .map((h) => h.varName ? `${h.varName} (${h.hookName})` : `${h.hookName} #${h.index}`)
                     .join(', ')}
                 </span>
               </div>
@@ -957,8 +957,10 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
             )}
             {node.renderCause.primary === 'parent' && (
               <div class="detail-why-hint">
-                No local changes detected — this component re-rendered because its parent did.
-                Consider wrapping it in <code>React.memo</code>.
+                {node.renderCause.isMemo
+                  ? <>Already wrapped in <code>React.memo</code>, but received new prop references. Check if the parent passes inline objects or functions.</>
+                  : <>No local changes detected — this component re-rendered because its parent did. Consider wrapping it in <code>React.memo</code>.</>
+                }
               </div>
             )}
             {node.renderCause.primary === 'bailout' && node.renderCause.lastRenderedCommit != null && (

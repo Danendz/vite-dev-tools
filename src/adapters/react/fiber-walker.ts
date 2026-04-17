@@ -184,7 +184,7 @@ function isFromNodeModules(fiber: any): boolean {
 /**
  * Infer hook type and extract meaningful display value from React's internal hook structure.
  */
-function inferHookType(hook: any): { name: string; value: unknown } {
+export function inferHookType(hook: any): { name: string; value: unknown } {
   const { memoizedState, queue } = hook
 
   // useState / useReducer: has an update queue
@@ -552,6 +552,30 @@ function attachRenderCause(
     }
     entry.previousValues = previousValues
     entry.nextValues = nextValues
+  }
+
+  if (opts.includeValues && cause.changedHooks && cause.changedHooks.length > 0) {
+    const changedIndices = new Set(cause.changedHooks.map((h) => h.index))
+    const previousHookValues: Record<string, string> = {}
+    const nextHookValues: Record<string, string> = {}
+    let prevHook = fiber.alternate?.memoizedState
+    let nextHook = fiber.memoizedState
+    let idx = 0
+    while (prevHook && nextHook) {
+      if (changedIndices.has(idx)) {
+        const hookEntry: import('../../core/types').ChangedHook = cause.changedHooks.find((ch) => ch.index === idx)!
+        const key = hookEntry.varName ? `${hookEntry.varName} (${hookEntry.hookName})` : `${hookEntry.hookName} #${idx}`
+        const prevInferred = inferHookType(prevHook)
+        const nextInferred = inferHookType(nextHook)
+        previousHookValues[key] = safeStringify(prevInferred.value)
+        nextHookValues[key] = safeStringify(nextInferred.value)
+      }
+      prevHook = prevHook.next
+      nextHook = nextHook.next
+      idx++
+    }
+    entry.previousHookValues = previousHookValues
+    entry.nextHookValues = nextHookValues
   }
 
   opts.entries.push(entry)

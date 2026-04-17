@@ -92,6 +92,26 @@ describe('render-history-handlers', () => {
       const result = await getRenderCausesHandler({ componentName: 'Nope' }) as { commits: CommitRecord[] }
       expect(result.commits).toEqual([])
     })
+
+    it('matches by case-insensitive substring when fuzzy is true', async () => {
+      devtoolsState.renderHistory = [
+        makeCommit(0, [{ name: 'TodoList' }]),
+        makeCommit(1, [{ name: 'TodoItem' }]),
+        makeCommit(2, [{ name: 'Header' }]),
+      ]
+      const result = await getRenderCausesHandler({ componentName: 'todo', fuzzy: true }) as { commits: CommitRecord[] }
+      expect(result.commits).toHaveLength(2)
+      expect(result.commits.map((c) => c.components[0].name)).toEqual(['TodoList', 'TodoItem'])
+    })
+
+    it('uses exact match when fuzzy is not set', async () => {
+      devtoolsState.renderHistory = [
+        makeCommit(0, [{ name: 'TodoList' }]),
+        makeCommit(1, [{ name: 'TodoItem' }]),
+      ]
+      const result = await getRenderCausesHandler({ componentName: 'todo' }) as { commits: CommitRecord[] }
+      expect(result.commits).toHaveLength(0)
+    })
   })
 
   describe('getHotComponents', () => {
@@ -158,6 +178,16 @@ describe('render-history-handlers', () => {
       const stripped = stripValues(makeCommit(0, [{}]))
       expect(stripped.components[0].previousValues).toBeUndefined()
       expect(stripped.components[0].nextValues).toBeUndefined()
+    })
+
+    it('also removes previousHookValues and nextHookValues', () => {
+      const commit = makeCommit(0, [{
+        previousHookValues: { 'count (useState)': '0' },
+        nextHookValues: { 'count (useState)': '1' },
+      }])
+      const stripped = stripValues(commit)
+      expect((stripped.components[0] as any).previousHookValues).toBeUndefined()
+      expect((stripped.components[0] as any).nextHookValues).toBeUndefined()
     })
   })
 })

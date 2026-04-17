@@ -360,4 +360,32 @@ describe('walkFiberTreeWithCauses', () => {
     expect(entry?.previousValues?.count).toBe('1')
     expect(entry?.nextValues?.count).toBe('2')
   })
+
+  it('collects previousHookValues/nextHookValues for state changes when includeValues is true', () => {
+    const prevHook = { memoizedState: 0, queue: { dispatch: () => {} }, next: null }
+    const nextHook = { memoizedState: 5, queue: { dispatch: () => {} }, next: null }
+    const type = { name: 'Counter', __devtools_source: { fileName: '/src/C.tsx', lineNumber: 1, columnNumber: 0 }, __devtools_hooks: [['count', 1]] }
+    const prev = {
+      tag: FunctionComponent,
+      type,
+      memoizedProps: {},
+      memoizedState: prevHook,
+      dependencies: null,
+      flags: 1,
+    }
+    const fiber = createFakeFiber({
+      tag: FunctionComponent,
+      type,
+      memoizedProps: {},
+      memoizedState: nextHook,
+      alternate: prev,
+      flags: 1,
+    })
+    const result = walkFiberTreeWithCauses(wrapInRoot(fiber), {
+      renderCause: { commitIndex: 0, includeValues: true },
+    })
+    const entry = result.commit?.components[0]
+    expect(entry?.previousHookValues?.['count (useState)']).toBe('0')
+    expect(entry?.nextHookValues?.['count (useState)']).toBe('5')
+  })
 })

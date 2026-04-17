@@ -200,7 +200,7 @@ export function RendersPane({
                           )}
                           {entry.changedHooks && entry.changedHooks.length > 0 && (
                             <span class="renders-entry-keys">
-                              state: {entry.changedHooks.map((h) => h.varName ?? `#${h.index}`).join(', ')}
+                              state: {entry.changedHooks.map((h) => h.varName ? `${h.varName} (${h.hookName})` : `${h.hookName} #${h.index}`).join(', ')}
                             </span>
                           )}
                           {entry.changedContexts && entry.changedContexts.length > 0 && (
@@ -215,20 +215,28 @@ export function RendersPane({
                           >
                             📌
                           </button>
-                          {entry.previousValues && (
+                          {(entry.previousValues || entry.previousHookValues) && (
                             <button class="renders-entry-expand" onClick={() => toggleExpand(key)}>
                               {expanded ? '▼' : '▶'}
                             </button>
                           )}
                         </div>
-                        {expanded && entry.previousValues && entry.nextValues && (
+                        {expanded && (entry.previousValues || entry.previousHookValues) && (
                           <div class="renders-entry-diff">
-                            {Object.keys(entry.previousValues).map((k) => (
+                            {entry.previousValues && entry.nextValues && Object.keys(entry.previousValues).map((k) => (
                               <div key={k} class="renders-entry-diff-row">
                                 <span class="renders-entry-diff-key">{k}</span>
                                 <span class="renders-entry-diff-prev">{entry.previousValues![k]}</span>
                                 <span class="renders-entry-diff-arrow">→</span>
                                 <span class="renders-entry-diff-next">{entry.nextValues![k]}</span>
+                              </div>
+                            ))}
+                            {entry.previousHookValues && entry.nextHookValues && Object.keys(entry.previousHookValues).map((k) => (
+                              <div key={k} class="renders-entry-diff-row">
+                                <span class="renders-entry-diff-key">{k}</span>
+                                <span class="renders-entry-diff-prev">{entry.previousHookValues![k]}</span>
+                                <span class="renders-entry-diff-arrow">→</span>
+                                <span class="renders-entry-diff-next">{entry.nextHookValues![k]}</span>
                               </div>
                             ))}
                           </div>

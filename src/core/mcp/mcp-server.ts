@@ -221,13 +221,14 @@ export function createMcpTools(bridge: BridgeServer): McpServer {
   mcp.registerTool('getRenderCauses', {
     description: 'Get the render history filtered to a single component by name. Use this to investigate "why does <Foo> keep re-rendering?".',
     inputSchema: z.object({
-      componentName: z.string().describe('The component name to filter by (exact match).'),
+      componentName: z.string().describe('The component name to filter by. Exact match by default; set fuzzy=true for case-insensitive substring matching.'),
+      fuzzy: z.boolean().optional().describe('When true, match component names by case-insensitive substring instead of exact match.'),
       limit: z.number().optional().describe('Return only the last N matching commits.'),
       includeValues: z.boolean().optional().describe('Include previousValues/nextValues. Default true.'),
       tab: z.string().optional().describe('Target tab ID. Auto-selects if omitted.'),
     }),
-  }, async ({ componentName, limit, includeValues, tab }) => {
-    const result = await bridge.request('getRenderCauses', { componentName, limit, includeValues }, tab)
+  }, async ({ componentName, fuzzy, limit, includeValues, tab }) => {
+    const result = await bridge.request('getRenderCauses', { componentName, fuzzy, limit, includeValues }, tab)
     return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
   })
 

@@ -6,7 +6,7 @@ export function stripValues(commit: CommitRecord): CommitRecord {
   return {
     ...commit,
     components: commit.components.map((c) => {
-      const { previousValues: _p, nextValues: _n, ...rest } = c
+      const { previousValues: _p, nextValues: _n, previousHookValues: _ph, nextHookValues: _nh, ...rest } = c
       return rest
     }),
   }
@@ -29,12 +29,16 @@ export async function getRenderCausesHandler(
   params: Record<string, unknown>,
 ): Promise<{ commits: CommitRecord[] }> {
   const componentName = String(params.componentName ?? '')
+  const fuzzy = params.fuzzy === true
   const limit = typeof params.limit === 'number' ? params.limit : undefined
   const includeValues = params.includeValues !== false
 
+  const needle = fuzzy ? componentName.toLowerCase() : componentName
   let commits: CommitRecord[] = []
   for (const commit of devtoolsState.renderHistory) {
-    const matching = commit.components.filter((c) => c.name === componentName)
+    const matching = commit.components.filter((c) =>
+      fuzzy ? c.name.toLowerCase().includes(needle) : c.name === componentName,
+    )
     if (matching.length > 0) {
       commits.push({ ...commit, components: matching })
     }

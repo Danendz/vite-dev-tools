@@ -11,7 +11,7 @@ function formatCauseTooltip(cause: RenderCause): string {
     case 'props':
       return `props changed: ${cause.changedProps?.join(', ') ?? ''}`
     case 'state':
-      return `state changed: ${cause.changedHooks?.map((h) => h.varName ?? `#${h.index}`).join(', ') ?? ''}`
+      return `state changed: ${cause.changedHooks?.map((h) => h.varName ? `${h.varName} (${h.hookName})` : `${h.hookName} #${h.index}`).join(', ') ?? ''}`
     case 'context':
       return `context changed: ${cause.changedContexts?.join(', ') ?? ''}`
     case 'parent':

@@ -131,6 +131,8 @@ export interface RenderCause {
   commitIndex: number
   /** For bailed-out nodes: the last commit on which this component actually rendered */
   lastRenderedCommit?: number
+  /** True when the component is wrapped in React.memo (MemoComponent or SimpleMemoComponent) */
+  isMemo?: boolean
 }
 
 export interface CommitComponentEntry {
@@ -145,6 +147,8 @@ export interface CommitComponentEntry {
   /** Only populated when includeValues is requested */
   previousValues?: Record<string, string>
   nextValues?: Record<string, string>
+  previousHookValues?: Record<string, string>
+  nextHookValues?: Record<string, string>
 }
 
 export interface CommitRecord {
