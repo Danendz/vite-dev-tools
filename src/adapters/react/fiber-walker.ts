@@ -1,4 +1,14 @@
-import type { NormalizedNode, InspectorSection, InspectorItem } from '../../core/types'
+import type {
+  NormalizedNode,
+  InspectorSection,
+  InspectorItem,
+  CommitRecord,
+  CommitComponentEntry,
+  RenderCause,
+} from '../../core/types'
+import { computeRenderCause, isComponentFiber as isCauseComponentFiber } from './render-cause'
+import { getPersistentId } from './persistent-id'
+import { safeStringify } from '../../shared/preview-value'
 
 // React fiber tag constants
 const FunctionComponent = 0
@@ -174,7 +184,7 @@ function isFromNodeModules(fiber: any): boolean {
 /**
  * Infer hook type and extract meaningful display value from React's internal hook structure.
  */
-function inferHookType(hook: any): { name: string; value: unknown } {
+export function inferHookType(hook: any): { name: string; value: unknown } {
   const { memoizedState, queue } = hook
 
   // useState / useReducer: has an update queue
@@ -214,6 +224,21 @@ function inferHookType(hook: any): { name: string; value: unknown } {
     return { name: 'useMemo', value: memoizedState[0] }
   }
 
+  // Fallback: unknown hook type. The raw memoizedState may contain circular
+  // references (e.g. effect objects with .next linked lists), so we must not
+  // return it directly — it would crash JSON.stringify in the MCP bridge.
+  if (memoizedState !== null && typeof memoizedState === 'object') {
+    // Check for circular-prone structures (effect-like objects with .next)
+    if ('next' in memoizedState) {
+      return { name: 'hook', value: '[internal hook state]' }
+    }
+    try {
+      // Quick serialization check — if it can't be stringified, use a placeholder
+      JSON.stringify(memoizedState)
+    } catch {
+      return { name: 'hook', value: '[complex hook state]' }
+    }
+  }
   return { name: 'hook', value: memoizedState }
 }
 
@@ -482,7 +507,87 @@ function collectImmediateText(fiber: any): { texts: string[]; fibers: any[] } {
   return { texts, fibers }
 }
 
-function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: boolean, parentUsageSource?: import('../../core/types').SourceLocation): NormalizedNode[] {
+export interface RenderCauseOptions {
+  enabled: boolean
+  commitIndex: number
+  includeValues: boolean
+  /** Output collector — filled in-place with component entries for the current commit */
+  entries: CommitComponentEntry[]
+}
+
+function attachRenderCause(
+  node: NormalizedNode,
+  fiber: any,
+  opts: RenderCauseOptions,
+): void {
+  if (!opts.enabled) return
+  if (!isCauseComponentFiber(fiber)) return
+
+  const cause: RenderCause = computeRenderCause(fiber, opts.commitIndex)
+  node.persistentId = getPersistentId(fiber)
+  node.renderCause = cause
+
+  // Don't push bailouts into the commit record — they didn't re-render.
+  if (cause.primary === 'bailout') return
+
+  const entry: CommitComponentEntry = {
+    persistentId: node.persistentId,
+    name: node.name,
+    source: node.source,
+    cause: cause.primary,
+    contributors: cause.contributors,
+    changedProps: cause.changedProps,
+    changedHooks: cause.changedHooks,
+    changedContexts: cause.changedContexts,
+  }
+
+  if (opts.includeValues && cause.changedProps && cause.changedProps.length > 0) {
+    const prevProps = fiber.alternate?.memoizedProps ?? {}
+    const nextProps = fiber.memoizedProps ?? {}
+    const previousValues: Record<string, string> = {}
+    const nextValues: Record<string, string> = {}
+    for (const key of cause.changedProps) {
+      previousValues[key] = safeStringify(prevProps[key])
+      nextValues[key] = safeStringify(nextProps[key])
+    }
+    entry.previousValues = previousValues
+    entry.nextValues = nextValues
+  }
+
+  if (opts.includeValues && cause.changedHooks && cause.changedHooks.length > 0) {
+    const changedIndices = new Set(cause.changedHooks.map((h) => h.index))
+    const previousHookValues: Record<string, string> = {}
+    const nextHookValues: Record<string, string> = {}
+    let prevHook = fiber.alternate?.memoizedState
+    let nextHook = fiber.memoizedState
+    let idx = 0
+    while (prevHook && nextHook) {
+      if (changedIndices.has(idx)) {
+        const hookEntry: import('../../core/types').ChangedHook = cause.changedHooks.find((ch) => ch.index === idx)!
+        const key = hookEntry.varName ? `${hookEntry.varName} (${hookEntry.hookName})` : `${hookEntry.hookName} #${idx}`
+        const prevInferred = inferHookType(prevHook)
+        const nextInferred = inferHookType(nextHook)
+        previousHookValues[key] = safeStringify(prevInferred.value)
+        nextHookValues[key] = safeStringify(nextInferred.value)
+      }
+      prevHook = prevHook.next
+      nextHook = nextHook.next
+      idx++
+    }
+    entry.previousHookValues = previousHookValues
+    entry.nextHookValues = nextHookValues
+  }
+
+  opts.entries.push(entry)
+}
+
+function walkFiberChildren(
+  fiber: any,
+  hideLibrary: boolean,
+  hideProviders: boolean,
+  parentUsageSource?: import('../../core/types').SourceLocation,
+  causeOpts?: RenderCauseOptions,
+): NormalizedNode[] {
   const nodes: NormalizedNode[] = []
   let child = fiber.child
 
@@ -492,13 +597,13 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: bool
       if (name.startsWith('__DevTools')) {
         // skip devtools own components
       } else if (hideLibrary && isFromNodeModules(child)) {
-        nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource))
+        nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource, causeOpts))
       } else if (hideProviders && name.endsWith('Provider')) {
-        nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource))
+        nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource, causeOpts))
       } else {
         const locations = getSourceLocations(child)
         const componentSource = locations.usageSource ?? locations.source
-        const children = walkFiberChildren(child, hideLibrary, hideProviders, componentSource ?? undefined)
+        const children = walkFiberChildren(child, hideLibrary, hideProviders, componentSource ?? undefined, causeOpts)
 
         const { texts, fibers: textFibers } = collectDirectText(child)
 
@@ -523,6 +628,7 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: bool
           _textFibers: textFibers.length > 0 ? textFibers : undefined,
         }
         fiberRefMap.set(node.id, child)
+        if (causeOpts) attachRenderCause(node, child, causeOpts)
         nodes.push(node)
       }
     } else if (child.tag === HostComponent) {
@@ -538,7 +644,7 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: bool
         _parentSource: !hostSource && parentUsageSource ? parentUsageSource : undefined,
         props: getHostElementProps(child),
         sections: [],
-        children: walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource),
+        children: walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource, causeOpts),
         isFromNodeModules: false,
         isHostElement: true,
         _domElements: child.stateNode instanceof HTMLElement ? [child.stateNode] : [],
@@ -549,7 +655,7 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: bool
       fiberRefMap.set(hostNode.id, child)
       nodes.push(hostNode)
     } else if (child.tag !== 6) {
-      nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource))
+      nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource, causeOpts))
     }
     child = child.sibling
   }
@@ -558,8 +664,53 @@ function walkFiberChildren(fiber: any, hideLibrary: boolean, hideProviders: bool
 }
 
 
+export interface WalkOptions {
+  hideLibrary?: boolean
+  hideProviders?: boolean
+  /** When set, computes per-fiber render cause and collects a CommitRecord. */
+  renderCause?: {
+    commitIndex: number
+    includeValues: boolean
+  }
+}
+
+export interface WalkResult {
+  tree: NormalizedNode[]
+  commit: CommitRecord | null
+}
+
 export function walkFiberTree(rootFiber: any, hideLibrary = false, hideProviders = false): NormalizedNode[] {
   nodeIdCounter = 0
   fiberRefMap.clear()
   return walkFiberChildren(rootFiber, hideLibrary, hideProviders)
+}
+
+/** Extended walker that also computes render causes and returns the commit record. */
+export function walkFiberTreeWithCauses(rootFiber: any, options: WalkOptions = {}): WalkResult {
+  nodeIdCounter = 0
+  fiberRefMap.clear()
+  let causeOpts: RenderCauseOptions | undefined
+  let commit: CommitRecord | null = null
+  if (options.renderCause) {
+    const entries: CommitComponentEntry[] = []
+    causeOpts = {
+      enabled: true,
+      commitIndex: options.renderCause.commitIndex,
+      includeValues: options.renderCause.includeValues,
+      entries,
+    }
+    commit = {
+      commitIndex: options.renderCause.commitIndex,
+      timestampMs: Date.now(),
+      components: entries,
+    }
+  }
+  const tree = walkFiberChildren(
+    rootFiber,
+    options.hideLibrary ?? false,
+    options.hideProviders ?? false,
+    undefined,
+    causeOpts,
+  )
+  return { tree, commit }
 }

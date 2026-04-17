@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import type { ViteDevServer } from 'vite'
 import type { ConnectedTab, BridgeRequest, BridgeResponse } from '../types'
-import { BRIDGE_EVENTS } from '../../shared/constants'
+import { BRIDGE_EVENTS, RENDER_HISTORY_DEFAULTS } from '../../shared/constants'
+
+export interface BridgeRequestOptions {
+  /** Override the default 10s timeout. Useful for long-running tools like waitForCommit. */
+  timeoutMs?: number
+}
 
 interface PendingRequest {
   resolve: (value: unknown) => void
@@ -90,7 +95,12 @@ export class BridgeServer {
     return tabs.reduce((a, b) => (a.lastFocused >= b.lastFocused ? a : b))
   }
 
-  async request(method: string, params?: Record<string, unknown>, tabId?: string): Promise<unknown> {
+  async request(
+    method: string,
+    params?: Record<string, unknown>,
+    tabId?: string,
+    options?: BridgeRequestOptions,
+  ): Promise<unknown> {
     if (!this.server) throw new Error('Bridge not attached to a Vite server.')
 
     const tab = this.resolveTab(tabId)
@@ -103,11 +113,13 @@ export class BridgeServer {
       params: { ...params, _targetTabId: tab.tabId },
     }
 
+    const timeoutMs = options?.timeoutMs ?? RENDER_HISTORY_DEFAULTS.DEFAULT_BRIDGE_TIMEOUT_MS
+
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
         reject(new Error('Tab disconnected during request.'))
-      }, 10_000)
+      }, timeoutMs)
 
       this.pending.set(id, { resolve, reject, timer, tabId: tab.tabId })
       this.server!.hot.send(BRIDGE_EVENTS.REQUEST, request)

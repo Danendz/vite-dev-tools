@@ -1,8 +1,27 @@
 import { h } from 'preact'
 import { useState, useRef, useEffect } from 'preact/hooks'
-import type { NormalizedNode } from '../types'
+import type { NormalizedNode, RenderCause } from '../types'
 import { EVENTS } from '../../shared/constants'
 import { Tooltip } from './Tooltip'
+
+function formatCauseTooltip(cause: RenderCause): string {
+  switch (cause.primary) {
+    case 'mount':
+      return 'Mounted'
+    case 'props':
+      return `props changed: ${cause.changedProps?.join(', ') ?? ''}`
+    case 'state':
+      return `state changed: ${cause.changedHooks?.map((h) => h.varName ? `${h.varName} (${h.hookName})` : `${h.hookName} #${h.index}`).join(', ') ?? ''}`
+    case 'context':
+      return `context changed: ${cause.changedContexts?.join(', ') ?? ''}`
+    case 'parent':
+      return 'parent re-rendered'
+    case 'bailout':
+      return 'skipped (memoized)'
+    default:
+      return cause.primary
+  }
+}
 
 /** Flatten past host elements to extract component children when not element-expanded */
 function flattenPastHostElements(children: NormalizedNode[]): NormalizedNode[] {
@@ -37,6 +56,7 @@ interface TreeNodeProps {
   expandedPropsSet: Set<string>
   aiSelectedNodeIds?: Set<string>
   showAiActions?: boolean
+  commitComponentIds?: Set<number> | null
   onToggle: (nodeId: string) => void
   onElementExpandToggle: (nodeId: string) => void
   onPropEdit: (nodeId: string, propKey: string) => void
@@ -123,6 +143,7 @@ export function TreeNode({
   expandedPropsSet,
   aiSelectedNodeIds,
   showAiActions,
+  commitComponentIds,
   onToggle,
   onElementExpandToggle,
   onPropEdit,
@@ -245,6 +266,17 @@ export function TreeNode({
         <span class="tree-node-toggle" onClick={hasChildren ? handleToggle : undefined}>
           {hasChildren ? (collapsed ? '\u25B6' : '\u25BC') : ''}
         </span>
+        {node.renderCause && node.renderCause.primary !== 'bailout' && (() => {
+          const inCommit = !!(node.persistentId && commitComponentIds?.has(node.persistentId))
+          return (
+            <Tooltip text={formatCauseTooltip(node.renderCause!)}>
+              <span
+                key={inCommit ? node.renderCause!.commitIndex : undefined}
+                class={`tree-cause-pip cause-${node.renderCause!.primary}${inCommit && node.renderCause!.primary !== 'mount' ? ' cause-animate' : ''}`}
+              />
+            </Tooltip>
+          )
+        })()}
         {hasHostElementChildren && (
           <Tooltip text={isElementExpanded ? 'Hide HTML elements' : 'Show HTML elements'}>
             <span
@@ -363,6 +395,7 @@ export function TreeNode({
               expandedPropsSet={expandedPropsSet}
               aiSelectedNodeIds={aiSelectedNodeIds}
               showAiActions={showAiActions}
+              commitComponentIds={commitComponentIds}
               onToggle={onToggle}
               onElementExpandToggle={onElementExpandToggle}
               onPropEdit={onPropEdit}

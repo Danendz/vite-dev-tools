@@ -31,6 +31,17 @@ export const STORAGE_KEYS = {
   SHOW_PREVIEW: 'danendz-devtools:show-preview',
   SHOW_AI_ACTIONS: 'danendz-devtools:show-ai-actions',
   MCP_PAUSED: 'danendz-devtools:mcp-paused',
+  RENDER_CAUSE_ENABLED: 'danendz-devtools:render-cause-enabled',
+  RENDER_HISTORY_SIZE: 'danendz-devtools:render-history-size',
+  RENDER_INCLUDE_VALUES: 'danendz-devtools:render-include-values',
+} as const
+
+export const RENDER_HISTORY_DEFAULTS = {
+  MAX_COMMITS: 500,
+  MAX_COMMITS_CAP: 2000,
+  MAX_COMPONENTS_PER_COMMIT: 200,
+  VALUE_PREVIEW_LENGTH: 120,
+  DEFAULT_BRIDGE_TIMEOUT_MS: 10_000,
 } as const
 
 // Server endpoints

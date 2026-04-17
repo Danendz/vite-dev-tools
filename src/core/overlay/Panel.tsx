@@ -1,9 +1,10 @@
 import { h } from 'preact'
 import { useRef, useState, useCallback, useMemo } from 'preact/hooks'
-import type { NormalizedNode, DockPosition, ActiveTab, ConsoleEntry } from '../types'
+import type { NormalizedNode, DockPosition, ActiveTab, ConsoleEntry, CommitRecord } from '../types'
 import { TreeView } from './TreeView'
 import { DetailPanel } from './DetailPanel'
 import { ConsolePane } from './ConsolePane'
+import { RendersPane } from './RendersPane'
 import { SettingsModal } from './SettingsModal'
 import { Tooltip } from './Tooltip'
 import { STORAGE_KEYS } from '../../shared/constants'
@@ -67,6 +68,20 @@ interface PanelProps {
   onHover: (node: NormalizedNode | null) => void
   onContextMenu: (e: MouseEvent, node: NormalizedNode) => void
   onClose: () => void
+  // Render-cause attribution
+  renderCauseEnabled: boolean
+  renderHistorySize: number
+  renderIncludeValues: boolean
+  renderHistory: CommitRecord[]
+  renderHistoryRecording: boolean
+  pinnedRenderComponentId: number | null
+  commitComponentIds: Set<number> | null
+  onRenderCauseToggle: () => void
+  onRenderHistorySizeChange: (size: number) => void
+  onRenderIncludeValuesToggle: () => void
+  onRenderHistoryRecordingToggle: () => void
+  onClearRenderHistory: () => void
+  onPinRenderComponent: (persistentId: number | null) => void
 }
 
 export function Panel({
@@ -123,6 +138,19 @@ export function Panel({
   onHover,
   onContextMenu,
   onClose,
+  renderCauseEnabled,
+  renderHistorySize,
+  renderIncludeValues,
+  renderHistory,
+  renderHistoryRecording,
+  pinnedRenderComponentId,
+  commitComponentIds,
+  onRenderCauseToggle,
+  onRenderHistorySizeChange,
+  onRenderIncludeValuesToggle,
+  onRenderHistoryRecordingToggle,
+  onClearRenderHistory,
+  onPinRenderComponent,
 }: PanelProps) {
   const [detailSize, setDetailSize] = useState(() => {
     const stored = localStorage.getItem(STORAGE_KEYS.DETAIL_SIZE)
@@ -331,6 +359,12 @@ export function Panel({
               onFontSizeChange={onFontSizeChange}
               onMcpPausedToggle={onMcpPausedToggle}
               onShowAiActionsToggle={onShowAiActionsToggle}
+              renderCauseEnabled={renderCauseEnabled}
+              renderHistorySize={renderHistorySize}
+              renderIncludeValues={renderIncludeValues}
+              onRenderCauseToggle={onRenderCauseToggle}
+              onRenderHistorySizeChange={onRenderHistorySizeChange}
+              onRenderIncludeValuesToggle={onRenderIncludeValuesToggle}
               onClose={onSettingsToggle}
             />
           )}
@@ -351,6 +385,14 @@ export function Panel({
               <span class="tab-badge">{errorCount}</span>
             )}
           </button>
+          {renderCauseEnabled && (
+            <button
+              class={`tab-btn${activeTab === 'renders' ? ' tab-active' : ''}`}
+              onClick={() => onTabChange('renders')}
+            >
+              Renders
+            </button>
+          )}
         </div>
         {activeTab === 'inspect' ? (
           <div class={`panel-body${isVertical ? ' panel-body-vertical' : ''}`} style={{ fontSize: `${fontSize}px` }}>
@@ -368,6 +410,7 @@ export function Panel({
                 expandedPropsSet={expandedPropsSet}
                 aiSelectedNodeIds={aiSelectedNodeIds}
                 showAiActions={showAiActions}
+                commitComponentIds={commitComponentIds}
                 onSearchChange={onSearchChange}
                 onPropEdit={onPropEdit}
                 onExpandProps={onExpandProps}
@@ -393,12 +436,26 @@ export function Panel({
               <DetailPanel node={selectedNode} editedProps={editedProps} onPropEdit={onPropEdit} onPropPersisted={onPropPersisted} />
             </div>
           </div>
-        ) : (
+        ) : activeTab === 'console' ? (
           <ConsolePane
             entries={consoleEntries}
             filters={consoleFilters}
             onFilterChange={onFilterChange}
             onClear={onClearConsole}
+          />
+        ) : (
+          <RendersPane
+            tree={tree}
+            history={renderHistory}
+            recording={renderHistoryRecording}
+            pinnedPersistentId={pinnedRenderComponentId}
+            onToggleRecording={onRenderHistoryRecordingToggle}
+            onClear={onClearRenderHistory}
+            onJumpToComponent={(node) => {
+              onSelect(node)
+              onTabChange('inspect')
+            }}
+            onPin={onPinRenderComponent}
           />
         )}
       </div>

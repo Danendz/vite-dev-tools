@@ -2,8 +2,17 @@ import type { NormalizedNode, CompactNode, BridgeRequest, BridgeResponse } from 
 import { BRIDGE_EVENTS, STORAGE_KEYS } from '../../shared/constants'
 import { devtoolsState } from '../overlay/state-store'
 import { findNodeById } from './tree-utils'
+import {
+  getRenderHistoryHandler,
+  getRenderCausesHandler,
+  getHotComponentsHandler,
+  clearRenderHistoryHandler,
+  setRenderHistoryRecordingHandler,
+} from './render-history-handlers'
 
 const TAB_ID = `tab_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+/** Reusable set for circular-ref detection in bridge response serialization */
+const seen = new Set<object>()
 
 type Handler = (params: Record<string, unknown>) => Promise<unknown>
 const handlers = new Map<string, Handler>()
@@ -231,6 +240,14 @@ handlers.set('getElementInfo', async (params) => {
   }
 })
 
+// --- Render-cause / history handlers ---
+
+handlers.set('getRenderHistory', getRenderHistoryHandler)
+handlers.set('getRenderCauses', getRenderCausesHandler)
+handlers.set('getHotComponents', getHotComponentsHandler)
+handlers.set('clearRenderHistory', clearRenderHistoryHandler)
+handlers.set('setRenderHistoryRecording', setRenderHistoryRecordingHandler)
+
 /** Initialize the HMR bridge client */
 export function initBridgeClient() {
   if (!(import.meta as any).hot) return
@@ -279,9 +296,25 @@ export function initBridgeClient() {
 
     try {
       const result = await handler(data.params ?? {})
+      // Verify the result is JSON-serializable before sending over HMR WebSocket.
+      // React internals (hook linked lists, effect objects) can leak circular refs
+      // into handler results via InspectorItem.value or similar paths.
+      let safeResult = result
+      try {
+        JSON.stringify(result)
+      } catch {
+        safeResult = JSON.parse(JSON.stringify(result, (_key, value) => {
+          if (value !== null && typeof value === 'object') {
+            if (seen.has(value)) return '[Circular]'
+            seen.add(value)
+          }
+          return typeof value === 'function' ? 'ƒ()' : value
+        }))
+        seen.clear()
+      }
       hot.send(BRIDGE_EVENTS.RESPONSE, {
         id: data.id,
-        result,
+        result: safeResult,
       } satisfies BridgeResponse)
     } catch (e: any) {
       hot.send(BRIDGE_EVENTS.RESPONSE, {

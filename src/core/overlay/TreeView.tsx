@@ -38,6 +38,7 @@ interface TreeViewProps {
   expandedPropsSet: Set<string>
   aiSelectedNodeIds?: Set<string>
   showAiActions?: boolean
+  commitComponentIds?: Set<number> | null
   onSearchChange: (query: string) => void
   onPropEdit: (nodeId: string, propKey: string) => void
   onExpandProps: (nodeId: string) => void
@@ -99,6 +100,7 @@ export function TreeView({
   expandedPropsSet,
   aiSelectedNodeIds,
   showAiActions,
+  commitComponentIds,
   onSearchChange,
   onPropEdit,
   onExpandProps,
@@ -353,6 +355,7 @@ export function TreeView({
               expandedPropsSet={expandedPropsSet}
               aiSelectedNodeIds={aiSelectedNodeIds}
               showAiActions={showAiActions}
+              commitComponentIds={commitComponentIds}
               onToggle={handleToggle}
               onElementExpandToggle={handleElementExpandToggle}
               onPropEdit={onPropEdit}

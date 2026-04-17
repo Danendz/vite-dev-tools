@@ -11,6 +11,18 @@ function formatPath(source: SourceLocation): string {
   return `${source.fileName.replace(/^.*\/src\//, 'src/')}:${source.lineNumber}`
 }
 
+function causeLabel(kind: string): string {
+  switch (kind) {
+    case 'mount': return 'Mounted'
+    case 'props': return 'Props changed'
+    case 'state': return 'State changed'
+    case 'context': return 'Context changed'
+    case 'parent': return 'Parent re-rendered'
+    case 'bailout': return 'Skipped (memoized)'
+    default: return kind
+  }
+}
+
 function copyPath(source: SourceLocation, e: Event) {
   e.stopPropagation()
   navigator.clipboard.writeText(formatPath(source))
@@ -911,6 +923,54 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
           </>
         )}
       </div>
+
+      {node.renderCause && (
+        <div class="detail-section">
+          <div class="detail-section-title">Why did this render?</div>
+          <div class="detail-why">
+            <div class={`detail-why-primary cause-${node.renderCause.primary}`}>
+              <span class={`tree-cause-pip cause-${node.renderCause.primary}`} />
+              <span class="detail-why-primary-label">{causeLabel(node.renderCause.primary)}</span>
+              <span class="detail-why-commit">commit #{node.renderCause.commitIndex}</span>
+            </div>
+            {node.renderCause.changedProps && node.renderCause.changedProps.length > 0 && (
+              <div class="detail-why-row">
+                <span class="detail-why-row-label">Props changed:</span>
+                <span class="detail-why-row-keys">{node.renderCause.changedProps.join(', ')}</span>
+              </div>
+            )}
+            {node.renderCause.changedHooks && node.renderCause.changedHooks.length > 0 && (
+              <div class="detail-why-row">
+                <span class="detail-why-row-label">State changed:</span>
+                <span class="detail-why-row-keys">
+                  {node.renderCause.changedHooks
+                    .map((h) => h.varName ? `${h.varName} (${h.hookName})` : `${h.hookName} #${h.index}`)
+                    .join(', ')}
+                </span>
+              </div>
+            )}
+            {node.renderCause.changedContexts && node.renderCause.changedContexts.length > 0 && (
+              <div class="detail-why-row">
+                <span class="detail-why-row-label">Context changed:</span>
+                <span class="detail-why-row-keys">{node.renderCause.changedContexts.join(', ')}</span>
+              </div>
+            )}
+            {node.renderCause.primary === 'parent' && (
+              <div class="detail-why-hint">
+                {node.renderCause.isMemo
+                  ? <>Already wrapped in <code>React.memo</code>, but received new prop references. Check if the parent passes inline objects or functions.</>
+                  : <>No local changes detected — this component re-rendered because its parent did. Consider wrapping it in <code>React.memo</code>.</>
+                }
+              </div>
+            )}
+            {node.renderCause.primary === 'bailout' && node.renderCause.lastRenderedCommit != null && (
+              <div class="detail-why-hint">
+                Last actually rendered on commit #{node.renderCause.lastRenderedCommit}.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {hasProps && (
         <div class="detail-section">

@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
 import type { BridgeServer } from './bridge-server'
+import { RENDER_HISTORY_DEFAULTS } from '../../shared/constants'
 
 export function createMcpTools(bridge: BridgeServer): McpServer {
   const mcp = new McpServer({
@@ -200,6 +201,67 @@ export function createMcpTools(bridge: BridgeServer): McpServer {
     }),
   }, async ({ nodeId, selector, text, tab }) => {
     const result = await bridge.request('getElementInfo', { nodeId, selector, text }, tab)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  })
+
+  // --- Render-cause attribution tools ---
+
+  mcp.registerTool('getRenderHistory', {
+    description: 'Get the recorded render history buffer — each entry is a commit with the components that re-rendered and why (props/state/context/parent/mount). Requires the render-cause setting to be enabled in the devtools overlay.',
+    inputSchema: z.object({
+      limit: z.number().optional().describe('Return only the last N commits (default: all buffered).'),
+      includeValues: z.boolean().optional().describe('Include previousValues/nextValues for changed props. Default true.'),
+      tab: z.string().optional().describe('Target tab ID. Auto-selects if omitted.'),
+    }),
+  }, async ({ limit, includeValues, tab }) => {
+    const result = await bridge.request('getRenderHistory', { limit, includeValues }, tab)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  })
+
+  mcp.registerTool('getRenderCauses', {
+    description: 'Get the render history filtered to a single component by name. Use this to investigate "why does <Foo> keep re-rendering?".',
+    inputSchema: z.object({
+      componentName: z.string().describe('The component name to filter by. Exact match by default; set fuzzy=true for case-insensitive substring matching.'),
+      fuzzy: z.boolean().optional().describe('When true, match component names by case-insensitive substring instead of exact match.'),
+      limit: z.number().optional().describe('Return only the last N matching commits.'),
+      includeValues: z.boolean().optional().describe('Include previousValues/nextValues. Default true.'),
+      tab: z.string().optional().describe('Target tab ID. Auto-selects if omitted.'),
+    }),
+  }, async ({ componentName, fuzzy, limit, includeValues, tab }) => {
+    const result = await bridge.request('getRenderCauses', { componentName, fuzzy, limit, includeValues }, tab)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  })
+
+  mcp.registerTool('getHotComponents', {
+    description: 'Get the top N most-frequently re-rendering components within a recent time window. The key tool to find perf suspects.',
+    inputSchema: z.object({
+      windowMs: z.number().optional().describe('Look-back window in milliseconds (default 5000).'),
+      limit: z.number().optional().describe('Top N (default 10).'),
+      tab: z.string().optional().describe('Target tab ID. Auto-selects if omitted.'),
+    }),
+  }, async ({ windowMs, limit, tab }) => {
+    const result = await bridge.request('getHotComponents', { windowMs, limit }, tab)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  })
+
+  mcp.registerTool('clearRenderHistory', {
+    description: 'Empty the render history buffer. Useful for "I fixed it, now check fresh" workflows.',
+    inputSchema: z.object({
+      tab: z.string().optional().describe('Target tab ID. Auto-selects if omitted.'),
+    }),
+  }, async ({ tab }) => {
+    const result = await bridge.request('clearRenderHistory', {}, tab)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  })
+
+  mcp.registerTool('setRenderHistoryRecording', {
+    description: 'Pause or resume render-history recording. Pause while analyzing, resume before reproducing.',
+    inputSchema: z.object({
+      enabled: z.boolean().describe('true to record, false to pause.'),
+      tab: z.string().optional().describe('Target tab ID. Auto-selects if omitted.'),
+    }),
+  }, async ({ enabled, tab }) => {
+    const result = await bridge.request('setRenderHistoryRecording', { enabled }, tab)
     return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
   })
 
