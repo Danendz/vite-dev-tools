@@ -129,6 +129,16 @@ export function createPopupManager(config: PopupManagerConfig): PopupManager {
     // Set popup title
     doc.title = `Vite DevTools \u2014 ${document.title}`
 
+    // Prevent reload in popup (about:blank would wipe the portal)
+    win.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (
+        e.key === 'F5' ||
+        ((e.ctrlKey || e.metaKey) && e.key === 'r')
+      ) {
+        e.preventDefault()
+      }
+    })
+
     // Persist size when popup is closed
     win.addEventListener('beforeunload', () => {
       localStorage.setItem(STORAGE_KEYS.POPUP_WIDTH, String(win.outerWidth))
