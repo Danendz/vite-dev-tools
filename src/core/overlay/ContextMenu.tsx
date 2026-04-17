@@ -1,25 +1,22 @@
 import { h } from 'preact'
 import { useEffect, useRef } from 'preact/hooks'
-import type { SourceLocation } from '../types'
-import { openInEditor } from '../communication'
 
-function formatPath(source: SourceLocation): string {
-  return `${source.fileName.replace(/^.*\/src\//, 'src/')}:${source.lineNumber}`
+export interface ContextMenuItem {
+  label: string
+  onClick: () => void
 }
 
 interface ContextMenuProps {
   x: number
   y: number
-  source: SourceLocation
-  usageSource?: SourceLocation
+  items: ContextMenuItem[]
   onClose: () => void
 }
 
 export function ContextMenu({
   x,
   y,
-  source,
-  usageSource,
+  items,
   onClose,
 }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
@@ -44,16 +41,15 @@ export function ContextMenu({
     }
   }, [onClose])
 
+  if (items.length === 0) return null
+
   return (
     <div class="context-menu" style={{ left: `${x}px`, top: `${y}px` }} ref={ref}>
-      <button class="context-menu-item" onClick={() => { openInEditor(source); onClose() }}>
-        Open source — {formatPath(source)}
-      </button>
-      {usageSource && (
-        <button class="context-menu-item" onClick={() => { openInEditor(usageSource); onClose() }}>
-          Open usage — {formatPath(usageSource)}
+      {items.map((item, i) => (
+        <button key={i} class="context-menu-item" onClick={() => { item.onClick(); onClose() }}>
+          {item.label}
         </button>
-      )}
+      ))}
     </div>
   )
 }

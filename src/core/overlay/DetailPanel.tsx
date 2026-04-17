@@ -1,11 +1,13 @@
 import { h } from 'preact'
-import { useState, useRef, useEffect } from 'preact/hooks'
-import type { NormalizedNode, SourceLocation, InspectorItem, EditHint } from '../types'
+import { useState, useRef, useEffect, useMemo } from 'preact/hooks'
+import type { NormalizedNode, SourceLocation, InspectorItem, EditHint, CommitRecord, CommitComponentEntry } from '../types'
 import { openInEditor, persistEdit, persistPropValue, persistTextValue, persistHookValue, undoEdit } from '../communication'
 import type { DiffData, PreviewResult } from '../communication'
 import { EVENTS, STORAGE_KEYS } from '../../shared/constants'
 import { PreviewModal } from './PreviewModal'
 import { Tooltip } from './Tooltip'
+import { ContextMenu } from './ContextMenu'
+import type { ContextMenuItem } from './ContextMenu'
 
 function formatPath(source: SourceLocation): string {
   return `${source.fileName.replace(/^.*\/src\//, 'src/')}:${source.lineNumber}`
@@ -33,6 +35,8 @@ interface DetailPanelProps {
   editedProps?: Map<string, Set<string>>
   onPropEdit?: (nodeId: string, propKey: string) => void
   onPropPersisted?: (nodeId: string, propKey: string) => void
+  renderHistory?: CommitRecord[]
+  onNavigateToCommit?: (commitIndex: number) => void
 }
 
 function formatPrimitive(value: unknown): { text: string; className: string } | null {
@@ -860,7 +864,46 @@ function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
   )
 }
 
-export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: DetailPanelProps) {
+function summarizeEntry(entry: CommitComponentEntry): string {
+  if (entry.cause === 'mount') return 'Mounted'
+  const parts: string[] = []
+  if (entry.changedProps?.length) parts.push(`props: ${entry.changedProps.join(', ')}`)
+  if (entry.changedHooks?.length) {
+    parts.push(`state: ${entry.changedHooks.map(h => h.varName ?? h.hookName).join(', ')}`)
+  }
+  if (entry.changedContexts?.length) parts.push(`ctx: ${entry.changedContexts.join(', ')}`)
+  if (parts.length === 0) return causeLabel(entry.cause)
+  return parts.join(' · ')
+}
+
+export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, renderHistory, onNavigateToCommit }: DetailPanelProps) {
+  // 0 = collapsed, 5 = preview (first 5), Infinity = show all
+  const [historyLimit, setHistoryLimit] = useState<number>(0)
+  const prevNodeId = useRef<number | undefined>(undefined)
+
+  // Context menu state for right-click navigation
+  const [detailContextMenu, setDetailContextMenu] = useState<{
+    x: number; y: number; items: ContextMenuItem[]
+  } | null>(null)
+
+  // Reset expanded state when selected component changes
+  if (node?.persistentId !== prevNodeId.current) {
+    prevNodeId.current = node?.persistentId
+    if (historyLimit !== 0) setHistoryLimit(0)
+  }
+
+  const componentHistory = useMemo(() => {
+    if (!renderHistory || !node?.persistentId) return []
+    return renderHistory
+      .filter(c => c.components.some(e => e.persistentId === node.persistentId))
+      .map(c => ({
+        commitIndex: c.commitIndex,
+        timestampMs: c.timestampMs,
+        entry: c.components.find(e => e.persistentId === node.persistentId)!,
+      }))
+      .reverse()
+  }, [renderHistory, node?.persistentId])
+
   if (!node) {
     return <div class="detail-pane-empty">Select a component to inspect</div>
   }
@@ -931,7 +974,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
             <div class={`detail-why-primary cause-${node.renderCause.primary}`}>
               <span class={`tree-cause-pip cause-${node.renderCause.primary}`} />
               <span class="detail-why-primary-label">{causeLabel(node.renderCause.primary)}</span>
-              <span class="detail-why-commit">commit #{node.renderCause.commitIndex}</span>
+              <span class="detail-why-commit detail-why-history-link" onClick={() => onNavigateToCommit?.(node.renderCause!.commitIndex)}>commit #{node.renderCause.commitIndex}</span>
             </div>
             {node.renderCause.changedProps && node.renderCause.changedProps.length > 0 && (
               <div class="detail-why-row">
@@ -947,6 +990,39 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
                     .map((h) => h.varName ? `${h.varName} (${h.hookName})` : `${h.hookName} #${h.index}`)
                     .join(', ')}
                 </span>
+                {node.renderCause.changedHooks.some(h => h.changedDeps) && (
+                  <div class="detail-why-deps">
+                    {node.renderCause.changedHooks
+                      .filter(h => h.changedDeps)
+                      .map((h, i) => (
+                        <div class="detail-why-dep-row" key={i}>
+                          <span class="detail-why-dep-hook">{h.varName ?? h.hookName}:</span>
+                          {h.changedDeps!.map((d, j) => (
+                            <span class="detail-why-dep-change" key={j}>
+                              {d.name} ({String(d.prev)} → {String(d.next)})
+                            </span>
+                          ))}
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {node.renderCause.effectChanges && node.renderCause.effectChanges.length > 0 && (
+              <div class="detail-why-row">
+                <span class="detail-why-row-label">Effects re-ran:</span>
+                <div class="detail-why-deps">
+                  {node.renderCause.effectChanges.map((ec, i) => (
+                    <div class="detail-why-dep-row" key={i}>
+                      <span class="detail-why-dep-hook">{ec.varName ?? ec.hookName}:</span>
+                      {ec.changedDeps.map((d, j) => (
+                        <span class="detail-why-dep-change" key={j}>
+                          {d.name} ({String(d.prev)} → {String(d.next)})
+                        </span>
+                      ))}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
             {node.renderCause.changedContexts && node.renderCause.changedContexts.length > 0 && (
@@ -963,7 +1039,36 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
                 }
               </div>
             )}
-            {node.renderCause.primary === 'bailout' && node.renderCause.lastRenderedCommit != null && (
+            {componentHistory.length > 0 && (
+              <>
+                <div class="detail-why-history-toggle" onClick={() => setHistoryLimit(historyLimit === 0 ? 5 : 0)}>
+                  <span class={`detail-why-history-toggle-arrow${historyLimit > 0 ? ' is-open' : ''}`}>&#9654;</span>
+                  {node.renderCause.primary === 'bailout' && node.renderCause.lastRenderedCommit != null
+                    ? <>Last rendered on <span class="detail-why-history-link" onClick={(e) => { e.stopPropagation(); onNavigateToCommit?.(node.renderCause!.lastRenderedCommit!) }}>commit #{node.renderCause.lastRenderedCommit}</span> — show history</>
+                    : <>Recent renders ({componentHistory.length})</>
+                  }
+                </div>
+                {historyLimit > 0 && (
+                  <div class="detail-why-history-list">
+                    {componentHistory.slice(0, historyLimit === Infinity ? undefined : historyLimit).map((h) => (
+                      <div class="detail-why-history-entry" key={h.commitIndex}>
+                        <span class={`tree-cause-pip cause-${h.entry.cause}`} />
+                        <span class="detail-why-history-link" onClick={() => onNavigateToCommit?.(h.commitIndex)}>
+                          commit #{h.commitIndex}
+                        </span>
+                        <span class="detail-why-history-summary">{summarizeEntry(h.entry)}</span>
+                      </div>
+                    ))}
+                    {componentHistory.length > 5 && historyLimit !== Infinity && (
+                      <div class="detail-why-history-more" onClick={() => setHistoryLimit(Infinity)}>
+                        Show all ({componentHistory.length})
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+            {node.renderCause.primary === 'bailout' && node.renderCause.lastRenderedCommit != null && componentHistory.length === 0 && (
               <div class="detail-why-hint">
                 Last actually rendered on commit #{node.renderCause.lastRenderedCommit}.
               </div>
@@ -978,19 +1083,52 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
           {propEntries.map(([key, value]) => {
             const valueType = typeof value
             const isPrimitive = value === null || valueType === 'string' || valueType === 'number' || valueType === 'boolean'
+            const propSource = node.isHostElement
+              ? (node.source ?? undefined)
+              : (node.usageSource ?? node.source ?? undefined)
+            const propContextMenu = (e: MouseEvent) => {
+              e.preventDefault()
+              const menuItems: ContextMenuItem[] = []
+              if (node.source?.fileName) {
+                menuItems.push({
+                  label: `Open source — ${formatPath(node.source)}`,
+                  onClick: () => openInEditor(node.source!),
+                })
+              }
+              if (node.usageSource) {
+                menuItems.push({
+                  label: `Open usage — ${formatPath(node.usageSource)}`,
+                  onClick: () => openInEditor(node.usageSource!),
+                })
+              }
+              if (menuItems.length > 0) {
+                setDetailContextMenu({ x: e.clientX, y: e.clientY, items: menuItems })
+              }
+            }
+            const propKeyEl = propSource?.fileName ? (
+              <span
+                class="detail-key detail-key-clickable"
+                title={`${propSource.fileName}:${propSource.lineNumber}`}
+                onClick={() => openInEditor(propSource)}
+                onContextMenu={propContextMenu}
+              >{key}:</span>
+            ) : (
+              <span class="detail-key" onContextMenu={propContextMenu}>{key}:</span>
+            )
             // Host elements: editable only when source exists and value is primitive
             if (node.isHostElement && (!node.source || !isPrimitive)) {
               return (
                 <div class="detail-row" key={`${node.id}-${key}`}>
-                  <span class="detail-key">{key}:</span>
+                  {propKeyEl}
                   <ValueDisplay value={value} />
                 </div>
               )
             }
             const isEdited = editedProps?.get(node.id)?.has(key) ?? false
+            const propOrigin = node.propOrigins?.[key]
             return (
               <div class="detail-row" key={`${node.id}-${key}`}>
-                <span class="detail-key">{key}:</span>
+                {propKeyEl}
                 <EditablePropValue
                   propKey={key}
                   value={value}
@@ -1001,6 +1139,24 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
                   onPropEdit={onPropEdit}
                   onPropPersisted={onPropPersisted}
                 />
+                {propOrigin && (
+                  <span
+                    class="detail-origin-tag detail-key-clickable"
+                    title={`${propOrigin.source === 'import' ? `from ${propOrigin.file}` : 'local'}: ${propOrigin.varName} (line ${propOrigin.line})`}
+                    onClick={() => {
+                      const fileName = propOrigin.source === 'import' && propOrigin.file
+                        ? propOrigin.file
+                        : node.source?.fileName
+                      if (fileName) {
+                        openInEditor({ fileName, lineNumber: propOrigin.line, columnNumber: 1 })
+                      }
+                    }}
+                  >
+                    {propOrigin.source === 'import'
+                      ? `from ${propOrigin.file?.split('/').pop() ?? '?'}`
+                      : `var ${propOrigin.varName}`}
+                  </span>
+                )}
               </div>
             )
           })}
@@ -1027,31 +1183,162 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted }: 
         return (
           <div class="detail-section" key={section.id}>
             <div class="detail-section-title">{section.label}</div>
-            {section.items.map((item, i) => {
-              const canNavigate = item.lineNumber != null && node.source != null
-
-              return (
-                <div class="detail-row" key={`${section.id}-${i}`}>
-                  <span
-                    class={`detail-key${canNavigate ? ' detail-key-clickable' : ''}`}
-                    onClick={canNavigate ? () => openInEditor({
-                      fileName: node.source!.fileName,
-                      lineNumber: item.lineNumber!,
-                      columnNumber: 1,
-                    }) : undefined}
-                  >
-                    {item.key}:
-                  </span>
-                  {item.editable
-                    ? <EditableValue item={item} nodeId={node.id} source={node.source} />
-                    : <ValueDisplay value={item.value} />}
-                  {item.badge && <span class="hook-type-tag">[{item.badge}]</span>}
-                </div>
-              )
-            })}
+            {section.items.map((item, i) => renderInspectorItem(
+              item, i, section.id, node, 0, undefined,
+              (e, items) => setDetailContextMenu({ x: e.clientX, y: e.clientY, items }),
+            ))}
           </div>
         )
       })}
+
+      {node.locals && node.locals.length > 0 && (
+        <div class="detail-section">
+          <div class="detail-section-title">Locals</div>
+          {node.locals.map((local, i) => {
+            const canNavigate = node.source != null
+            return (
+              <div class="detail-row detail-local-row" key={`local-${i}`}>
+                <span
+                  class={`detail-key${canNavigate ? ' detail-key-clickable' : ''}`}
+                  onClick={canNavigate ? () => openInEditor({
+                    fileName: node.source!.fileName,
+                    lineNumber: local.line,
+                    columnNumber: 1,
+                  }) : undefined}
+                >
+                  {local.name}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {detailContextMenu && (
+        <ContextMenu
+          x={detailContextMenu.x}
+          y={detailContextMenu.y}
+          items={detailContextMenu.items}
+          onClose={() => setDetailContextMenu(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+function renderInspectorItem(
+  item: import('../../core/types').InspectorItem,
+  index: number,
+  sectionId: string,
+  node: import('../../core/types').NormalizedNode,
+  depth: number = 0,
+  parentSourceFile?: string,
+  onItemContextMenu?: (e: MouseEvent, items: ContextMenuItem[]) => void,
+  parentCallLine?: number,
+): any {
+  const canNavigate = item.lineNumber != null && (item.sourceFile || parentSourceFile || node.source)
+  const sourceFile = item.sourceFile ?? parentSourceFile ?? node.source?.fileName
+
+  // Build context menu handler for right-click navigation
+  // "Open source" = where the item is defined (primary click target)
+  // "Open usage" = where the item is consumed in the component (for composable inner items)
+  const handleContextMenu = onItemContextMenu ? (e: MouseEvent) => {
+    e.preventDefault()
+    const menuItems: ContextMenuItem[] = []
+    // "Open source" — where the item is defined (composable file for inner items, component file otherwise)
+    if (item.lineNumber != null && sourceFile) {
+      menuItems.push({
+        label: `Open source — ${sourceFile.replace(/^.*\/src\//, 'src/')}:${item.lineNumber}`,
+        onClick: () => openInEditor({ fileName: sourceFile!, lineNumber: item.lineNumber!, columnNumber: 1 }),
+      })
+    }
+    // "Open usage" — for composable inner items, navigate to the call site in the component
+    if ((item.sourceFile || parentSourceFile) && node.source?.fileName && parentCallLine != null) {
+      menuItems.push({
+        label: `Open usage — ${node.source.fileName.replace(/^.*\/src\//, 'src/')}:${parentCallLine}`,
+        onClick: () => openInEditor({ fileName: node.source!.fileName, lineNumber: parentCallLine, columnNumber: 1 }),
+      })
+    }
+    if (menuItems.length > 0) onItemContextMenu(e, menuItems)
+  } : undefined
+
+  // Custom hook / composable group with inner hooks
+  if (item.innerHooks && item.innerHooks.length > 0) {
+    // For external composables: left-click opens the composable file (line 1)
+    // item.lineNumber is the call-site line in the component, used for inner items' "Open usage"
+    const groupClickTarget = item.sourceFile
+      ? { fileName: item.sourceFile, lineNumber: 1, columnNumber: 1 }
+      : item.lineNumber != null && node.source
+        ? { fileName: node.source.fileName, lineNumber: item.lineNumber, columnNumber: 1 }
+        : null
+    const canClickGroup = groupClickTarget != null
+
+    // Context menu for group header: source (composable file) + usage (call-site in component)
+    const handleGroupContextMenu = onItemContextMenu ? (e: MouseEvent) => {
+      e.preventDefault()
+      const menuItems: ContextMenuItem[] = []
+      if (item.sourceFile) {
+        menuItems.push({
+          label: `Open source — ${item.sourceFile.replace(/^.*\/src\//, 'src/')}`,
+          onClick: () => openInEditor({ fileName: item.sourceFile!, lineNumber: 1, columnNumber: 1 }),
+        })
+      }
+      if (item.lineNumber != null && node.source?.fileName) {
+        menuItems.push({
+          label: `Open usage — ${node.source.fileName.replace(/^.*\/src\//, 'src/')}:${item.lineNumber}`,
+          onClick: () => openInEditor({ fileName: node.source!.fileName, lineNumber: item.lineNumber!, columnNumber: 1 }),
+        })
+      }
+      if (menuItems.length > 0) onItemContextMenu(e, menuItems)
+    } : undefined
+
+    return (
+      <div class="detail-hook-group" key={`${sectionId}-${index}`} style={{ marginLeft: `${depth * 12}px` }}>
+        <div class="detail-hook-group-header">
+          <span
+            class={`detail-key${canClickGroup ? ' detail-key-clickable' : ''}`}
+            onClick={canClickGroup ? () => openInEditor(groupClickTarget!) : undefined}
+            onContextMenu={handleGroupContextMenu}
+          >
+            {item.key}
+          </span>
+          {item.badge && <span class="hook-type-tag">[{item.badge}]</span>}
+          {item.sourceFile && (
+            <span class="detail-origin-tag" title={item.sourceFile}>
+              from {item.sourceFile.split('/').pop()}
+            </span>
+          )}
+        </div>
+        <div class="detail-hook-group-children">
+          {item.innerHooks.map((inner, j) => renderInspectorItem(inner, j, sectionId, node, depth + 1, sourceFile, onItemContextMenu, item.lineNumber))}
+        </div>
+      </div>
+    )
+  }
+
+  // Leaf hook / state item
+  return (
+    <div class="detail-row" key={`${sectionId}-${index}`} style={depth > 0 ? { marginLeft: `${depth * 12}px` } : undefined}>
+      <span
+        class={`detail-key${canNavigate ? ' detail-key-clickable' : ''}`}
+        onClick={canNavigate ? () => openInEditor({
+          fileName: sourceFile!,
+          lineNumber: item.lineNumber!,
+          columnNumber: 1,
+        }) : undefined}
+        onContextMenu={handleContextMenu}
+      >
+        {item.key}:
+      </span>
+      {item.editable
+        ? <EditableValue item={item} nodeId={node.id} source={node.source} />
+        : <ValueDisplay value={item.value} />}
+      {item.badge && <span class="hook-type-tag">[{item.badge}]</span>}
+      {item.depNames && item.depNames.length > 0 && (
+        <span class="detail-deps">
+          deps: [{item.depNames.join(', ')}]
+        </span>
+      )}
     </div>
   )
 }

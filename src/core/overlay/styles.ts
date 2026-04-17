@@ -349,9 +349,67 @@ export const STYLES = /* css */ `
   }
 
   .hook-type-tag {
-    color: rgba(var(--accent-rgb), 0.6);
+    color: rgba(var(--accent-rgb), 0.85);
     font-size: 0.9em;
     margin-left: 6px;
+  }
+
+  .detail-hook-group {
+    margin-bottom: 2px;
+  }
+
+  .detail-hook-group-header {
+    display: flex;
+    align-items: center;
+    padding: 2px 0;
+    gap: 4px;
+  }
+
+  .detail-hook-group-children {
+    border-left: 1px solid rgba(var(--accent-rgb), 0.15);
+    padding-left: 4px;
+    margin-left: 4px;
+  }
+
+  .detail-origin-tag {
+    color: #a1a1aa;
+    font-size: 0.8em;
+    margin-left: 6px;
+  }
+
+  .detail-origin-tag:hover {
+    color: var(--accent);
+  }
+
+  .detail-deps {
+    color: #a1a1aa;
+    font-size: 0.8em;
+    margin-left: 6px;
+  }
+
+  .detail-local-row {
+    opacity: 0.7;
+  }
+
+  .detail-why-deps {
+    margin-top: 2px;
+    padding-left: 12px;
+  }
+
+  .detail-why-dep-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.9em;
+    color: #a1a1aa;
+  }
+
+  .detail-why-dep-hook {
+    color: rgba(var(--accent-rgb), 0.8);
+  }
+
+  .detail-why-dep-change {
+    color: #a1a1aa;
   }
 
   .source-label {
@@ -1981,6 +2039,67 @@ export const STYLES = /* css */ `
     font-size: 10px;
   }
 
+  /* Inline render history in detail panel */
+  .detail-why-history-toggle {
+    color: #888;
+    font-size: 11px;
+    cursor: pointer;
+    padding: 4px 0;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .detail-why-history-toggle:hover {
+    color: #bbb;
+  }
+  .detail-why-history-toggle-arrow {
+    display: inline-block;
+    width: 10px;
+    font-size: 9px;
+    transition: transform 0.15s;
+  }
+  .detail-why-history-toggle-arrow.is-open {
+    transform: rotate(90deg);
+  }
+  .detail-why-history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 4px 0 2px;
+  }
+  .detail-why-history-entry {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .detail-why-history-link {
+    color: var(--accent);
+    cursor: pointer;
+    text-decoration: none;
+    flex: 0 0 auto;
+  }
+  .detail-why-history-link:hover {
+    text-decoration: underline;
+  }
+  .detail-why-history-summary {
+    color: #999;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .detail-why-history-more {
+    color: rgba(var(--accent-rgb), 0.7);
+    font-size: 10px;
+    cursor: pointer;
+    padding: 2px 0;
+  }
+  .detail-why-history-more:hover {
+    color: var(--accent);
+  }
+
   /* ----- Renders pane ----- */
 
   .renders-pane {
@@ -2202,9 +2321,10 @@ export const STYLES = /* css */ `
   .renders-entry-diff-row {
     display: flex;
     gap: 6px;
-    align-items: center;
+    align-items: baseline;
     font-family: monospace;
     font-size: 10px;
+    flex-wrap: wrap;
   }
   .renders-entry-diff-key {
     color: #aaa;
@@ -2220,6 +2340,21 @@ export const STYLES = /* css */ `
     text-overflow: ellipsis;
     max-width: 240px;
   }
+  .renders-entry-diff-prev.is-expandable,
+  .renders-entry-diff-next.is-expandable {
+    cursor: pointer;
+  }
+  .renders-entry-diff-prev.is-expandable:hover,
+  .renders-entry-diff-next.is-expandable:hover {
+    opacity: 0.85;
+  }
+  .renders-entry-diff-prev.is-expanded,
+  .renders-entry-diff-next.is-expanded {
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-width: none;
+    overflow: visible;
+  }
   .renders-entry-diff-arrow { color: #555; }
   .renders-entry-diff-next {
     color: #86efac;
@@ -2230,6 +2365,128 @@ export const STYLES = /* css */ `
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 240px;
+  }
+
+  .renders-entry-effects {
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px solid #333;
+  }
+
+  .renders-entry-effects-title {
+    color: rgba(var(--accent-rgb), 0.7);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    margin-bottom: 2px;
+  }
+
+  .renders-entry-effect {
+    margin-bottom: 2px;
+  }
+
+  .renders-entry-effect-name {
+    color: rgba(var(--accent-rgb), 0.8);
+    font-size: 11px;
+    margin-right: 4px;
+  }
+
+  /* ----- Value diff modal ----- */
+  .vdm-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .vdm-modal {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 800px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  }
+  .vdm-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid #333;
+  }
+  .vdm-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #eee;
+  }
+  .vdm-close {
+    background: none;
+    border: none;
+    color: #888;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+  }
+  .vdm-close:hover {
+    color: #eee;
+  }
+  .vdm-content {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    min-height: 0;
+  }
+  .vdm-pane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+  }
+  .vdm-pane + .vdm-pane {
+    border-left: 1px solid #333;
+  }
+  .vdm-pane-title {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 6px 12px;
+    flex-shrink: 0;
+  }
+  .vdm-prev .vdm-pane-title {
+    color: #fca5a5;
+    background: rgba(239, 68, 68, 0.06);
+  }
+  .vdm-next .vdm-pane-title {
+    color: #86efac;
+    background: rgba(34, 197, 94, 0.06);
+  }
+  .vdm-code {
+    flex: 1;
+    overflow: auto;
+    padding: 8px 12px;
+    margin: 0;
+    font-family: monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #ddd;
+  }
+  .vdm-prev .vdm-code {
+    background: rgba(239, 68, 68, 0.03);
+  }
+  .vdm-next .vdm-code {
+    background: rgba(34, 197, 94, 0.03);
   }
 
   .settings-number-input {

@@ -71,12 +71,24 @@ export function computeRenderCause(fiber: any, commitIndex: number): RenderCause
   const contributors: RenderCauseKind[] = []
 
   const changedProps = diffProps(alternate.memoizedProps, fiber.memoizedProps)
-  const changedHooks = diffHooks(alternate.memoizedState, fiber.memoizedState, fiber.type)
+  // For memo() components, __devtools_meta is on elementType (the memo wrapper), not type (the inner fn)
+  const fiberTypeWithMeta = fiber.type?.__devtools_meta ? fiber.type : (fiber.elementType ?? fiber.type)
+  const changedHooks = diffHooks(alternate.memoizedState, fiber.memoizedState, fiberTypeWithMeta)
   const changedContexts = diffContexts(alternate.dependencies, fiber.dependencies)
 
-  if (changedHooks.length > 0) contributors.push('state')
+  // Exclude hooks we can positively identify as effects/memos — their memoizedState
+  // always changes each render and they're consequences, not causes.
+  const NON_STATE_HOOKS = new Set(['useEffect', 'useLayoutEffect', 'useInsertionEffect', 'useMemo', 'useCallback'])
+  const stateHooks = changedHooks.filter(h => !NON_STATE_HOOKS.has(h.hookName))
+  if (stateHooks.length > 0) contributors.push('state')
   if (changedContexts.length > 0) contributors.push('context')
   if (changedProps.length > 0) contributors.push('props')
+
+  // Pre-compute effect dep diffs (attached to all non-bailout causes)
+  const effectHooks = changedHooks.filter(h => NON_STATE_HOOKS.has(h.hookName) && h.changedDeps && h.changedDeps.length > 0)
+  const effectChanges = effectHooks.length > 0
+    ? effectHooks.map(h => ({ hookIndex: h.index, hookName: h.hookName, varName: h.varName, changedDeps: h.changedDeps! }))
+    : undefined
 
   // Bailout: no PerformedWork flag + nothing locally changed.
   // React doesn't clear flags on bailed-out subtrees, so PerformedWork can be
@@ -98,7 +110,7 @@ export function computeRenderCause(fiber: any, commitIndex: number): RenderCause
     // Re-rendered but no local cause ⇒ parent cascade
     lastRenderedCommitMap.set(fiber, commitIndex)
     if (fiber.alternate) lastRenderedCommitMap.set(fiber.alternate, commitIndex)
-    return { primary: 'parent', contributors: ['parent'], commitIndex, isMemo: isMemo || undefined }
+    return { primary: 'parent', contributors: ['parent'], commitIndex, isMemo: isMemo || undefined, effectChanges }
   }
 
   // Precedence: state > context > props
@@ -108,8 +120,10 @@ export function computeRenderCause(fiber: any, commitIndex: number): RenderCause
   if (fiber.alternate) lastRenderedCommitMap.set(fiber.alternate, commitIndex)
   const cause: RenderCause = { primary, contributors, commitIndex, isMemo: isMemo || undefined }
   if (changedProps.length > 0) cause.changedProps = changedProps
-  if (changedHooks.length > 0) cause.changedHooks = changedHooks
+  if (stateHooks.length > 0) cause.changedHooks = stateHooks
   if (changedContexts.length > 0) cause.changedContexts = changedContexts
+  if (effectChanges) cause.effectChanges = effectChanges
+
   return cause
 }
 
@@ -127,23 +141,88 @@ export function diffProps(prev: any, next: any): string[] {
   return changed
 }
 
+/**
+ * Flatten the __devtools_meta.hooks tree into a flat array aligned with React's hook list.
+ * Custom hooks with inner hooks are expanded; only leaf hooks appear in the result.
+ */
+function flattenMetaHooks(hooks: any[]): Array<{ varName: string | null; hookName: string; depNames?: string[] }> {
+  const flat: Array<{ varName: string | null; hookName: string; depNames?: string[] }> = []
+  for (const h of hooks) {
+    if (h.i && h.i.length > 0) {
+      flat.push(...flattenMetaHooks(h.i))
+    } else {
+      flat.push({ varName: h.n, hookName: h.h, depNames: h.d })
+    }
+  }
+  return flat
+}
+
+/** Extract the dependency array from a hook's memoizedState (effect or memo/callback) */
+function extractDepsFromHook(hook: any): unknown[] | null {
+  const ms = hook.memoizedState
+  // Effect hooks: { create, destroy, deps, tag }
+  if (ms && typeof ms === 'object' && !Array.isArray(ms) && 'deps' in ms) {
+    return ms.deps
+  }
+  // Memo/callback hooks: [value, deps]
+  if (Array.isArray(ms) && ms.length === 2 && Array.isArray(ms[1])) {
+    return ms[1]
+  }
+  return null
+}
+
 /** Walk two hook linked lists in lockstep, report indices whose memoizedState differs. */
 export function diffHooks(prevHead: any, nextHead: any, fiberType: any): ChangedHook[] {
   const changed: ChangedHook[] = []
   let a = prevHead
   let b = nextHead
   let index = 0
-  const hookMeta: unknown[] | undefined = fiberType?.__devtools_hooks
+
+  // Try new metadata format first, fall back to legacy
+  const devtoolsMeta = fiberType?.__devtools_meta
+  const flatMeta = devtoolsMeta?.hooks ? flattenMetaHooks(devtoolsMeta.hooks) : null
+  const legacyHookMeta: unknown[] | undefined = fiberType?.__devtools_hooks
+
   while (a && b) {
     if (a.memoizedState !== b.memoizedState) {
       const inferred = inferHookType(b)
-      const entry: ChangedHook = { index, hookName: inferred.name }
-      const meta = hookMeta?.[index]
-      if (Array.isArray(meta)) {
-        if (typeof meta[0] === 'string') entry.varName = meta[0]
-      } else if (typeof meta === 'string') {
-        entry.varName = meta
+      // Prefer metadata hook name over inferred (inferred misses React 19 effect structure)
+      const metaEntry = flatMeta?.[index]
+      const hookName = (inferred.name !== 'hook' ? inferred.name : metaEntry?.hookName) ?? inferred.name
+      const entry: ChangedHook = { index, hookName }
+
+      if (metaEntry) {
+        const meta = metaEntry
+        if (meta.varName) entry.varName = meta.varName
+
+        // Dep-level diffing for effect/memo/callback hooks
+        if (meta.depNames && meta.depNames.length > 0) {
+          const prevDeps = extractDepsFromHook(a)
+          const nextDeps = extractDepsFromHook(b)
+          if (prevDeps && nextDeps) {
+            const changedDeps: Array<{ name: string; prev: unknown; next: unknown }> = []
+            const maxLen = Math.max(prevDeps.length, nextDeps.length)
+            for (let di = 0; di < maxLen; di++) {
+              if (!Object.is(prevDeps[di], nextDeps[di])) {
+                changedDeps.push({
+                  name: meta.depNames[di] ?? `dep[${di}]`,
+                  prev: prevDeps[di],
+                  next: nextDeps[di],
+                })
+              }
+            }
+            if (changedDeps.length > 0) entry.changedDeps = changedDeps
+          }
+        }
+      } else if (legacyHookMeta) {
+        const meta = legacyHookMeta[index]
+        if (Array.isArray(meta)) {
+          if (typeof meta[0] === 'string') entry.varName = meta[0]
+        } else if (typeof meta === 'string') {
+          entry.varName = meta
+        }
       }
+
       changed.push(entry)
     }
     a = a.next

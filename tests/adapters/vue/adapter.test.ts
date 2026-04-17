@@ -4,11 +4,13 @@ import { describe, it, expect, vi } from 'vitest'
 vi.mock('node:fs', () => ({
   default: {
     readFileSync: vi.fn(),
-    existsSync: vi.fn(() => true),
+    existsSync: vi.fn(() => false),
+    statSync: vi.fn(() => ({ isFile: () => true })),
     writeFileSync: vi.fn(),
   },
   readFileSync: vi.fn(),
-  existsSync: vi.fn(() => true),
+  existsSync: vi.fn(() => false),
+  statSync: vi.fn(() => ({ isFile: () => true })),
   writeFileSync: vi.fn(),
 }))
 
@@ -111,6 +113,46 @@ import MyComp from './MyComp.vue'
   })
 })
 
+describe('vueAdapter.transform composable injection', () => {
+  it('injects __DEVTOOLS_COMPOSABLES__ for useX() calls in script setup', () => {
+    const code = `<template>
+  <div>{{ auth.user }}</div>
+</template>
+
+<script setup>
+import { useAuth } from './composables/useAuth'
+const auth = useAuth()
+const label = 'test'
+</script>`
+
+    const result = vueAdapter.transform(code, '/project/src/App.vue', '/project')
+    expect(result).not.toBeNull()
+    expect(result!.code).toContain('__DEVTOOLS_COMPOSABLES__')
+    expect(result!.code).toContain('useAuth')
+  })
+
+  it('injects varLines for Vue built-in calls without custom composables', () => {
+    const code = `<template>
+  <div>{{ count }}</div>
+</template>
+
+<script setup>
+const count = ref(0)
+const doubled = computed(() => count.value * 2)
+</script>`
+
+    const result = vueAdapter.transform(code, '/project/src/App.vue', '/project')
+    // varLines should be present even without custom composables
+    expect(result).not.toBeNull()
+    expect(result!.code).toContain('__DEVTOOLS_COMPOSABLES__')
+    expect(result!.code).toContain('"varLines"')
+    expect(result!.code).toContain('"count"')
+    expect(result!.code).toContain('"doubled"')
+    // But no custom composables
+    expect(result!.code).toContain('"composables":[]')
+  })
+})
+
 describe('vueAdapter.rewriteSource', () => {
   it('rewrites ref() initial value in script setup', () => {
     const source = `<template>
@@ -164,6 +206,46 @@ const x = 1
       editHint: { kind: 'vue-path', path: ['x'], stateType: 'setup' },
       value: 42,
       line: 6,
+      componentName: 'App',
+    })
+    expect(result).toBeNull()
+  })
+
+  it('rewrites reactive() nested property via vue-reactive-path', () => {
+    const source = `<template>
+  <div>{{ state.user.name }}</div>
+</template>
+
+<script setup>
+const state = reactive({
+  user: {
+    name: 'Dan',
+    role: 'dev'
+  }
+})
+</script>`
+
+    const result = vueAdapter.rewriteSource(source, {
+      editHint: { kind: 'vue-reactive-path', varName: 'state', propertyPath: ['user', 'name'] },
+      value: 'Alex',
+      line: 9,
+      componentName: 'App',
+    })
+    expect(result).not.toBeNull()
+    expect(result).toContain('"Alex"')
+    expect(result).not.toContain("'Dan'")
+  })
+
+  it('returns null for vue-reactive-path with wrong var name', () => {
+    const source = `<template><div /></template>
+<script setup>
+const state = reactive({ count: 0 })
+</script>`
+
+    const result = vueAdapter.rewriteSource(source, {
+      editHint: { kind: 'vue-reactive-path', varName: 'missing', propertyPath: ['count'] },
+      value: 5,
+      line: 3,
       componentName: 'App',
     })
     expect(result).toBeNull()

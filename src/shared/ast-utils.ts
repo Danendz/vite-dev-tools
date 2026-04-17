@@ -21,7 +21,7 @@ function buildLineStarts(code: string): LineStarts {
   return starts
 }
 
-function offsetToLineCol(lineStarts: LineStarts, offset: number): { line: number; column: number } {
+export function offsetToLineCol(lineStarts: LineStarts, offset: number): { line: number; column: number } {
   let lo = 0, hi = lineStarts.length - 1
   while (lo < hi) {
     const mid = (lo + hi + 1) >> 1
@@ -44,6 +44,10 @@ export interface HookCall {
   line: number
   /** Byte range of the first argument (for rewriting initial values) */
   firstArgRange: [number, number] | null
+  /** Dependency array variable names (for useEffect/useMemo/useCallback) */
+  depNames?: string[]
+  /** All destructured variable names when result is destructured (ObjectPattern/ArrayPattern) */
+  destructuredNames?: string[]
 }
 
 export interface JSXElementInfo {
@@ -194,50 +198,74 @@ function unwrapComponentInit(node: BaseNode): BaseNode | null {
 
 // ---- Hook call finder ----
 
+const DEFAULT_HOOK_FILTER = (name: string) => /^use[A-Z]/.test(name)
+
 export function findHookCalls(
   program: BaseNode,
   startOffset: number,
   endOffset: number,
   lineStarts?: LineStarts,
+  options?: { callFilter?: (name: string) => boolean },
 ): HookCall[] {
   const hooks: HookCall[] = []
   const ls = lineStarts ?? [0]
+  const matchCall = options?.callFilter ?? DEFAULT_HOOK_FILTER
 
   walkAST(program, (node, parent) => {
     if (node.type !== 'CallExpression') return
     if (node.range[0] < startOffset || node.range[1] > endOffset) return
 
-    // Check callee is use*
+    // Check callee matches filter
     const callee = node.callee
     let hookName: string | null = null
-    if (callee.type === 'Identifier' && /^use[A-Z]/.test(callee.name)) {
+    if (callee.type === 'Identifier' && matchCall(callee.name)) {
       hookName = callee.name
-    } else if (callee.type === 'MemberExpression' && callee.property?.type === 'Identifier' && /^use[A-Z]/.test(callee.property.name)) {
+    } else if (callee.type === 'MemberExpression' && callee.property?.type === 'Identifier' && matchCall(callee.property.name)) {
       hookName = callee.property.name
     }
     if (!hookName) return
 
     // Extract variable name from parent VariableDeclarator
     let varName: string | null = null
+    let destructuredNames: string[] | undefined
     if (parent?.type === 'VariableDeclarator') {
       const id = parent.id
       if (id.type === 'Identifier') {
         varName = id.name
-      } else if (id.type === 'ArrayPattern' && id.elements?.[0]?.type === 'Identifier') {
-        varName = id.elements[0].name
-      } else if (id.type === 'ObjectPattern' && id.properties?.[0]?.value?.type === 'Identifier') {
-        varName = id.properties[0].value.name
+      } else if (id.type === 'ArrayPattern') {
+        if (id.elements?.[0]?.type === 'Identifier') varName = id.elements[0].name
+        destructuredNames = (id.elements || [])
+          .filter((el: any) => el?.type === 'Identifier')
+          .map((el: any) => el.name)
+      } else if (id.type === 'ObjectPattern') {
+        if (id.properties?.[0]?.value?.type === 'Identifier') varName = id.properties[0].value.name
+        destructuredNames = (id.properties || [])
+          .map((p: any) => p.type === 'RestElement' ? p.argument : p.value)
+          .filter((v: any) => v?.type === 'Identifier')
+          .map((v: any) => v.name)
       }
     }
 
     const firstArgRange = node.arguments?.[0]?.range ?? null
 
-    hooks.push({
+    const hook: HookCall = {
       varName,
       hookName,
       line: offsetToLineCol(ls, node.start).line,
       firstArgRange,
-    })
+    }
+    if (destructuredNames?.length) hook.destructuredNames = destructuredNames
+
+    // Extract dep array for effect/memo/callback hooks
+    if (HOOKS_WITH_DEPS.has(hookName)) {
+      const depArgIndex = hookName === 'useImperativeHandle' ? 2 : 1
+      const depsArg = node.arguments?.[depArgIndex]
+      if (depsArg?.type === 'ArrayExpression') {
+        hook.depNames = extractDepNames(depsArg)
+      }
+    }
+
+    hooks.push(hook)
   })
 
   return hooks
@@ -332,6 +360,540 @@ export function findJSXAttribute(
   })
 
   return best
+}
+
+// ---- Constants for hook analysis ----
+
+/** React hooks that accept a dependency array */
+const HOOKS_WITH_DEPS = new Set([
+  'useEffect', 'useLayoutEffect', 'useInsertionEffect',
+  'useCallback', 'useMemo', 'useImperativeHandle',
+])
+
+/** React built-in hooks — these are leaf nodes, never recursed into */
+export const REACT_BUILT_IN_HOOKS = new Set([
+  'useState', 'useEffect', 'useLayoutEffect', 'useInsertionEffect',
+  'useRef', 'useCallback', 'useMemo', 'useReducer', 'useContext',
+  'useImperativeHandle', 'useDebugValue', 'useDeferredValue',
+  'useTransition', 'useId', 'useSyncExternalStore',
+  'useOptimistic', 'useActionState', 'useFormStatus', 'use',
+])
+
+/** Vue built-in composable functions — leaf nodes for Vue composable introspection */
+export const VUE_BUILT_IN_COMPOSABLES = new Set([
+  'ref', 'reactive', 'computed', 'watch', 'watchEffect',
+  'watchPostEffect', 'watchSyncEffect', 'shallowRef', 'shallowReactive',
+  'readonly', 'shallowReadonly', 'toRef', 'toRefs', 'toRaw',
+  'markRaw', 'triggerRef', 'customRef', 'unref', 'isRef', 'isReactive',
+  'isReadonly', 'isProxy', 'provide', 'inject',
+  'onMounted', 'onUpdated', 'onUnmounted', 'onBeforeMount',
+  'onBeforeUpdate', 'onBeforeUnmount', 'onErrorCaptured',
+  'onActivated', 'onDeactivated', 'onRenderTracked', 'onRenderTriggered',
+  'onServerPrefetch', 'useAttrs', 'useSlots', 'useCssModule',
+  'useCssVars', 'useTemplateRef', 'useId', 'useModel',
+  'defineProps', 'defineEmits', 'defineExpose', 'defineOptions',
+  'defineSlots', 'defineModel', 'withDefaults',
+])
+
+// ---- Dep array extraction ----
+
+/** Extract variable names from a dependency array expression */
+function extractDepNames(arrayExpr: BaseNode): string[] {
+  const names: string[] = []
+  for (const el of arrayExpr.elements || []) {
+    if (!el) { names.push('_'); continue }
+    if (el.type === 'Identifier') {
+      names.push(el.name)
+    } else if (el.type === 'MemberExpression') {
+      names.push(memberExprToString(el))
+    } else {
+      names.push('?')
+    }
+  }
+  return names
+}
+
+function memberExprToString(node: BaseNode): string {
+  if (node.type === 'Identifier') return node.name
+  if (node.type === 'MemberExpression') {
+    const obj = memberExprToString(node.object)
+    if (node.computed) return `${obj}[${memberExprToString(node.property)}]`
+    return `${obj}.${node.property?.name ?? '?'}`
+  }
+  return '?'
+}
+
+// ---- Deep hook/composable introspection ----
+
+export interface HookMeta {
+  varName: string | null
+  hookName: string
+  line: number
+  firstArgRange: [number, number] | null
+  depNames?: string[]
+  /** All destructured variable names from the call site */
+  destructuredNames?: string[]
+  /** Nested hooks inside a custom hook (recursive) */
+  innerHooks?: HookMeta[]
+  /** Non-hook local variable declarations inside this composable's body */
+  locals?: LocalVarMeta[]
+  /** Source file path if the hook is defined in a different file */
+  sourceFile?: string
+}
+
+export interface ResolvedHookSource {
+  program: BaseNode
+  bodyRange: [number, number]
+  lineStarts: LineStarts
+  sourceFile: string
+}
+
+/**
+ * Recursively find hook calls, introspecting custom hooks to build a tree.
+ * Built-in hooks are leaf nodes. Custom hooks are recursed into if their
+ * definition can be found (same file or via resolveHook callback).
+ */
+export function findHookCallsDeep(
+  program: BaseNode,
+  startOffset: number,
+  endOffset: number,
+  lineStarts?: LineStarts,
+  options?: {
+    builtIns?: Set<string>
+    callFilter?: (name: string) => boolean
+    resolveHook?: (hookName: string) => ResolvedHookSource | null
+    _visited?: Set<string>
+  },
+): HookMeta[] {
+  const builtIns = options?.builtIns ?? REACT_BUILT_IN_HOOKS
+  const callFilter = options?.callFilter
+  const visited = options?._visited ?? new Set<string>()
+  const ls = lineStarts
+
+  const calls = findHookCalls(program, startOffset, endOffset, ls, callFilter ? { callFilter } : undefined)
+
+  return calls.map(call => {
+    const meta: HookMeta = {
+      varName: call.varName,
+      hookName: call.hookName,
+      line: call.line,
+      firstArgRange: call.firstArgRange,
+      depNames: call.depNames,
+      destructuredNames: call.destructuredNames,
+    }
+
+    // If this is a custom hook (not built-in), try to introspect it
+    if (!builtIns.has(call.hookName) && !visited.has(call.hookName)) {
+      visited.add(call.hookName)
+
+      // Try same-file resolution first
+      const funcDef = findFunctionDefinition(program, call.hookName, ls)
+      if (funcDef) {
+        meta.innerHooks = findHookCallsDeep(
+          program, funcDef.bodyRange[0], funcDef.bodyRange[1],
+          ls, { builtIns, callFilter, resolveHook: options?.resolveHook, _visited: visited },
+        )
+        meta.locals = findLocalVarDeclarations(program, funcDef.bodyRange[0], funcDef.bodyRange[1], ls)
+      } else if (options?.resolveHook) {
+        const resolved = options.resolveHook(call.hookName)
+        if (resolved) {
+          meta.sourceFile = resolved.sourceFile
+          meta.innerHooks = findHookCallsDeep(
+            resolved.program, resolved.bodyRange[0], resolved.bodyRange[1],
+            resolved.lineStarts, { builtIns, callFilter, resolveHook: options?.resolveHook, _visited: visited },
+          )
+          meta.locals = findLocalVarDeclarations(
+            resolved.program, resolved.bodyRange[0], resolved.bodyRange[1], resolved.lineStarts,
+          )
+        }
+      }
+
+      visited.delete(call.hookName) // allow same hook name in different call positions
+    }
+
+    return meta
+  })
+}
+
+/**
+ * Find a function/arrow function declaration by name in the module scope.
+ * Used to resolve custom hooks defined in the same file.
+ */
+export function findFunctionDefinition(
+  program: BaseNode,
+  name: string,
+  lineStarts?: LineStarts,
+): { bodyRange: [number, number]; line: number } | null {
+  const ls = lineStarts ?? [0]
+
+  for (const stmt of program.body || []) {
+    let decl = stmt
+    if (stmt.type === 'ExportDefaultDeclaration' || stmt.type === 'ExportNamedDeclaration') {
+      decl = stmt.declaration
+    }
+    if (!decl) continue
+
+    if (decl.type === 'FunctionDeclaration' && decl.id?.name === name && decl.body) {
+      return { bodyRange: decl.body.range, line: offsetToLineCol(ls, decl.start).line }
+    }
+
+    if (decl.type === 'VariableDeclaration') {
+      for (const declarator of decl.declarations || []) {
+        if (declarator.id?.name !== name || !declarator.init) continue
+        const func = declarator.init
+        if (func.type === 'ArrowFunctionExpression' || func.type === 'FunctionExpression') {
+          return { bodyRange: func.body.range, line: offsetToLineCol(ls, decl.start).line }
+        }
+      }
+    }
+  }
+  return null
+}
+
+// ---- Local variable finder ----
+
+export interface LocalVarMeta {
+  name: string
+  line: number
+}
+
+/**
+ * Find local variable declarations in a component body that are NOT hook calls.
+ * Returns variable names with line numbers for jump-to-source.
+ */
+export function findLocalVarDeclarations(
+  program: BaseNode,
+  startOffset: number,
+  endOffset: number,
+  lineStarts?: LineStarts,
+): LocalVarMeta[] {
+  const locals: LocalVarMeta[] = []
+  const ls = lineStarts ?? [0]
+
+  walkAST(program, (node) => {
+    if (node.type !== 'VariableDeclaration') return
+    if (node.range[0] < startOffset || node.range[1] > endOffset) return
+
+    for (const declarator of node.declarations || []) {
+      if (!declarator.id || !declarator.init) continue
+
+      // Skip hook calls (already handled by hook finder)
+      if (declarator.init.type === 'CallExpression') {
+        const callee = declarator.init.callee
+        if (callee?.type === 'Identifier' && /^use[A-Z]/.test(callee.name)) continue
+        if (callee?.type === 'MemberExpression' && callee.property?.type === 'Identifier' && /^use[A-Z]/.test(callee.property.name)) continue
+        // Vue composables
+        if (callee?.type === 'Identifier' && VUE_BUILT_IN_COMPOSABLES.has(callee.name)) continue
+      }
+
+      // Skip await expressions wrapping hook calls
+      if (declarator.init.type === 'AwaitExpression' && declarator.init.argument?.type === 'CallExpression') {
+        const callee = declarator.init.argument.callee
+        if (callee?.type === 'Identifier' && /^use[A-Z]/.test(callee.name)) continue
+      }
+
+      const id = declarator.id
+      if (id.type === 'Identifier') {
+        // Skip PascalCase (likely components, not variables)
+        if (/^[A-Z]/.test(id.name)) continue
+        locals.push({ name: id.name, line: offsetToLineCol(ls, declarator.start).line })
+      } else if (id.type === 'ArrayPattern') {
+        for (const el of id.elements || []) {
+          if (el?.type === 'Identifier' && !/^[A-Z]/.test(el.name)) {
+            locals.push({ name: el.name, line: offsetToLineCol(ls, declarator.start).line })
+          }
+        }
+      } else if (id.type === 'ObjectPattern') {
+        for (const prop of id.properties || []) {
+          const val = prop.type === 'RestElement' ? prop.argument : prop.value
+          if (val?.type === 'Identifier' && !/^[A-Z]/.test(val.name)) {
+            locals.push({ name: val.name, line: offsetToLineCol(ls, declarator.start).line })
+          }
+        }
+      }
+    }
+  })
+
+  return locals
+}
+
+// ---- Prop origin tracing ----
+
+export interface PropOriginInfo {
+  source: 'local' | 'import'
+  varName: string
+  line: number
+  /** Import source path (for imports) */
+  importPath?: string
+  /** Whether the initializer is a static literal/array/object */
+  isStatic: boolean
+}
+
+/**
+ * Trace a variable name to its declaration (local const/let/var or import).
+ * Used to determine where a JSX prop value comes from.
+ */
+export function traceIdentifierToDeclaration(
+  program: BaseNode,
+  identName: string,
+  lineStarts?: LineStarts,
+): PropOriginInfo | null {
+  const ls = lineStarts ?? [0]
+
+  // Check imports first
+  for (const stmt of program.body || []) {
+    if (stmt.type !== 'ImportDeclaration' || !stmt.source?.value) continue
+    for (const spec of stmt.specifiers || []) {
+      if (
+        (spec.type === 'ImportSpecifier' || spec.type === 'ImportDefaultSpecifier') &&
+        spec.local?.name === identName
+      ) {
+        return {
+          source: 'import',
+          varName: identName,
+          line: offsetToLineCol(ls, stmt.start).line,
+          importPath: stmt.source.value,
+          isStatic: false, // can't know without resolving
+        }
+      }
+    }
+  }
+
+  // Check local declarations
+  for (const stmt of program.body || []) {
+    let decl = stmt
+    if (stmt.type === 'ExportNamedDeclaration') decl = stmt.declaration
+    if (!decl || decl.type !== 'VariableDeclaration') continue
+
+    for (const declarator of decl.declarations || []) {
+      if (declarator.id?.type === 'Identifier' && declarator.id.name === identName) {
+        return {
+          source: 'local',
+          varName: identName,
+          line: offsetToLineCol(ls, declarator.start).line,
+          isStatic: declarator.init ? isStaticInitializer(declarator.init) : false,
+        }
+      }
+    }
+  }
+
+  return null
+}
+
+function isStaticInitializer(node: BaseNode): boolean {
+  if (!node) return false
+  if (node.type === 'Literal') return true
+  if (node.type === 'ArrayExpression') {
+    return (node.elements || []).every((el: any) => el && isStaticInitializer(el))
+  }
+  if (node.type === 'ObjectExpression') {
+    return (node.properties || []).every((p: any) =>
+      p.type === 'Property' && isStaticInitializer(p.value),
+    )
+  }
+  if (node.type === 'UnaryExpression' && node.operator === '-' && node.argument?.type === 'Literal') {
+    return true
+  }
+  if (node.type === 'TemplateLiteral' && (!node.expressions || node.expressions.length === 0)) {
+    return true
+  }
+  return false
+}
+
+// ---- Import resolution ----
+
+/**
+ * Find an import statement for a given identifier in the program AST.
+ * Returns the import source path and line number.
+ */
+export function findImportSource(
+  program: BaseNode,
+  name: string,
+  lineStarts?: LineStarts,
+): { importPath: string; line: number; isDefault: boolean } | null {
+  const ls = lineStarts ?? [0]
+  for (const stmt of program.body || []) {
+    if (stmt.type !== 'ImportDeclaration' || !stmt.source?.value) continue
+    for (const spec of stmt.specifiers || []) {
+      if (spec.type === 'ImportSpecifier' && spec.local?.name === name) {
+        return { importPath: stmt.source.value, line: offsetToLineCol(ls, stmt.start).line, isDefault: false }
+      }
+      if (spec.type === 'ImportDefaultSpecifier' && spec.local?.name === name) {
+        return { importPath: stmt.source.value, line: offsetToLineCol(ls, stmt.start).line, isDefault: true }
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * Find an exported variable declaration in a parsed program.
+ * Returns the variable's initializer range for rewriting.
+ */
+export function findExportedVariable(
+  program: BaseNode,
+  name: string,
+  isDefault: boolean,
+  lineStarts?: LineStarts,
+): { initRange: [number, number]; line: number; isStatic: boolean } | null {
+  const ls = lineStarts ?? [0]
+
+  for (const stmt of program.body || []) {
+    // export default <value>
+    if (isDefault && stmt.type === 'ExportDefaultDeclaration' && stmt.declaration) {
+      const decl = stmt.declaration
+      if (decl.type === 'Literal' || decl.type === 'ArrayExpression' || decl.type === 'ObjectExpression') {
+        return { initRange: decl.range, line: offsetToLineCol(ls, stmt.start).line, isStatic: isStaticInitializer(decl) }
+      }
+    }
+
+    // export const X = ... or const X = ... (with separate export)
+    let varDecl = stmt
+    if (stmt.type === 'ExportNamedDeclaration') varDecl = stmt.declaration
+    if (!varDecl || varDecl.type !== 'VariableDeclaration') continue
+
+    for (const declarator of varDecl.declarations || []) {
+      if (declarator.id?.type === 'Identifier' && declarator.id.name === name && declarator.init) {
+        return {
+          initRange: declarator.init.range,
+          line: offsetToLineCol(ls, declarator.start).line,
+          isStatic: isStaticInitializer(declarator.init),
+        }
+      }
+    }
+  }
+  return null
+}
+
+// ---- Vue reactive() property finder ----
+
+/**
+ * Find a nested property value in a reactive() object literal for rewriting.
+ * Given `const state = reactive({ user: { name: 'Dan' } })` and path ['user', 'name'],
+ * returns the range of 'Dan' for source splicing.
+ */
+export function findReactiveObjectProperty(
+  program: BaseNode,
+  varName: string,
+  propertyPath: string[],
+  lineStarts?: LineStarts,
+): { range: [number, number]; line: number } | null {
+  const ls = lineStarts ?? [0]
+
+  // Find the variable declaration
+  let objectExpr: BaseNode | null = null
+  walkAST(program, (node) => {
+    if (objectExpr) return // already found
+    if (node.type !== 'VariableDeclarator') return
+    if (node.id?.type !== 'Identifier' || node.id.name !== varName) return
+    // Check if init is reactive(...)
+    const init = node.init
+    if (init?.type === 'CallExpression' && init.callee?.type === 'Identifier' && init.callee.name === 'reactive') {
+      const arg = init.arguments?.[0]
+      if (arg?.type === 'ObjectExpression') {
+        objectExpr = arg
+      }
+    }
+  })
+
+  if (!objectExpr) return null
+
+  // Walk the property path
+  let current: BaseNode = objectExpr
+  for (const key of propertyPath) {
+    if (current.type !== 'ObjectExpression') return null
+    const prop = (current.properties || []).find((p: any) =>
+      p.type === 'Property' &&
+      ((p.key?.type === 'Identifier' && p.key.name === key) ||
+       (p.key?.type === 'Literal' && p.key.value === key)),
+    )
+    if (!prop) return null
+    current = prop.value
+  }
+
+  return { range: current.range, line: offsetToLineCol(ls, current.start).line }
+}
+
+// ---- JSX prop value tracing ----
+
+/**
+ * For each prop on a JSX element, check if the value is a variable reference
+ * and trace it to its declaration. Returns a map of propKey → PropOriginInfo.
+ */
+export function traceJSXPropOrigins(
+  program: BaseNode,
+  nearLine: number,
+  lineWindow: number = 3,
+  lineStarts?: LineStarts,
+): Record<string, PropOriginInfo> | null {
+  const ls = lineStarts ?? [0]
+  const origins: Record<string, PropOriginInfo> = {}
+  let found = false
+
+  walkAST(program, (node) => {
+    if (node.type !== 'JSXOpeningElement') return
+    const line = offsetToLineCol(ls, node.start).line
+    if (Math.abs(line - nearLine) > lineWindow) return
+
+    for (const attr of node.attributes || []) {
+      if (attr.type !== 'JSXAttribute') continue
+      if (!attr.name?.name || !attr.value) continue
+      const propKey = attr.name.name
+
+      // Only trace expression props with identifier values: prop={varName}
+      if (attr.value.type === 'JSXExpressionContainer' && attr.value.expression?.type === 'Identifier') {
+        const identName = attr.value.expression.name
+        const origin = traceIdentifierToDeclaration(program, identName, ls)
+        if (origin) {
+          origins[propKey] = origin
+          found = true
+        }
+      }
+    }
+  })
+
+  return found ? origins : null
+}
+
+// ---- Vue call site extraction (watch/provide) ----
+
+export interface VueCallSites {
+  callLines: Record<string, number[]>
+  provides: Array<{ key?: string; line: number }>
+}
+
+const VUE_TRACKED_CALLS = new Set(['watch', 'watchEffect', 'watchPostEffect', 'watchSyncEffect', 'provide'])
+
+/**
+ * Find watch/watchEffect/provide call sites within a scope range.
+ * Returns watcher call line numbers (for index-based matching with runtime effects)
+ * and provide entries with optional string key (for key-based matching).
+ */
+export function findVueCallSites(program: BaseNode, bodyStart: number, bodyEnd: number, lineStarts: LineStarts): VueCallSites {
+  const callLines: Record<string, number[]> = {}
+  const provides: VueCallSites['provides'] = []
+
+  walkAST(program, (node) => {
+    if (node.start < bodyStart || node.start > bodyEnd) return
+    if (node.type !== 'CallExpression') return
+    const callee = node.callee
+    if (callee?.type !== 'Identifier' || !VUE_TRACKED_CALLS.has(callee.name)) return
+
+    const line = offsetToLineCol(lineStarts, node.start).line
+
+    if (callee.name === 'provide') {
+      const firstArg = node.arguments?.[0]
+      const key = firstArg?.type === 'StringLiteral' || (firstArg?.type === 'Literal' && typeof firstArg.value === 'string')
+        ? firstArg.value
+        : undefined
+      provides.push({ key: typeof key === 'string' ? key : undefined, line })
+    } else {
+      if (!callLines[callee.name]) callLines[callee.name] = []
+      callLines[callee.name].push(line)
+    }
+  })
+
+  return { callLines, provides }
 }
 
 // ---- Source splicing ----

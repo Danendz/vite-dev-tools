@@ -8,7 +8,7 @@ import type {
 } from '../../core/types'
 import { computeRenderCause, isComponentFiber as isCauseComponentFiber } from './render-cause'
 import { getPersistentId } from './persistent-id'
-import { safeStringify } from '../../shared/preview-value'
+import { safeStringify, prettyStringify } from '../../shared/preview-value'
 
 // React fiber tag constants
 const FunctionComponent = 0
@@ -55,12 +55,42 @@ function getComponentName(fiber: any): string {
 }
 
 /**
+ * Count how many fibers with the same component name appear before `target`
+ * in a DFS walk of `parentFiber`'s subtree. Stops at user component boundaries
+ * (those with __devtools_source) since their JSX is in their own file's usage map.
+ */
+function countSameNameBefore(target: any, parentFiber: any, componentName: string): number {
+  let count = 0
+  function walk(f: any): boolean {
+    let child = f.child
+    while (child) {
+      if (child === target) return true
+      if (COMPONENT_TAGS.has(child.tag) && getComponentName(child) === componentName) {
+        count++
+      }
+      // Don't recurse into other user components — their JSX is in their own file
+      const hasSource = child.type?.__devtools_source || child.elementType?.__devtools_source
+      if (COMPONENT_TAGS.has(child.tag) && hasSource) {
+        // skip subtree
+      } else {
+        if (walk(child)) return true
+      }
+      child = child.sibling
+    }
+    return false
+  }
+  walk(parentFiber)
+  return count
+}
+
+/**
  * Look up usage-site source from the compile-time usage map (__DEVTOOLS_USAGE_MAP__).
  * Walks up the fiber tree to find the parent component's file, then looks up
  * the current component name in that file's usage map.
+ * For multi-usage components, disambiguates by counting same-name fibers in DFS order.
  * Populated by the Vite transform for React 19+ (where _debugSource is unavailable).
  */
-function parseUsageSourceFromMap(fiber: any): { fileName: string; lineNumber: number; columnNumber: number } | null {
+function lookupUsageMapEntry(fiber: any): { line: number; col: number; propOrigins?: Record<string, any>; filePath: string } | null {
   const map = (globalThis as any).__DEVTOOLS_USAGE_MAP__
   if (!map) return null
 
@@ -71,18 +101,17 @@ function parseUsageSourceFromMap(fiber: any): { fileName: string; lineNumber: nu
   let parent = fiber.return
   while (parent) {
     if (COMPONENT_TAGS.has(parent.tag)) {
-      const parentFile = parent.type?.__devtools_source?.fileName
+      const parentFile = parent.type?.__devtools_source?.fileName ?? parent.elementType?.__devtools_source?.fileName
       if (parentFile) {
         for (const [filePath, fileUsages] of Object.entries(map)) {
           if (!parentFile.endsWith(filePath)) continue
 
           const locations = (fileUsages as any)[componentName]
           if (locations && locations.length > 0) {
-            return {
-              fileName: filePath.startsWith('/') ? filePath : `/${filePath}`,
-              lineNumber: locations[0].line,
-              columnNumber: locations[0].col,
-            }
+            if (locations.length === 1) return { ...locations[0], filePath }
+            // Multiple usages — pick by position among same-name descendants
+            const index = countSameNameBefore(fiber, parent, componentName)
+            return { ...locations[Math.min(index, locations.length - 1)], filePath }
           }
         }
       }
@@ -93,9 +122,24 @@ function parseUsageSourceFromMap(fiber: any): { fileName: string; lineNumber: nu
   return null
 }
 
+function parseUsageSourceFromMap(fiber: any): { fileName: string; lineNumber: number; columnNumber: number } | null {
+  const entry = lookupUsageMapEntry(fiber)
+  if (!entry) return null
+  return {
+    fileName: entry.filePath.startsWith('/') ? entry.filePath : `/${entry.filePath}`,
+    lineNumber: entry.line,
+    columnNumber: entry.col,
+  }
+}
+
+function getPropOriginsFromMap(fiber: any): Record<string, any> | undefined {
+  const entry = lookupUsageMapEntry(fiber)
+  return entry?.propOrigins
+}
+
 /**
  * Get the React-provided usage-site source (where component is rendered in parent JSX).
- * Returns from _debugSource (React 18), compile-time usage map, or _debugStack (React 19+).
+ * Returns from _debugSource (React 18) or compile-time usage map (React 19+).
  */
 function getReactSource(fiber: any) {
   if (fiber._debugSource) {
@@ -106,14 +150,9 @@ function getReactSource(fiber: any) {
     }
   }
 
-  // Try compile-time usage map (accurate source positions for React 19+)
+  // Compile-time usage map — correct original-source line numbers
   const mapSource = parseUsageSourceFromMap(fiber)
   if (mapSource) return mapSource
-
-  if (fiber._debugStack) {
-    const parsed = parseDebugStack(fiber._debugStack)
-    if (parsed) return parsed
-  }
 
   return null
 }
@@ -125,7 +164,7 @@ function getReactSource(fiber: any) {
  * - usageSource: React source (usage) only when __devtools_source was used as primary
  */
 function getSourceLocations(fiber: any): { source: ReturnType<typeof getReactSource>, usageSource: ReturnType<typeof getReactSource> } {
-  const definitionSource = fiber.type?.__devtools_source ?? null
+  const definitionSource = fiber.type?.__devtools_source ?? fiber.elementType?.__devtools_source ?? null
   const reactSource = getReactSource(fiber)
 
   if (definitionSource) {
@@ -134,45 +173,6 @@ function getSourceLocations(fiber: any): { source: ReturnType<typeof getReactSou
   return { source: reactSource, usageSource: null }
 }
 
-type ParsedStack = { fileName: string; lineNumber: number; columnNumber: number } | null
-
-// Cache parsed stack results to avoid re-parsing the same stack
-const stackCache = new WeakMap<object, ParsedStack>()
-
-function parseDebugStack(stack: Error | string): ParsedStack {
-  const stackObj = typeof stack === 'string' ? null : stack
-  if (stackObj && stackCache.has(stackObj)) {
-    return stackCache.get(stackObj)!
-  }
-
-  const stackStr = typeof stack === 'string' ? stack : stack.stack
-  if (!stackStr) return null
-
-  // Parse stack frames — look for the first frame that points to user source code
-  const lines = stackStr.split('\n')
-  for (const line of lines) {
-    if (!line.includes('at ')) continue
-    if (line.includes('node_modules/')) continue
-    if (line.includes('.vite/deps/')) continue
-    if (line.includes('.vite/')) continue
-    if (line.includes('react-stack-top-frame')) continue
-    if (line.includes('chunk-')) continue
-
-    const match = line.match(/(?:https?:\/\/[^/]+)?(\/[^:?]+)(?:\?[^:]*)?:(\d+):(\d+)/)
-    if (match) {
-      const result = {
-        fileName: match[1],
-        lineNumber: parseInt(match[2], 10),
-        columnNumber: parseInt(match[3], 10),
-      }
-      if (stackObj) stackCache.set(stackObj, result)
-      return result
-    }
-  }
-
-  if (stackObj) stackCache.set(stackObj, null)
-  return null
-}
 
 function isFromNodeModules(fiber: any): boolean {
   const { source } = getSourceLocations(fiber)
@@ -242,49 +242,205 @@ export function inferHookType(hook: any): { name: string; value: unknown } {
   return { name: 'hook', value: memoizedState }
 }
 
-function getHooksSection(fiber: any): InspectorSection | null {
-  // Only function components have hooks in memoizedState as linked list
-  if (fiber.tag !== FunctionComponent) return null
+/** Compact metadata format injected at build time */
+interface MetaHook {
+  n: string | null  // varName
+  h: string         // hookName
+  l: number         // line
+  d?: string[]      // depNames
+  i?: MetaHook[]    // innerHooks
+  f?: string        // sourceFile
+}
 
-  const items: InspectorItem[] = []
-  const rawHookData: unknown[] | undefined = fiber.type?.__devtools_hooks
-  let hookIndex = 0
+interface DevtoolsMeta {
+  hooks: MetaHook[]
+  locals?: Array<{ n: string; l: number }>
+}
+
+/**
+ * Collect all hooks from the fiber's memoizedState linked list into an array.
+ */
+function collectHookList(fiber: any): any[] {
+  const hooks: any[] = []
   let hook = fiber.memoizedState
   while (hook !== null && hook !== undefined) {
-    const inferred = inferHookType(hook)
-    const entry = rawHookData?.[hookIndex]
-
-    let varName: string | undefined
-    let lineNumber: number | undefined
-
-    if (Array.isArray(entry)) {
-      varName = entry[0] ?? undefined
-      lineNumber = entry[1]
-    } else if (typeof entry === 'string') {
-      varName = entry
-    }
-
-    const editable =
-      (inferred.name === 'useState' && typeof inferred.value !== 'function' && typeof hook.queue?.dispatch === 'function') ||
-      inferred.name === 'useRef'
-
-    const persistable = inferred.name === 'useState' && editable
-
-    items.push({
-      key: varName ?? inferred.name,
-      value: inferred.value,
-      editable,
-      persistable,
-      editHint: editable ? {
-        kind: 'react-hook',
-        hookIndex,
-        hookType: inferred.name as 'useState' | 'useRef',
-      } : undefined,
-      badge: varName ? inferred.name : undefined,
-      lineNumber,
-    })
-    hookIndex++
+    hooks.push(hook)
     hook = hook.next
+  }
+  return hooks
+}
+
+/**
+ * Build InspectorItem[] from hook metadata, consuming hooks from the flat list.
+ * When a custom hook has innerHooks, it groups consecutive hooks from the flat list
+ * and nests them under the custom hook item.
+ */
+function buildHookItems(
+  metaHooks: MetaHook[],
+  flatHooks: any[],
+  startIndex: { value: number },
+): InspectorItem[] {
+  const items: InspectorItem[] = []
+
+  for (const meta of metaHooks) {
+    if (meta.i && meta.i.length > 0) {
+      // Custom hook with inner hooks — consume inner hooks from the flat list
+      const innerItems = buildHookItems(meta.i, flatHooks, startIndex)
+      items.push({
+        key: meta.n ?? meta.h,
+        value: null,
+        editable: false,
+        persistable: false,
+        badge: meta.h,
+        lineNumber: meta.l,
+        innerHooks: innerItems,
+        sourceFile: meta.f,
+      })
+    } else {
+      // Leaf hook — consume one from the flat list
+      const hook = flatHooks[startIndex.value]
+      const hookIndex = startIndex.value
+      startIndex.value++
+
+      if (!hook) {
+        // Hook metadata doesn't match runtime — skip gracefully
+        items.push({
+          key: meta.n ?? meta.h,
+          value: '[unavailable]',
+          editable: false,
+          persistable: false,
+          badge: meta.h,
+          lineNumber: meta.l,
+        })
+        continue
+      }
+
+      const inferred = inferHookType(hook)
+
+      const editable =
+        (inferred.name === 'useState' && typeof inferred.value !== 'function' && typeof hook.queue?.dispatch === 'function') ||
+        inferred.name === 'useRef'
+
+      const persistable = inferred.name === 'useState' && editable
+
+      // Prefer metadata hook type over inferred (inferred can miss React 19 effect structure)
+      const hookName = inferred.name !== 'hook' ? inferred.name : (meta.h ?? 'hook')
+      const value = inferred.name !== 'hook' ? inferred.value : undefined
+
+      const item: InspectorItem = {
+        key: meta.n ?? hookName,
+        value,
+        editable,
+        persistable,
+        editHint: editable ? {
+          kind: 'react-hook',
+          hookIndex,
+          hookType: hookName as 'useState' | 'useRef',
+        } : undefined,
+        badge: meta.n ? hookName : undefined,
+        lineNumber: meta.l,
+      }
+
+      // Attach dep names for effect/memo/callback hooks
+      if (meta.d) {
+        item.depNames = meta.d
+        // Extract current dep values from hook state
+        if (inferred.name === 'useEffect' || inferred.name === 'useLayoutEffect' || inferred.name === 'useInsertionEffect') {
+          const effect = hook.memoizedState
+          if (effect?.deps) item.depValues = effect.deps
+        } else if (inferred.name === 'useMemo' || inferred.name === 'useCallback') {
+          const ms = hook.memoizedState
+          if (Array.isArray(ms) && ms.length === 2 && Array.isArray(ms[1])) {
+            item.depValues = ms[1]
+          }
+        }
+      }
+
+      if (meta.f) item.sourceFile = meta.f
+
+      items.push(item)
+    }
+  }
+
+  return items
+}
+
+function getHooksSection(fiber: any): InspectorSection | null {
+  // Only function components have hooks in memoizedState as linked list
+  if (fiber.tag !== FunctionComponent && fiber.tag !== SimpleMemoComponent && fiber.tag !== MemoComponent) return null
+
+  // For memo() components, __devtools_meta is on the memo wrapper (elementType), not the inner function (type)
+  const meta: DevtoolsMeta | undefined = fiber.type?.__devtools_meta ?? fiber.elementType?.__devtools_meta
+  const flatHooks = collectHookList(fiber)
+  if (flatHooks.length === 0) return null
+
+  let items: InspectorItem[]
+
+  if (meta?.hooks && meta.hooks.length > 0) {
+    // New path: use __devtools_meta for nested tree with dep info
+    const indexRef = { value: 0 }
+    items = buildHookItems(meta.hooks, flatHooks, indexRef)
+
+    // If there are remaining unmatched hooks (metadata doesn't cover all), add them
+    while (indexRef.value < flatHooks.length) {
+      const hook = flatHooks[indexRef.value]
+      const inferred = inferHookType(hook)
+      const hookIndex = indexRef.value
+      indexRef.value++
+
+      const editable =
+        (inferred.name === 'useState' && typeof inferred.value !== 'function' && typeof hook.queue?.dispatch === 'function') ||
+        inferred.name === 'useRef'
+
+      items.push({
+        key: inferred.name,
+        value: inferred.value,
+        editable,
+        persistable: inferred.name === 'useState' && editable,
+        editHint: editable ? { kind: 'react-hook', hookIndex, hookType: inferred.name as 'useState' | 'useRef' } : undefined,
+      })
+    }
+  } else {
+    // Legacy path: __devtools_hooks or no metadata
+    const rawHookData: unknown[] | undefined = fiber.type?.__devtools_hooks
+    items = []
+    let hookIndex = 0
+
+    for (const hook of flatHooks) {
+      const inferred = inferHookType(hook)
+      const entry = rawHookData?.[hookIndex]
+
+      let varName: string | undefined
+      let lineNumber: number | undefined
+
+      if (Array.isArray(entry)) {
+        varName = entry[0] ?? undefined
+        lineNumber = entry[1]
+      } else if (typeof entry === 'string') {
+        varName = entry
+      }
+
+      const editable =
+        (inferred.name === 'useState' && typeof inferred.value !== 'function' && typeof hook.queue?.dispatch === 'function') ||
+        inferred.name === 'useRef'
+
+      const persistable = inferred.name === 'useState' && editable
+
+      items.push({
+        key: varName ?? inferred.name,
+        value: inferred.value,
+        editable,
+        persistable,
+        editHint: editable ? {
+          kind: 'react-hook',
+          hookIndex,
+          hookType: inferred.name as 'useState' | 'useRef',
+        } : undefined,
+        badge: varName ? inferred.name : undefined,
+        lineNumber,
+      })
+      hookIndex++
+    }
   }
 
   return items.length > 0 ? { id: 'hooks', label: 'Hooks', items } : null
@@ -404,10 +560,6 @@ function getHostElementSource(fiber: any): ReturnType<typeof getReactSource> {
         }
       }
     }
-  }
-
-  if (fiber._debugStack) {
-    return parseDebugStack(fiber._debugStack)
   }
 
   return null
@@ -539,6 +691,7 @@ function attachRenderCause(
     changedProps: cause.changedProps,
     changedHooks: cause.changedHooks,
     changedContexts: cause.changedContexts,
+    effectChanges: cause.effectChanges,
   }
 
   if (opts.includeValues && cause.changedProps && cause.changedProps.length > 0) {
@@ -546,18 +699,26 @@ function attachRenderCause(
     const nextProps = fiber.memoizedProps ?? {}
     const previousValues: Record<string, string> = {}
     const nextValues: Record<string, string> = {}
+    const fullPrev: Record<string, string> = {}
+    const fullNext: Record<string, string> = {}
     for (const key of cause.changedProps) {
       previousValues[key] = safeStringify(prevProps[key])
       nextValues[key] = safeStringify(nextProps[key])
+      fullPrev[key] = prettyStringify(prevProps[key])
+      fullNext[key] = prettyStringify(nextProps[key])
     }
     entry.previousValues = previousValues
     entry.nextValues = nextValues
+    entry.fullPreviousValues = fullPrev
+    entry.fullNextValues = fullNext
   }
 
   if (opts.includeValues && cause.changedHooks && cause.changedHooks.length > 0) {
     const changedIndices = new Set(cause.changedHooks.map((h) => h.index))
     const previousHookValues: Record<string, string> = {}
     const nextHookValues: Record<string, string> = {}
+    const fullPrevHook: Record<string, string> = {}
+    const fullNextHook: Record<string, string> = {}
     let prevHook = fiber.alternate?.memoizedState
     let nextHook = fiber.memoizedState
     let idx = 0
@@ -569,6 +730,8 @@ function attachRenderCause(
         const nextInferred = inferHookType(nextHook)
         previousHookValues[key] = safeStringify(prevInferred.value)
         nextHookValues[key] = safeStringify(nextInferred.value)
+        fullPrevHook[key] = prettyStringify(prevInferred.value)
+        fullNextHook[key] = prettyStringify(nextInferred.value)
       }
       prevHook = prevHook.next
       nextHook = nextHook.next
@@ -576,6 +739,8 @@ function attachRenderCause(
     }
     entry.previousHookValues = previousHookValues
     entry.nextHookValues = nextHookValues
+    entry.fullPreviousHookValues = fullPrevHook
+    entry.fullNextHookValues = fullNextHook
   }
 
   opts.entries.push(entry)
@@ -613,6 +778,10 @@ function walkFiberChildren(
         const stateSection = getStateSection(child)
         if (stateSection) sections.push(stateSection)
 
+        // Extract local variables from __devtools_meta (check elementType for memo() components)
+        const metaLocals = (child.type?.__devtools_meta?.locals ?? child.elementType?.__devtools_meta?.locals) as Array<{ n: string; l: number }> | undefined
+        const locals = metaLocals?.map((l: { n: string; l: number }) => ({ name: l.n, line: l.l }))
+
         const node: NormalizedNode = {
           id: `fiber_${nodeIdCounter++}`,
           name,
@@ -626,6 +795,8 @@ function walkFiberChildren(
           textContent: texts.join(' ') || undefined,
           textFragments: texts.length > 0 ? texts : undefined,
           _textFibers: textFibers.length > 0 ? textFibers : undefined,
+          locals: locals && locals.length > 0 ? locals : undefined,
+          propOrigins: getPropOriginsFromMap(child),
         }
         fiberRefMap.set(node.id, child)
         if (causeOpts) attachRenderCause(node, child, causeOpts)

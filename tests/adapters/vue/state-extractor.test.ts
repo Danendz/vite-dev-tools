@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { extractSections } from '@/adapters/vue/state-extractor'
 
 function createRef(value: any) {
@@ -32,7 +32,7 @@ describe('extractSections', () => {
     expect(countItem!.persistable).toBe(true)
   })
 
-  it('extracts reactive values with badge and editable=false', () => {
+  it('extracts reactive values with badge and editable=true', () => {
     const reactiveObj = createReactive({ x: 1 })
     const instance = {
       setupState: { state: reactiveObj, __v_raw: { state: reactiveObj } },
@@ -43,7 +43,9 @@ describe('extractSections', () => {
     expect(setupSection).toBeDefined()
     const stateItem = setupSection!.items.find(i => i.key === 'state')
     expect(stateItem!.badge).toBe('reactive')
-    expect(stateItem!.editable).toBe(false)
+    expect(stateItem!.editable).toBe(true)
+    expect(stateItem!.persistable).toBe(true)
+    expect(stateItem!.editHint).toEqual({ kind: 'vue-reactive-path', varName: 'state', propertyPath: [] })
   })
 
   it('extracts computed values in separate section', () => {
@@ -156,5 +158,258 @@ describe('extractSections', () => {
     const instance = {}
     const sections = extractSections(instance)
     expect(sections.length).toBe(0)
+  })
+
+  describe('watcher dep tracking', () => {
+    it('extracts dep key names from effect.deps linked list', () => {
+      const instance = {
+        scope: {
+          effects: [
+            {
+              fn: () => {},
+              scheduler: () => {},
+              cb: () => {},
+              getter: () => 42,
+              deps: {
+                dep: { key: 'count' },
+                nextDep: {
+                  dep: { key: 'name' },
+                  nextDep: null,
+                },
+              },
+            },
+          ],
+        },
+      }
+
+      const sections = extractSections(instance)
+      const watcherSection = sections.find(s => s.id === 'watchers')
+      expect(watcherSection).toBeDefined()
+      expect(watcherSection!.items[0].depNames).toEqual(['count', 'name'])
+    })
+
+    it('deduplicates dep keys', () => {
+      const instance = {
+        scope: {
+          effects: [
+            {
+              fn: () => {},
+              scheduler: () => {},
+              deps: {
+                dep: { key: 'count' },
+                nextDep: {
+                  dep: { key: 'count' }, // duplicate
+                  nextDep: null,
+                },
+              },
+            },
+          ],
+        },
+      }
+
+      const sections = extractSections(instance)
+      const watcherSection = sections.find(s => s.id === 'watchers')
+      expect(watcherSection!.items[0].depNames).toEqual(['count'])
+    })
+
+    it('returns undefined depNames when no deps linked list', () => {
+      const instance = {
+        scope: {
+          effects: [
+            {
+              fn: () => {},
+              scheduler: () => {},
+            },
+          ],
+        },
+      }
+
+      const sections = extractSections(instance)
+      const watcherSection = sections.find(s => s.id === 'watchers')
+      expect(watcherSection!.items[0].depNames).toBeUndefined()
+    })
+  })
+
+  describe('composable metadata wiring', () => {
+    let savedComposables: any
+
+    beforeEach(() => {
+      savedComposables = (globalThis as any).__DEVTOOLS_COMPOSABLES__
+    })
+
+    afterEach(() => {
+      if (savedComposables === undefined) {
+        delete (globalThis as any).__DEVTOOLS_COMPOSABLES__
+      } else {
+        (globalThis as any).__DEVTOOLS_COMPOSABLES__ = savedComposables
+      }
+    })
+
+    it('wires sourceFile from composable metadata', () => {
+      ;(globalThis as any).__DEVTOOLS_COMPOSABLES__ = {
+        'src/App.vue': {
+          composables: [
+            { h: 'useCounter', l: 5, f: 'src/composables/useCounter.ts', i: [{ n: 'count', h: 'ref', l: 3 }] },
+          ],
+          locals: [],
+        },
+      }
+
+      const countRef = createRef(0)
+      const instance = {
+        type: { __file: '/project/src/App.vue' },
+        setupState: { count: countRef, __v_raw: { count: countRef } },
+      }
+
+      const sections = extractSections(instance)
+      const setupSection = sections.find(s => s.id === 'setup')
+      const composableItem = setupSection!.items.find(i => i.key === 'useCounter')
+      expect(composableItem).toBeDefined()
+      expect(composableItem!.sourceFile).toBe('src/composables/useCounter.ts')
+    })
+
+    it('wires depNames from composable metadata', () => {
+      ;(globalThis as any).__DEVTOOLS_COMPOSABLES__ = {
+        'src/App.vue': {
+          composables: [
+            { h: 'useFetch', l: 8, d: ['url', 'options'], i: [{ n: 'data', h: 'ref', l: 2 }] },
+          ],
+          locals: [],
+        },
+      }
+
+      const dataRef = createRef(null)
+      const instance = {
+        type: { __file: '/project/src/App.vue' },
+        setupState: { data: dataRef, __v_raw: { data: dataRef } },
+      }
+
+      const sections = extractSections(instance)
+      const setupSection = sections.find(s => s.id === 'setup')
+      const composableItem = setupSection!.items.find(i => i.key === 'useFetch')
+      expect(composableItem!.depNames).toEqual(['url', 'options'])
+    })
+
+    it('wires lineNumber to inner hooks from metadata', () => {
+      ;(globalThis as any).__DEVTOOLS_COMPOSABLES__ = {
+        'src/App.vue': {
+          composables: [
+            { h: 'useCounter', l: 5, i: [{ n: 'count', h: 'ref', l: 12 }] },
+          ],
+          locals: [],
+        },
+      }
+
+      const countRef = createRef(0)
+      const instance = {
+        type: { __file: '/project/src/App.vue' },
+        setupState: { count: countRef, __v_raw: { count: countRef } },
+      }
+
+      const sections = extractSections(instance)
+      const setupSection = sections.find(s => s.id === 'setup')
+      const composableItem = setupSection!.items.find(i => i.key === 'useCounter')
+      expect(composableItem!.innerHooks![0].lineNumber).toBe(12)
+    })
+
+    it('wires watcher line numbers from callLines metadata', () => {
+      ;(globalThis as any).__DEVTOOLS_COMPOSABLES__ = {
+        'src/App.vue': {
+          composables: [],
+          locals: [],
+          cl: { watchEffect: [10], watch: [15] },
+        },
+      }
+
+      const instance = {
+        type: { __file: '/project/src/App.vue' },
+        scope: {
+          effects: [
+            { fn: () => {}, scheduler: () => {}, deps: { dep: { key: 'count' }, nextDep: null } },
+            { fn: () => {}, scheduler: () => {}, deps: null },
+          ],
+        },
+      }
+
+      const sections = extractSections(instance)
+      const watcherSection = sections.find(s => s.id === 'watchers')
+      expect(watcherSection).toBeDefined()
+      // Sorted by line: watchEffect(10), watch(15) → watchers get these in order
+      expect(watcherSection!.items[0].lineNumber).toBe(10)
+      expect(watcherSection!.items[1].lineNumber).toBe(15)
+    })
+
+    it('wires provide line numbers from pv metadata by key', () => {
+      ;(globalThis as any).__DEVTOOLS_COMPOSABLES__ = {
+        'src/App.vue': {
+          composables: [],
+          locals: [],
+          pv: [{ key: 'theme', line: 8 }, { key: 'locale', line: 12 }],
+        },
+      }
+
+      const instance = {
+        type: { __file: '/project/src/App.vue' },
+        provides: { theme: { color: 'blue' }, locale: 'en' },
+        parent: { provides: {} },
+      }
+
+      const sections = extractSections(instance)
+      const provideSection = sections.find(s => s.id === 'provide')
+      expect(provideSection).toBeDefined()
+      expect(provideSection!.items[0].key).toBe('theme')
+      expect(provideSection!.items[0].lineNumber).toBe(8)
+      expect(provideSection!.items[1].key).toBe('locale')
+      expect(provideSection!.items[1].lineNumber).toBe(12)
+    })
+
+    it('wires provide line numbers by index for symbol keys', () => {
+      ;(globalThis as any).__DEVTOOLS_COMPOSABLES__ = {
+        'src/App.vue': {
+          composables: [],
+          locals: [],
+          pv: [{ line: 5 }],
+        },
+      }
+
+      const sym = Symbol('myKey')
+      const instance = {
+        type: { __file: '/project/src/App.vue' },
+        provides: { [sym]: 'value' },
+        parent: { provides: {} },
+      }
+
+      const sections = extractSections(instance)
+      const provideSection = sections.find(s => s.id === 'provide')
+      expect(provideSection).toBeDefined()
+      expect(provideSection!.items[0].lineNumber).toBe(5)
+    })
+
+    it('resolves depValues from current setupState', () => {
+      ;(globalThis as any).__DEVTOOLS_COMPOSABLES__ = {
+        'src/App.vue': {
+          composables: [
+            { h: 'useFetch', l: 8, d: ['url'], i: [{ n: 'data', h: 'ref', l: 2 }] },
+          ],
+          locals: [],
+        },
+      }
+
+      const urlRef = createRef('/api/users')
+      const dataRef = createRef([1, 2, 3])
+      const instance = {
+        type: { __file: '/project/src/App.vue' },
+        setupState: {
+          url: urlRef,
+          data: dataRef,
+          __v_raw: { url: urlRef, data: dataRef },
+        },
+      }
+
+      const sections = extractSections(instance)
+      const setupSection = sections.find(s => s.id === 'setup')
+      const composableItem = setupSection!.items.find(i => i.key === 'useFetch')
+      expect(composableItem!.depValues).toEqual(['/api/users'])
+    })
   })
 })

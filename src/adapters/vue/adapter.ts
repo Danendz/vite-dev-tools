@@ -4,7 +4,22 @@ import { createRequire } from 'node:module'
 import type { FrameworkAdapter, RewriteEdit } from '../../core/adapter'
 import { ENDPOINTS } from '../../shared/constants'
 import { HOOK_SCRIPT } from './hook'
-import { parseJSX, findStringLiterals, findHookCalls, spliceSource } from '../../shared/ast-utils'
+import {
+  parseJSX,
+  walkAST,
+  offsetToLineCol,
+  findStringLiterals,
+  findHookCalls,
+  findHookCallsDeep,
+  findLocalVarDeclarations,
+  findFunctionDefinition,
+  findImportSource,
+  findReactiveObjectProperty,
+  findVueCallSites,
+  spliceSource,
+  VUE_BUILT_IN_COMPOSABLES,
+} from '../../shared/ast-utils'
+import type { HookMeta, ResolvedHookSource } from '../../shared/ast-utils'
 import { undoStore } from '../../shared/undo-store'
 import { buildDiff } from '../../shared/diff'
 
@@ -12,6 +27,76 @@ const require = createRequire(import.meta.url)
 
 /** Stored during configureServer for use by rewriteSource */
 let storedProjectRoot = ''
+
+/** Call filter for Vue: matches useX() composables AND Vue built-in composable functions */
+const VUE_CALL_FILTER = (name: string) =>
+  /^use[A-Z]/.test(name) || VUE_BUILT_IN_COMPOSABLES.has(name)
+
+/** Serialize HookMeta[] to compact JSON for injection */
+function serializeComposableMeta(hooks: HookMeta[]): any[] {
+  return hooks.map(h => {
+    const entry: any = { n: h.varName, h: h.hookName, l: h.line }
+    if (h.depNames) entry.d = h.depNames
+    if (h.destructuredNames?.length) entry.v = h.destructuredNames
+    if (h.innerHooks && h.innerHooks.length > 0) {
+      entry.i = serializeComposableMeta(h.innerHooks)
+    }
+    if (h.locals?.length) entry.lc = h.locals.map(l => ({ n: l.name, l: l.line }))
+    if (h.sourceFile) entry.f = h.sourceFile
+    return entry
+  })
+}
+
+/**
+ * Build a composable import resolver for the current file.
+ */
+function buildComposableResolver(
+  program: any,
+  filePath: string,
+  lineStarts: number[] | null,
+): ((hookName: string) => ResolvedHookSource | null) {
+  return (hookName: string) => {
+    const imp = findImportSource(program, hookName, lineStarts ?? undefined)
+    if (!imp || !imp.importPath.startsWith('.')) return null
+
+    const dir = path.dirname(filePath)
+    const extensions = ['.ts', '.tsx', '.js', '.jsx', '']
+    let resolvedPath: string | null = null
+    let resolvedContent: string | null = null
+
+    for (const ext of extensions) {
+      const candidate = path.resolve(dir, imp.importPath + ext)
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        resolvedPath = candidate
+        resolvedContent = fs.readFileSync(candidate, 'utf-8')
+        break
+      }
+      if (ext) {
+        const indexCandidate = path.resolve(dir, imp.importPath, 'index' + ext)
+        if (fs.existsSync(indexCandidate) && fs.statSync(indexCandidate).isFile()) {
+          resolvedPath = indexCandidate
+          resolvedContent = fs.readFileSync(indexCandidate, 'utf-8')
+          break
+        }
+      }
+    }
+
+    if (!resolvedPath || !resolvedContent) return null
+
+    const parsed = parseJSX(resolvedPath, resolvedContent)
+    if (!parsed) return null
+
+    const funcDef = findFunctionDefinition(parsed.program, hookName, parsed.lineStarts)
+    if (!funcDef) return null
+
+    return {
+      program: parsed.program,
+      bodyRange: funcDef.bodyRange,
+      lineStarts: parsed.lineStarts,
+      sourceFile: resolvedPath,
+    }
+  }
+}
 
 const VUE_BUILTIN_ELEMENTS = new Set([
   'template', 'slot', 'component', 'transition', 'transition-group',
@@ -183,11 +268,87 @@ function injectSourceAttributes(code: string, id: string, projectRoot: string): 
     injectSourceAttributesRegex(code, usages)
   }
 
-  if (Object.keys(usages).length === 0) return null
+  // Extract composable metadata from <script setup>
+  let composableCode = ''
+  const scriptSetupMatch = code.match(/<script[^>]*\bsetup\b[^>]*>([\s\S]*?)<\/script>/)
+  if (scriptSetupMatch) {
+    const scriptContent = scriptSetupMatch[1]
+    const scriptOffset = scriptSetupMatch.index! + scriptSetupMatch[0].indexOf(scriptContent)
+    const parsed = parseJSX('script.ts', scriptContent)
+    if (parsed) {
+      const resolveHook = buildComposableResolver(parsed.program, id, parsed.lineStarts)
+      // Find top-level useX() composable calls (not Vue built-ins like ref/computed)
+      const composables = findHookCallsDeep(
+        parsed.program, 0, scriptContent.length, parsed.lineStarts,
+        { builtIns: VUE_BUILT_IN_COMPOSABLES, callFilter: VUE_CALL_FILTER, resolveHook },
+      )
+      // Filter to only custom composables (not bare ref/reactive/computed calls)
+      const customComposables = composables.filter(h => !VUE_BUILT_IN_COMPOSABLES.has(h.hookName))
+
+      const linesBeforeScript = code.slice(0, scriptOffset).split('\n').length - 1
+      const locals = findLocalVarDeclarations(parsed.program, 0, scriptContent.length, parsed.lineStarts)
+        .filter(l => !VUE_BUILT_IN_COMPOSABLES.has(l.name))
+
+      // Build varLines: maps ALL variable names → line numbers
+      // Includes ref/reactive/computed, destructured composable returns, function declarations, locals
+      const varLines: Record<string, number> = {}
+      // From hook calls (ref, reactive, computed, composable returns)
+      for (const c of composables) {
+        if (c.varName) varLines[c.varName] = c.line + linesBeforeScript
+        // Destructured composable returns (all names from the pattern)
+        if (c.destructuredNames) {
+          for (const name of c.destructuredNames) {
+            if (!varLines[name]) varLines[name] = c.line + linesBeforeScript
+          }
+        }
+      }
+      // From non-hook local declarations
+      for (const l of locals) {
+        varLines[l.name] = l.line + linesBeforeScript
+      }
+      // Function declarations
+      walkAST(parsed.program, (node: any) => {
+        if (node.type === 'FunctionDeclaration' && node.id?.name) {
+          if (node.range[0] >= 0 && node.range[1] <= scriptContent.length) {
+            const line = offsetToLineCol(parsed.lineStarts, node.start).line
+            varLines[node.id.name] = line + linesBeforeScript
+          }
+        }
+      })
+
+      // Extract watch/watchEffect/provide call sites for navigation
+      const callSites = findVueCallSites(parsed.program, 0, scriptContent.length, parsed.lineStarts)
+      // Offset call site line numbers by script position in SFC
+      const cl: Record<string, number[]> = {}
+      for (const [name, lines] of Object.entries(callSites.callLines)) {
+        cl[name] = lines.map(l => l + linesBeforeScript)
+      }
+      const pv = callSites.provides.map(p => ({
+        ...p,
+        line: p.line + linesBeforeScript,
+      }))
+
+      if (customComposables.length > 0 || locals.length > 0 || Object.keys(varLines).length > 0 || Object.keys(cl).length > 0 || pv.length > 0) {
+        const metaObj: any = {
+          composables: serializeComposableMeta(customComposables),
+          locals: locals.map(l => ({ n: l.name, l: l.line + linesBeforeScript })),
+          varLines,
+        }
+        if (Object.keys(cl).length > 0) metaObj.cl = cl
+        if (pv.length > 0) metaObj.pv = pv
+        const meta = JSON.stringify(metaObj)
+        composableCode = `;(globalThis.__DEVTOOLS_COMPOSABLES__||(globalThis.__DEVTOOLS_COMPOSABLES__={}))["${relativePath}"]=${meta};`
+      }
+    }
+  }
+
+  if (Object.keys(usages).length === 0 && !composableCode) return null
 
   // Build a script that registers component usage locations in a global map.
   const usageJson = JSON.stringify(usages)
-  const regCode = `;(globalThis.__DEVTOOLS_USAGE_MAP__||(globalThis.__DEVTOOLS_USAGE_MAP__={}))["${relativePath}"]=${usageJson};`
+  const regCode = (Object.keys(usages).length > 0
+    ? `;(globalThis.__DEVTOOLS_USAGE_MAP__||(globalThis.__DEVTOOLS_USAGE_MAP__={}))["${relativePath}"]=${usageJson};`
+    : '') + composableCode
 
   let result = code
 
@@ -282,10 +443,10 @@ function rewriteRef(source: string, edit: RewriteEdit): string | null {
 
     const parsed = parseJSX('script.ts', scriptContent)
     if (parsed) {
-      const hooks = findHookCalls(parsed.program, 0, scriptContent.length, parsed.lineStarts)
+      const hooks = findHookCalls(parsed.program, 0, scriptContent.length, parsed.lineStarts, { callFilter: VUE_CALL_FILTER })
       const targetLine = edit.line - linesBeforeScript
       for (const hook of hooks) {
-        if (hook.hookName === 'useRef' || hook.hookName === 'ref') {
+        if (hook.hookName === 'ref' || hook.hookName === 'shallowRef') {
           // Check if this hook is near the target line (within +/- 2 lines)
           if (Math.abs(hook.line - targetLine) <= 2 && hook.firstArgRange) {
             return spliceSource(source, [{
@@ -478,6 +639,37 @@ function rewriteTemplatePropRegex(source: string, edit: RewriteEdit): string | n
   return null
 }
 
+/**
+ * Rewrite a nested property in a reactive() object literal.
+ * editHint: { kind: 'vue-reactive-path', varName: string, propertyPath: string[] }
+ */
+function rewriteReactivePath(source: string, edit: RewriteEdit): string | null {
+  const hint = edit.editHint as any
+  const varName = hint.varName as string
+  const propertyPath = hint.propertyPath as string[]
+  if (!varName || !propertyPath?.length) return null
+
+  const serialized = typeof edit.value === 'string' ? JSON.stringify(edit.value) : String(edit.value)
+
+  const scriptMatch = source.match(/<script[^>]*\bsetup\b[^>]*>([\s\S]*?)<\/script>/)
+  if (!scriptMatch) return null
+
+  const scriptContent = scriptMatch[1]
+  const scriptOffset = scriptMatch.index! + scriptMatch[0].indexOf(scriptContent)
+
+  const parsed = parseJSX('script.ts', scriptContent)
+  if (!parsed) return null
+
+  const prop = findReactiveObjectProperty(parsed.program, varName, propertyPath, parsed.lineStarts)
+  if (!prop) return null
+
+  return spliceSource(source, [{
+    start: scriptOffset + prop.range[0],
+    end: scriptOffset + prop.range[1],
+    replacement: serialized,
+  }])
+}
+
 export const vueAdapter: FrameworkAdapter = {
   name: 'vue',
   accent: '#42b883',
@@ -510,6 +702,9 @@ export const vueAdapter: FrameworkAdapter = {
     }
     if (edit.editHint.kind === 'vue-prop') {
       return rewriteTemplateProp(source, edit, storedProjectRoot || undefined)
+    }
+    if (edit.editHint.kind === 'vue-reactive-path') {
+      return rewriteReactivePath(source, edit)
     }
     return null
   },

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { walkFiberTree, walkFiberTreeWithCauses, fiberRefMap } from '@/adapters/react/fiber-walker'
 import { createFakeFiber } from '@helpers/factories'
 
@@ -180,6 +180,132 @@ describe('walkFiberTree', () => {
       expect(hooksSection!.items[0].badge).toBe('useState')
     })
 
+    it('reads __devtools_meta and builds nested hook tree', () => {
+      // Simulate a component that uses a custom hook useCounter
+      // which internally has useState + useCallback
+      const fiber = createFakeFiber({
+        tag: FunctionComponent,
+        type: {
+          name: 'App',
+          __devtools_source: { fileName: '/src/App.tsx', lineNumber: 1, columnNumber: 0 },
+          __devtools_meta: {
+            hooks: [
+              {
+                n: null, h: 'useCounter', l: 8, i: [
+                  { n: 'count', h: 'useState', l: 3 },
+                  { n: 'increment', h: 'useCallback', l: 4, d: [] },
+                ],
+              },
+            ],
+            locals: [{ n: 'total', l: 10 }],
+          },
+        },
+        // React's flat hook list: useState → useCallback (from useCounter)
+        memoizedState: {
+          memoizedState: 5,
+          queue: { dispatch: () => {} },
+          next: {
+            memoizedState: [() => {}, []],
+            queue: null,
+            next: null,
+          },
+        },
+      })
+
+      const tree = walkFiberTree(wrapInRoot(fiber))
+      const comp = tree[0]
+
+      // Should have locals
+      expect(comp.locals).toEqual([{ name: 'total', line: 10 }])
+
+      // Should have hooks section with nested structure
+      const hooksSection = comp.sections.find(s => s.id === 'hooks')
+      expect(hooksSection).toBeDefined()
+
+      // Top level: useCounter (custom hook)
+      expect(hooksSection!.items).toHaveLength(1)
+      const customHook = hooksSection!.items[0]
+      expect(customHook.key).toBe('useCounter')
+      expect(customHook.badge).toBe('useCounter')
+      expect(customHook.innerHooks).toBeDefined()
+      expect(customHook.innerHooks).toHaveLength(2)
+
+      // Inner: count [useState] — editable
+      const countHook = customHook.innerHooks![0]
+      expect(countHook.key).toBe('count')
+      expect(countHook.value).toBe(5)
+      expect(countHook.editable).toBe(true)
+      expect(countHook.badge).toBe('useState')
+
+      // Inner: increment [useCallback] — not editable, has deps
+      const cbHook = customHook.innerHooks![1]
+      expect(cbHook.key).toBe('increment')
+      expect(cbHook.editable).toBe(false)
+      expect(cbHook.depNames).toEqual([])
+    })
+
+    it('reads __devtools_meta with dep names on effects', () => {
+      const fiber = createFakeFiber({
+        tag: FunctionComponent,
+        type: {
+          name: 'Fetcher',
+          __devtools_source: { fileName: '/src/Fetcher.tsx', lineNumber: 1, columnNumber: 0 },
+          __devtools_meta: {
+            hooks: [
+              { n: 'userId', h: 'useState', l: 2 },
+              { n: null, h: 'useEffect', l: 4, d: ['userId', 'token'] },
+            ],
+            locals: [],
+          },
+        },
+        memoizedState: {
+          memoizedState: 42,
+          queue: { dispatch: () => {} },
+          next: {
+            memoizedState: {
+              create: () => {},
+              destroy: undefined,
+              deps: [42, 'abc'],
+              tag: 0,
+              next: null,
+            },
+            queue: null,
+            next: null,
+          },
+        },
+      })
+
+      const tree = walkFiberTree(wrapInRoot(fiber))
+      const hooksSection = tree[0].sections.find(s => s.id === 'hooks')!
+
+      const effect = hooksSection.items[1]
+      expect(effect.key).toBe('useEffect')
+      expect(effect.depNames).toEqual(['userId', 'token'])
+      expect(effect.depValues).toEqual([42, 'abc'])
+    })
+
+    it('falls back to __devtools_hooks when __devtools_meta is absent', () => {
+      const fiber = createFakeFiber({
+        tag: FunctionComponent,
+        type: {
+          name: 'Legacy',
+          __devtools_source: { fileName: '/src/Legacy.tsx', lineNumber: 1, columnNumber: 0 },
+          __devtools_hooks: [['count', 5]],
+        },
+        memoizedState: {
+          memoizedState: 10,
+          queue: { dispatch: () => {} },
+          next: null,
+        },
+      })
+
+      const tree = walkFiberTree(wrapInRoot(fiber))
+      const hooksSection = tree[0].sections.find(s => s.id === 'hooks')!
+      expect(hooksSection.items[0].key).toBe('count')
+      expect(hooksSection.items[0].value).toBe(10)
+      expect(hooksSection.items[0].lineNumber).toBe(5)
+    })
+
     it('extracts useRef hook', () => {
       const fiber = createFakeFiber({
         tag: FunctionComponent,
@@ -232,6 +358,181 @@ describe('walkFiberTree', () => {
         fileName: '/src/Test.tsx',
         lineNumber: 1,
         columnNumber: 0,
+      })
+    })
+
+    describe('usage map multi-usage disambiguation', () => {
+      let savedMap: any
+
+      beforeEach(() => {
+        savedMap = (globalThis as any).__DEVTOOLS_USAGE_MAP__
+      })
+
+      afterEach(() => {
+        if (savedMap === undefined) {
+          delete (globalThis as any).__DEVTOOLS_USAGE_MAP__
+        } else {
+          (globalThis as any).__DEVTOOLS_USAGE_MAP__ = savedMap
+        }
+      })
+
+      it('picks correct usage entry for multiple same-name siblings', () => {
+        ;(globalThis as any).__DEVTOOLS_USAGE_MAP__ = {
+          '/src/Parent.tsx': {
+            Input: [
+              { line: 10, col: 5 },
+              { line: 20, col: 5 },
+            ],
+          },
+        }
+
+        const input2 = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Input' },
+        })
+        const input1 = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Input' },
+          sibling: input2,
+        })
+
+        const parent = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Parent', __devtools_source: { fileName: '/src/Parent.tsx', lineNumber: 1, columnNumber: 0 } },
+          child: input1,
+        })
+        input1.return = parent
+        input2.return = parent
+
+        const tree = walkFiberTree(wrapInRoot(parent))
+        // Library components (no __devtools_source) store usage map result in source, not usageSource
+        expect(tree[0].children[0].source).toEqual({ fileName: '/src/Parent.tsx', lineNumber: 10, columnNumber: 5 })
+        expect(tree[0].children[1].source).toEqual({ fileName: '/src/Parent.tsx', lineNumber: 20, columnNumber: 5 })
+      })
+
+      it('picks correct usage entry for same-name at different nesting depths', () => {
+        ;(globalThis as any).__DEVTOOLS_USAGE_MAP__ = {
+          '/src/Parent.tsx': {
+            Button: [
+              { line: 5, col: 3 },
+              { line: 15, col: 7 },
+            ],
+          },
+        }
+
+        // Button2 is nested inside a library wrapper (no __devtools_source)
+        const button2 = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Button' },
+        })
+        const wrapper = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'LibWrapper' }, // no __devtools_source → library
+          child: button2,
+        })
+        button2.return = wrapper
+
+        const button1 = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Button' },
+          sibling: wrapper,
+        })
+
+        const parent = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Parent', __devtools_source: { fileName: '/src/Parent.tsx', lineNumber: 1, columnNumber: 0 } },
+          child: button1,
+        })
+        button1.return = parent
+        wrapper.return = parent
+
+        const tree = walkFiberTree(wrapInRoot(parent))
+        // button1 is first in DFS → index 0 → line 5
+        expect(tree[0].children[0].source).toEqual({ fileName: '/src/Parent.tsx', lineNumber: 5, columnNumber: 3 })
+        // button2 is second in DFS (inside LibWrapper) → index 1 → line 15
+        const libNode = tree[0].children[1] // LibWrapper
+        expect(libNode.children[0].source).toEqual({ fileName: '/src/Parent.tsx', lineNumber: 15, columnNumber: 7 })
+      })
+
+      it('clamps index when more fibers than usage entries', () => {
+        ;(globalThis as any).__DEVTOOLS_USAGE_MAP__ = {
+          '/src/Parent.tsx': {
+            Item: [
+              { line: 10, col: 1 },
+            ],
+          },
+        }
+
+        const item2 = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Item' },
+        })
+        const item1 = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Item' },
+          sibling: item2,
+        })
+
+        const parent = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Parent', __devtools_source: { fileName: '/src/Parent.tsx', lineNumber: 1, columnNumber: 0 } },
+          child: item1,
+        })
+        item1.return = parent
+        item2.return = parent
+
+        const tree = walkFiberTree(wrapInRoot(parent))
+        // Both should get line 10 (clamped to last entry)
+        expect(tree[0].children[0].source).toEqual({ fileName: '/src/Parent.tsx', lineNumber: 10, columnNumber: 1 })
+        expect(tree[0].children[1].source).toEqual({ fileName: '/src/Parent.tsx', lineNumber: 10, columnNumber: 1 })
+      })
+
+      it('does not count same-name fibers inside user component subtrees', () => {
+        ;(globalThis as any).__DEVTOOLS_USAGE_MAP__ = {
+          '/src/Parent.tsx': {
+            Button: [
+              { line: 8, col: 3 },
+            ],
+          },
+          '/src/Child.tsx': {
+            Button: [
+              { line: 4, col: 5 },
+            ],
+          },
+        }
+
+        // Child component has its own Button (should not affect Parent's count)
+        const childButton = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Button' },
+        })
+        const childComp = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Child', __devtools_source: { fileName: '/src/Child.tsx', lineNumber: 1, columnNumber: 0 } },
+          child: childButton,
+        })
+        childButton.return = childComp
+
+        const parentButton = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Button' },
+        })
+
+        // Parent has: Child (with its own Button), then Button
+        childComp.sibling = parentButton
+
+        const parent = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Parent', __devtools_source: { fileName: '/src/Parent.tsx', lineNumber: 1, columnNumber: 0 } },
+          child: childComp,
+        })
+        childComp.return = parent
+        parentButton.return = parent
+
+        const tree = walkFiberTree(wrapInRoot(parent))
+        // Parent's Button should be index 0 (Child's Button is not counted)
+        const parentBtnNode = tree[0].children[1] // second child of Parent
+        expect(parentBtnNode.source).toEqual({ fileName: '/src/Parent.tsx', lineNumber: 8, columnNumber: 3 })
       })
     })
   })

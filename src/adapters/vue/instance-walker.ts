@@ -1,5 +1,6 @@
-import type { NormalizedNode, SourceLocation } from '../../core/types'
+import type { NormalizedNode, SourceLocation, CommitComponentEntry, CommitRecord } from '../../core/types'
 import { extractSections } from './state-extractor'
+import { flushTriggers, setLastRenderedCommit, getLastRenderedCommit } from './render-cause'
 
 // Vue 3 ShapeFlags (bitmask)
 const ELEMENT = 1
@@ -103,6 +104,27 @@ interface SlotInfo {
   slotSource: SourceLocation | null
 }
 
+export interface VueWalkOptions {
+  hideLibrary?: boolean
+  renderCause?: {
+    commitIndex: number
+    includeValues: boolean
+    updatedUids: Set<number>
+  }
+}
+
+export interface VueWalkResult {
+  tree: NormalizedNode[]
+  commit: CommitRecord | null
+}
+
+interface RenderCauseOpts {
+  commitIndex: number
+  includeValues: boolean
+  updatedUids: Set<number>
+  entries: CommitComponentEntry[]
+}
+
 interface WalkContext {
   parentFile: string | null
   elementCounters: Map<string, number>
@@ -115,6 +137,8 @@ interface WalkContext {
   parentComponentFile?: string | null
   /** Active slot context when walking inside a slot Fragment */
   slotInfo?: SlotInfo
+  /** Render cause tracking options — present when attribution is enabled */
+  renderCauseOpts?: RenderCauseOpts
 }
 
 /**
@@ -398,6 +422,87 @@ function domElementToNode(el: HTMLElement, ctx: WalkContext): NormalizedNode {
 }
 
 /**
+ * Resolve locals from __DEVTOOLS_COMPOSABLES__ metadata for a component instance.
+ */
+function resolveLocals(instance: any): Array<{ name: string; line: number }> | undefined {
+  const composableMap = (globalThis as any).__DEVTOOLS_COMPOSABLES__
+  if (!composableMap) return undefined
+  const filePath = instance.type?.__file
+  if (!filePath) return undefined
+
+  for (const key of Object.keys(composableMap)) {
+    if (filePath.endsWith(key)) {
+      const meta = composableMap[key]
+      if (meta?.locals?.length) {
+        return meta.locals.map((l: any) => ({ name: l.n, line: l.l }))
+      }
+      return undefined
+    }
+  }
+  return undefined
+}
+
+/**
+ * Attach render cause and persistent ID to a component node during the walk.
+ */
+function attachRenderCause(
+  node: NormalizedNode,
+  instance: any,
+  name: string,
+  source: SourceLocation | null,
+  ctx: WalkContext,
+): void {
+  const opts = ctx.renderCauseOpts
+  if (!opts) return
+
+  const uid = instance.uid
+  node.persistentId = uid
+
+  if (opts.updatedUids.has(uid)) {
+    const entry = flushTriggers(uid, name, source, uid, instance, opts.includeValues)
+    if (entry) {
+      node.renderCause = {
+        primary: entry.cause,
+        contributors: entry.contributors,
+        changedProps: entry.changedProps,
+        changedHooks: entry.changedHooks,
+        changedContexts: entry.changedContexts,
+        effectChanges: entry.effectChanges,
+        commitIndex: opts.commitIndex,
+      }
+      setLastRenderedCommit(uid, opts.commitIndex)
+      opts.entries.push(entry)
+    } else {
+      // Updated but no trigger info → parent cause
+      node.renderCause = {
+        primary: 'parent',
+        contributors: ['parent'],
+        commitIndex: opts.commitIndex,
+      }
+      setLastRenderedCommit(uid, opts.commitIndex)
+      opts.entries.push({
+        persistentId: uid,
+        name,
+        source,
+        cause: 'parent',
+        contributors: ['parent'],
+      })
+    }
+  } else {
+    // Not updated this commit — show last rendered info if available
+    const lastRendered = getLastRenderedCommit(uid)
+    if (lastRendered !== undefined) {
+      node.renderCause = {
+        primary: 'bailout',
+        contributors: ['bailout'],
+        commitIndex: opts.commitIndex,
+        lastRenderedCommit: lastRendered,
+      }
+    }
+  }
+}
+
+/**
  * Walk a vnode tree and extract child component NormalizedNodes.
  */
 function walkVNodeChildren(vnode: any, hideLibrary: boolean, ctx: WalkContext): NormalizedNode[] {
@@ -425,6 +530,7 @@ function walkVNodeChildren(vnode: any, hideLibrary: boolean, ctx: WalkContext): 
       currentInstance: instance,
       parentSlotCounters: new Map(),
       parentComponentFile: ctx.parentFile,
+      renderCauseOpts: ctx.renderCauseOpts,
     }
 
     if (hideLibrary && isFromNodeModules(instance)) {
@@ -444,7 +550,9 @@ function walkVNodeChildren(vnode: any, hideLibrary: boolean, ctx: WalkContext): 
         children,
         isFromNodeModules: isFromNodeModules(instance),
         _domElements: findDOMElements(instance),
+        locals: resolveLocals(instance),
       }
+      attachRenderCause(node, instance, name, source, ctx)
       instanceRefMap.set(node.id, instance)
       nodes.push(node)
     }
@@ -591,12 +699,17 @@ function walkVNodeChildren(vnode: any, hideLibrary: boolean, ctx: WalkContext): 
 /**
  * Walk the Vue component tree starting from the app's root instance.
  */
-export function walkInstanceTree(appInstance: any, hideLibrary = false): NormalizedNode[] {
+export function walkInstanceTree(appInstance: any, options: VueWalkOptions = {}): VueWalkResult {
   nodeIdCounter = 0
   instanceRefMap.clear()
   hostElementRefMap.clear()
 
-  if (!appInstance) return []
+  if (!appInstance) return { tree: [], commit: null }
+
+  const hideLibrary = options.hideLibrary ?? false
+  const renderCauseOpts: RenderCauseOpts | undefined = options.renderCause
+    ? { ...options.renderCause, entries: [] }
+    : undefined
 
   const rootName = getComponentName(appInstance)
   const source = getDefinitionSource(appInstance)
@@ -607,6 +720,7 @@ export function walkInstanceTree(appInstance: any, hideLibrary = false): Normali
     parentUsageSource: usage?.source ?? source ?? undefined,
     currentInstance: appInstance,
     parentSlotCounters: new Map(),
+    renderCauseOpts,
   }
   const children = walkVNodeChildren(appInstance.subTree, hideLibrary, rootCtx)
 
@@ -621,8 +735,14 @@ export function walkInstanceTree(appInstance: any, hideLibrary = false): Normali
     children,
     isFromNodeModules: isFromNodeModules(appInstance),
     _domElements: findDOMElements(appInstance),
+    locals: resolveLocals(appInstance),
   }
+  attachRenderCause(rootNode, appInstance, rootName, source, rootCtx)
   instanceRefMap.set(rootNode.id, appInstance)
 
-  return [rootNode]
+  const commit: CommitRecord | null = renderCauseOpts && renderCauseOpts.entries.length > 0
+    ? { commitIndex: renderCauseOpts.commitIndex, timestampMs: Date.now(), components: renderCauseOpts.entries }
+    : null
+
+  return { tree: [rootNode], commit }
 }
