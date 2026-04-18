@@ -33,6 +33,8 @@ export function startErrorCapture(): () => ConsoleEntry[] {
       stack: args[0] instanceof Error ? (args[0].stack ?? null) : null,
       timestamp: Date.now(),
       frames: null,
+      count: 1,
+      groupKey: null,
     })
   }
 
@@ -53,6 +55,8 @@ export function startErrorCapture(): () => ConsoleEntry[] {
       stack: e.error?.stack ?? null,
       timestamp: Date.now(),
       frames: null,
+      count: 1,
+      groupKey: null,
     })
   }
 
@@ -64,6 +68,8 @@ export function startErrorCapture(): () => ConsoleEntry[] {
       stack: e.reason?.stack ?? null,
       timestamp: Date.now(),
       frames: null,
+      count: 1,
+      groupKey: null,
     })
   }
 

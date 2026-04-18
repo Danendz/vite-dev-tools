@@ -9,6 +9,7 @@ import { Highlight } from './Highlight'
 import { ContextMenu } from './ContextMenu'
 import { ToastContainer } from './ToastContainer'
 import { startCapture } from '../console-capture'
+import { createFrameResolver } from '../frame-resolver'
 import { EVENTS, STORAGE_KEYS } from '../../shared/constants'
 import { devtoolsState } from './state-store'
 import { openInEditor } from '../communication'
@@ -231,14 +232,43 @@ export function App({ config, popupManager }: AppProps) {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [config.shortcut, isDetached, popupManager])
 
-  // Capture console errors/warnings
+  // Capture console errors/warnings with source map resolution and grouping
   useEffect(() => {
-    return startCapture((entry) => {
+    const resolver = createFrameResolver()
+
+    resolver.onResolved((resolvedEntries) => {
       setConsoleEntries((prev) => {
-        const next = [...prev, entry]
-        return next.length > 500 ? next.slice(-500) : next
+        let next = [...prev]
+        for (const entry of resolvedEntries) {
+          // Compute group key from resolved first user frame
+          const userFrame = entry.frames?.find(f => !f.isLibrary)
+          const groupKey = userFrame
+            ? `${entry.type}:${entry.message}:${userFrame.file}:${userFrame.line}:${userFrame.col}`
+            : `${entry.type}:${entry.message}`
+          const resolved = { ...entry, groupKey }
+
+          // Try to find existing group
+          const existingIndex = next.findIndex(e => e.groupKey === groupKey)
+          if (existingIndex !== -1) {
+            const existing = next[existingIndex]
+            next[existingIndex] = { ...resolved, count: existing.count + 1, id: existing.id, timestamp: entry.timestamp }
+          } else {
+            next.push(resolved)
+          }
+        }
+        if (next.length > 500) next = next.slice(-500)
+        return next
       })
     })
+
+    const stopCapture = startCapture((entry) => {
+      resolver.resolve([entry])
+    })
+
+    return () => {
+      stopCapture()
+      resolver.destroy()
+    }
   }, [])
 
   // Sync selected node to shared state store (for MCP bridge)

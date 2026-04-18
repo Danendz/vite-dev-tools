@@ -139,6 +139,8 @@ function createEntry(type: ConsoleEntryType, args: unknown[], stack?: string | n
     message: formatArgs(args),
     stack: cleaned,
     frames: cleaned ? parseStack(cleaned) : null,
+    count: 1,
+    groupKey: null,
   }
 }
 
