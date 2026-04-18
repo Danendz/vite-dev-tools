@@ -26,6 +26,9 @@ importers:
       preact:
         specifier: ^10.25.4
         version: 10.29.1
+      source-map-js:
+        specifier: ^1.2.1
+        version: 1.2.1
       unplugin-vue-source:
         specifier: ^0.0.7
         version: 0.0.7(rollup@4.60.1)
