@@ -5,7 +5,8 @@ import type { Plugin, HtmlTagDescriptor } from 'vite'
 import type { FrameworkAdapter } from './adapter'
 import type { DevToolsConfig } from './types'
 import { createEditorMiddleware } from '../shared/editor'
-import { DEFAULT_CONFIG, ENDPOINTS } from '../shared/constants'
+import { DEFAULT_CONFIG, ENDPOINTS, EVENTS } from '../shared/constants'
+import { resolveFrames } from './sourcemap-resolver'
 import { undoStore } from '../shared/undo-store'
 import { buildDiff } from '../shared/diff'
 
@@ -111,6 +112,12 @@ export function createDevtoolsPlugin(adapter: FrameworkAdapter, config?: DevTool
     async configureServer(server) {
       // Extend Vite's fs.allow to include the plugin's dist directory
       server.config.server.fs.allow.push(DIR)
+
+      // Source map resolution over HMR
+      server.hot.on(EVENTS.RESOLVE_FRAMES, async (data: { frames: { file: string; line: number; col: number }[] }) => {
+        const resolved = await resolveFrames(server, data.frames)
+        server.hot.send(EVENTS.FRAMES_RESOLVED, { resolved })
+      })
 
       // Shared editor middleware
       server.middlewares.use(createEditorMiddleware(server.config.root))

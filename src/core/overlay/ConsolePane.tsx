@@ -102,6 +102,9 @@ export function ConsolePane({ entries, filters, onFilterChange, onClear, stripLi
             const displayFrame = getDisplayFrame(entry, stripLibrary)
             return (
               <div class={`console-entry ${entry.type}`} key={entry.id}>
+                {entry.count > 1 && (
+                  <span class="console-entry-count">{entry.count}</span>
+                )}
                 {entry.type === 'error' ? (
                   <svg class="console-entry-icon error" viewBox="0 0 16 16" fill="currentColor">
                     <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm-.75 3.5a.75.75 0 0 1 1.5 0v4a.75.75 0 0 1-1.5 0v-4zm.75 7.25a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5z" />

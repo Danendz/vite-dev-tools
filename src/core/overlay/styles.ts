@@ -921,6 +921,19 @@ export const STYLES = /* css */ `
     background: rgba(255, 255, 255, 0.02);
   }
 
+  .console-entry-count {
+    flex-shrink: 0;
+    background: rgba(var(--accent-rgb), 0.25);
+    color: var(--accent);
+    font-size: 10px;
+    padding: 0 5px;
+    border-radius: 8px;
+    font-weight: 600;
+    min-width: 16px;
+    text-align: center;
+    line-height: 16px;
+  }
+
   .console-entry-icon {
     flex-shrink: 0;
     width: 14px;

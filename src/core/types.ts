@@ -121,6 +121,18 @@ export interface ConsoleEntry {
   message: string
   stack: string | null
   frames: StackFrame[] | null
+  count: number
+  groupKey: string | null
+}
+
+export interface RawFrame {
+  file: string
+  line: number
+  col: number
+}
+
+export interface ResolvedFrame extends RawFrame {
+  original: { file: string; line: number; col: number } | null
 }
 
 export interface ToastItem {

@@ -15,6 +15,8 @@ export const EVENTS = {
   TEXT_EDIT: 'devtools:text-edit',
   VALUE_EDIT: 'devtools:value-edit',
   TOAST: 'devtools:toast',
+  RESOLVE_FRAMES: 'devtools:resolve-frames',
+  FRAMES_RESOLVED: 'devtools:frames-resolved',
 } as const
 
 // localStorage keys
