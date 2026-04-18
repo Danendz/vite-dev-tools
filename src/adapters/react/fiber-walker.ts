@@ -6,7 +6,7 @@ import type {
   CommitComponentEntry,
   RenderCause,
 } from '../../core/types'
-import { computeRenderCause, getDepWarnings, isComponentFiber as isCauseComponentFiber } from './render-cause'
+import { computeRenderCause, getDepWarnings, getMemoWarning, isComponentFiber as isCauseComponentFiber } from './render-cause'
 import { getPersistentId } from './persistent-id'
 import { safeStringify, prettyStringify } from '../../shared/preview-value'
 
@@ -683,9 +683,27 @@ function attachRenderCause(
   const depWarnings = getDepWarnings(fiber)
   if (depWarnings.length > 0) node.depWarnings = depWarnings
 
+  // Attach memo suggestion (piggybacks on memo lint state)
+  const memoWarning = getMemoWarning(fiber)
+  if (memoWarning) {
+    node.memoSuggested = memoWarning.memoSuggested
+    node.memoStats = { totalRenders: memoWarning.totalRenders, wastedRenders: memoWarning.wastedRenders, wastedPercentage: memoWarning.wastedPercentage }
+    if (memoWarning.memoSuggested) {
+      if (!node.depWarnings) node.depWarnings = []
+      node.depWarnings.push({
+        hookIndex: -1,
+        hookName: 'memo',
+        kind: 'memo-suggested',
+        totalRenders: memoWarning.totalRenders,
+        wastedRenders: memoWarning.wastedRenders,
+      })
+    }
+  }
+
   // Don't push bailouts into the commit record — they didn't re-render.
   if (cause.primary === 'bailout') return
 
+  const isMemo = cause.isMemo === true
   const entry: CommitComponentEntry = {
     persistentId: node.persistentId,
     name: node.name,
@@ -696,6 +714,7 @@ function attachRenderCause(
     changedHooks: cause.changedHooks,
     changedContexts: cause.changedContexts,
     effectChanges: cause.effectChanges,
+    wastedRender: cause.primary === 'parent' && !isMemo ? true : undefined,
   }
 
   if (opts.includeValues && cause.changedProps && cause.changedProps.length > 0) {

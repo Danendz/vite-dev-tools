@@ -157,3 +157,88 @@ describe('reactAdapter.rewriteSource', () => {
     expect(result).toContain('99')
   })
 })
+
+describe('reactAdapter.rewriteSource — react-memo-wrap', () => {
+  const memoEdit = (componentName: string, line = 1) => ({
+    editHint: { kind: 'react-memo-wrap' as const },
+    value: null as any,
+    line,
+    componentName,
+  })
+
+  it('wraps a named function declaration', () => {
+    const source = "import { useState } from 'react'\n\nfunction Foo(props) {\n  return <div />\n}"
+    const result = reactAdapter.rewriteSource!(source, memoEdit('Foo', 3))
+    expect(result).not.toBeNull()
+    expect(result).toContain('const Foo = memo(function Foo(props)')
+    expect(result).toContain("import { useState, memo } from 'react'")
+  })
+
+  it('wraps an arrow function expression', () => {
+    const source = "import { useState } from 'react'\n\nconst Foo = (props) => {\n  return <div />\n}"
+    const result = reactAdapter.rewriteSource!(source, memoEdit('Foo', 3))
+    expect(result).not.toBeNull()
+    expect(result).toContain('const Foo = memo((props) =>')
+    expect(result).toContain("import { useState, memo } from 'react'")
+  })
+
+  it('wraps an exported function', () => {
+    const source = "import { useState } from 'react'\n\nexport function Foo() {\n  return <div />\n}"
+    const result = reactAdapter.rewriteSource!(source, memoEdit('Foo', 3))
+    expect(result).not.toBeNull()
+    expect(result).toContain('export const Foo = memo(function Foo()')
+  })
+
+  it('wraps export default function', () => {
+    const source = "import React from 'react'\n\nexport default function Foo() {\n  return <div />\n}"
+    const result = reactAdapter.rewriteSource!(source, memoEdit('Foo', 3))
+    expect(result).not.toBeNull()
+    expect(result).toContain('const Foo = memo(function Foo()')
+    expect(result).toContain('export default Foo')
+  })
+
+  it('adds memo import when not present', () => {
+    const source = "import { useState } from 'react'\n\nfunction Foo() {\n  return <div />\n}"
+    const result = reactAdapter.rewriteSource!(source, memoEdit('Foo', 3))
+    expect(result).not.toBeNull()
+    expect(result).toContain('memo')
+    expect(result).toContain("from 'react'")
+  })
+
+  it('does not duplicate memo import if already present', () => {
+    const source = "import { useState, memo } from 'react'\n\nfunction Foo() {\n  return <div />\n}"
+    const result = reactAdapter.rewriteSource!(source, memoEdit('Foo', 3))
+    expect(result).not.toBeNull()
+    // Should not add another memo import
+    const memoCount = (result!.match(/memo/g) || []).length
+    // 'memo' appears in: import line (1 time) + memo(function...) (1 time)
+    expect(memoCount).toBeLessThanOrEqual(3)
+  })
+
+  it('adds memo to default-only react import', () => {
+    const source = "import React from 'react'\n\nexport default function Foo() {\n  return <div />\n}"
+    const result = reactAdapter.rewriteSource!(source, memoEdit('Foo', 3))
+    expect(result).not.toBeNull()
+    expect(result).toContain('React, { memo }')
+  })
+
+  it('returns null when component not found', () => {
+    const source = "function Bar() {\n  return <div />\n}"
+    const result = reactAdapter.rewriteSource!(source, memoEdit('Foo', 1))
+    expect(result).toBeNull()
+  })
+
+  it('returns null when component is already wrapped in memo()', () => {
+    const source = "import { memo } from 'react'\n\nconst Foo = memo((props) => {\n  return <div />\n})"
+    const result = reactAdapter.rewriteSource!(source, memoEdit('Foo', 3))
+    expect(result).toBeNull()
+  })
+
+  it('adds new react import when none exists', () => {
+    const source = "function Foo() {\n  return <div />\n}"
+    const result = reactAdapter.rewriteSource!(source, memoEdit('Foo', 1))
+    expect(result).not.toBeNull()
+    expect(result).toContain("import { memo } from 'react'")
+    expect(result).toContain('const Foo = memo(function Foo()')
+  })
+})

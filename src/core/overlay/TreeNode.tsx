@@ -278,17 +278,29 @@ export function TreeNode({
           )
         })()}
         {node.depWarnings && node.depWarnings.length > 0 && (() => {
-          const active = node.depWarnings!.filter(w => w.kind !== 'was-unstable')
-          const isGhost = active.length === 0
-          const tip = isGhost
-            ? `Was unstable, now stable`
-            : node.depWarnings!.filter(w => w.kind !== 'was-unstable').map(w =>
+          const memoWarning = node.depWarnings!.find(w => w.kind === 'memo-suggested')
+          const depWarnings = node.depWarnings!.filter(w => w.kind !== 'memo-suggested')
+          const active = depWarnings.filter(w => w.kind !== 'was-unstable')
+          const isGhost = active.length === 0 && depWarnings.length > 0
+          const tips: string[] = []
+          if (memoWarning) {
+            tips.push(`${memoWarning.wastedRenders}/${memoWarning.totalRenders} renders wasted \u2014 consider React.memo()`)
+          }
+          if (depWarnings.length > 0) {
+            if (isGhost) {
+              tips.push('Was unstable, now stable')
+            } else {
+              tips.push(...active.map(w =>
                 w.kind === 'unstable' ? `Unstable: ${w.unstableDeps?.join(', ')}`
                 : `Missing: ${w.missingDeps?.join(', ')}`
-              ).join('; ')
+              ))
+            }
+          }
+          const showPip = memoWarning || depWarnings.length > 0
+          if (!showPip) return null
           return (
-            <Tooltip text={tip}>
-              <span class={`tree-dep-warning-pip${isGhost ? ' is-ghost' : ''}`} />
+            <Tooltip text={tips.join('; ')}>
+              <span class={`tree-dep-warning-pip${isGhost && !memoWarning ? ' is-ghost' : ''}`} />
             </Tooltip>
           )
         })()}

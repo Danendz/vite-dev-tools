@@ -65,6 +65,10 @@ export interface NormalizedNode {
     componentName: string
     source: SourceLocation
   }
+  /** True when the wasted-render threshold is met — component should be wrapped in memo() */
+  memoSuggested?: boolean
+  /** Wasted-render stats for the memo suggestion UI */
+  memoStats?: { totalRenders: number; wastedRenders: number; wastedPercentage: number }
   /** Local variable names in this component's body (for jump-to-source, no runtime values) */
   locals?: Array<{ name: string; line: number }>
   /** Prop origins — which variable/import each prop value references */
@@ -191,7 +195,7 @@ export interface DepWarning {
   hookIndex: number
   hookName: string
   varName?: string
-  kind: 'unstable' | 'missing' | 'was-unstable'
+  kind: 'unstable' | 'missing' | 'was-unstable' | 'memo-suggested'
   /** For 'unstable': the dep names that are unstable */
   unstableDeps?: string[]
   /** For 'missing': identifiers referenced in callback but not in dep array */
@@ -200,6 +204,10 @@ export interface DepWarning {
   stableSince?: number
   /** Source line number of the hook (for click-to-source) */
   lineNumber?: number
+  /** For 'memo-suggested': total renders tracked */
+  totalRenders?: number
+  /** For 'memo-suggested': how many of those were wasted (parent re-render, identical props) */
+  wastedRenders?: number
 }
 
 export interface CommitComponentEntry {
@@ -228,6 +236,8 @@ export interface CommitComponentEntry {
     varName?: string
     changedDeps: Array<{ name: string; prev: unknown; next: unknown }>
   }>
+  /** True when this specific render was wasted (parent-caused, identical props, not memo-wrapped) */
+  wastedRender?: boolean
 }
 
 export interface CommitRecord {

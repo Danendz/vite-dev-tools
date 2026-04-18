@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeRenderCause, getDepWarnings, PERFORMED_WORK_FLAG } from '@/adapters/react/render-cause'
+import { computeRenderCause, getDepWarnings, getMemoWarning, PERFORMED_WORK_FLAG } from '@/adapters/react/render-cause'
 import { getPersistentId } from '@/adapters/react/persistent-id'
 
 // ---- helpers to build fake fibers ----
@@ -662,5 +662,141 @@ describe('getDepWarnings', () => {
     expect(missing).toBeDefined()
     expect(missing!.lineNumber).toBe(42)
     expect(missing!.missingDeps).toEqual(['missing'])
+  })
+})
+
+// ---- Memo lint state / getMemoWarning ----
+
+describe('getMemoWarning', () => {
+  // In real React, parent-caused re-renders create NEW props objects with the same
+  // values (different reference, same content). This makes propsIdentical=false in
+  // computeRenderCause, which distinguishes parent from bailout.
+
+  it('returns null when fewer than MIN_RENDERS renders', () => {
+    let prev = fiber({ memoizedProps: { x: 1 } })
+    computeRenderCause(prev, 0) // mount
+
+    for (let i = 1; i <= 3; i++) {
+      const current = fiber({
+        memoizedProps: { x: 1 }, // new object, same values
+        alternate: prev,
+      })
+      computeRenderCause(current, i)
+      prev = current
+    }
+
+    expect(getMemoWarning(prev)).toBeNull()
+  })
+
+  it('suggests memo when >= 80% of >= 5 renders are wasted (parent-caused)', () => {
+    let prev = fiber({ memoizedProps: { x: 1 } })
+    computeRenderCause(prev, 0) // mount — not counted
+
+    // 6 parent-caused renders: new props objects with same values
+    for (let i = 1; i <= 6; i++) {
+      const current = fiber({
+        memoizedProps: { x: 1 }, // new object, same values → parent cause
+        alternate: prev,
+      })
+      computeRenderCause(current, i)
+      prev = current
+    }
+
+    const warning = getMemoWarning(prev)
+    expect(warning).not.toBeNull()
+    expect(warning!.memoSuggested).toBe(true)
+    expect(warning!.wastedRenders).toBe(6)
+    expect(warning!.totalRenders).toBe(6)
+    expect(warning!.wastedPercentage).toBe(1)
+  })
+
+  it('does not suggest memo when wasted percentage is below threshold', () => {
+    let prev = fiber({ memoizedProps: { x: 1 } })
+    computeRenderCause(prev, 0) // mount
+
+    // 2 parent renders (wasted): new props objects with same values
+    for (let i = 1; i <= 2; i++) {
+      const current = fiber({
+        memoizedProps: { x: 1 },
+        alternate: prev,
+      })
+      computeRenderCause(current, i)
+      prev = current
+    }
+    // 4 prop-change renders (not wasted): actual prop values differ → 2/6 = 33%
+    for (let i = 3; i <= 6; i++) {
+      const current = fiber({
+        memoizedProps: { x: i }, // different prop value each time
+        alternate: prev,
+      })
+      computeRenderCause(current, i)
+      prev = current
+    }
+
+    const warning = getMemoWarning(prev)
+    expect(warning).not.toBeNull()
+    expect(warning!.memoSuggested).toBe(false)
+    expect(warning!.wastedPercentage).toBeCloseTo(2 / 6)
+  })
+
+  it('excludes memo-wrapped components (tag 14)', () => {
+    let prev = fiber({ memoizedProps: { x: 1 }, tag: 14 })
+    computeRenderCause(prev, 0) // mount
+
+    for (let i = 1; i <= 6; i++) {
+      const current = fiber({
+        memoizedProps: { x: 1 },
+        alternate: prev,
+        tag: 14, // MemoComponent
+      })
+      computeRenderCause(current, i)
+      prev = current
+    }
+
+    // Memo components are excluded from tracking entirely
+    expect(getMemoWarning(prev)).toBeNull()
+  })
+
+  it('excludes memo-wrapped components (tag 15)', () => {
+    let prev = fiber({ memoizedProps: { x: 1 }, tag: 15 })
+    computeRenderCause(prev, 0) // mount
+
+    for (let i = 1; i <= 6; i++) {
+      const current = fiber({
+        memoizedProps: { x: 1 },
+        alternate: prev,
+        tag: 15, // SimpleMemoComponent
+      })
+      computeRenderCause(current, i)
+      prev = current
+    }
+
+    expect(getMemoWarning(prev)).toBeNull()
+  })
+
+  it('does not count mount renders as wasted', () => {
+    const f = fiber({ memoizedProps: { x: 1 } })
+    computeRenderCause(f, 0)
+    expect(getMemoWarning(f)).toBeNull()
+  })
+
+  it('mirrors stats to fiber.alternate', () => {
+    let prev = fiber({ memoizedProps: { x: 1 } })
+    computeRenderCause(prev, 0) // mount
+
+    for (let i = 1; i <= 6; i++) {
+      const current = fiber({
+        memoizedProps: { x: 1 },
+        alternate: prev,
+      })
+      computeRenderCause(current, i)
+      prev = current
+    }
+
+    // Check via alternate
+    const alt = prev.alternate
+    const warning = getMemoWarning(alt)
+    expect(warning).not.toBeNull()
+    expect(warning!.memoSuggested).toBe(true)
   })
 })
