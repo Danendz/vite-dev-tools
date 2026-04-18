@@ -2078,6 +2078,63 @@ export const STYLES = /* css */ `
     animation: cause-pulse 300ms ease-out;
   }
 
+  .tree-dep-warning-pip {
+    display: inline-block;
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-bottom: 7px solid #f59e0b;
+    margin: 0 2px;
+    vertical-align: middle;
+    flex-shrink: 0;
+  }
+  .tree-dep-warning-pip.is-ghost {
+    border-bottom-color: #78716c;
+    opacity: 0.5;
+  }
+
+  .dep-lint-section {
+    padding: 4px 8px;
+  }
+  .dep-lint-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 3px 0;
+    font-size: 11px;
+  }
+  .dep-lint-warning-icon {
+    color: #f59e0b;
+    flex-shrink: 0;
+    line-height: 1.4;
+  }
+  .dep-lint-warning.is-ghost .dep-lint-warning-icon {
+    color: #78716c;
+  }
+  .dep-lint-warning-text {
+    color: #d4d4d8;
+    line-height: 1.4;
+  }
+  .dep-lint-warning.is-ghost .dep-lint-warning-text {
+    color: #78716c;
+    font-style: italic;
+  }
+  .dep-lint-warning-hook {
+    color: #a78bfa;
+    font-family: monospace;
+    font-size: 10px;
+  }
+  .dep-lint-warning-deps {
+    color: #fbbf24;
+    font-family: monospace;
+    font-size: 10px;
+  }
+  .dep-lint-warning.is-ghost .dep-lint-warning-hook,
+  .dep-lint-warning.is-ghost .dep-lint-warning-deps {
+    color: #78716c;
+  }
+
   .detail-why {
     display: flex;
     flex-direction: column;

@@ -773,3 +773,194 @@ onMounted(() => console.log('hi'))
     expect(sites.provides).toEqual([])
   })
 })
+
+// ---- extractCallbackRefNames (via findHookCallsDeep) ----
+
+describe('refNames extraction', () => {
+  it('extracts referenced identifiers from useEffect callback', () => {
+    const code = `function App() {
+  const [count, setCount] = useState(0)
+  const name = 'test'
+  useEffect(() => { console.log(count, name) }, [])
+}`
+    const result = parseJSX('test.tsx', code)!
+    const comps = findComponentDeclarations(result.program, result.lineStarts)
+    const deep = findHookCallsDeep(
+      result.program, comps[0].bodyRange[0], comps[0].bodyRange[1], result.lineStarts,
+    )
+
+    const effect = deep.find(h => h.hookName === 'useEffect')
+    expect(effect).toBeDefined()
+    expect(effect!.refNames).toContain('count')
+    expect(effect!.refNames).toContain('name')
+  })
+
+  it('filters out useState setters as stable', () => {
+    const code = `function App() {
+  const [count, setCount] = useState(0)
+  useEffect(() => { setCount(count + 1) }, [count])
+}`
+    const result = parseJSX('test.tsx', code)!
+    const comps = findComponentDeclarations(result.program, result.lineStarts)
+    const deep = findHookCallsDeep(
+      result.program, comps[0].bodyRange[0], comps[0].bodyRange[1], result.lineStarts,
+    )
+
+    const effect = deep.find(h => h.hookName === 'useEffect')
+    expect(effect!.refNames).toContain('count')
+    expect(effect!.refNames).not.toContain('setCount')
+  })
+
+  it('filters out useReducer dispatch as stable', () => {
+    const code = `function App() {
+  const [state, dispatch] = useReducer(reducer, init)
+  useEffect(() => { dispatch({ type: 'reset' }) }, [])
+}`
+    const result = parseJSX('test.tsx', code)!
+    const comps = findComponentDeclarations(result.program, result.lineStarts)
+    const deep = findHookCallsDeep(
+      result.program, comps[0].bodyRange[0], comps[0].bodyRange[1], result.lineStarts,
+    )
+
+    const effect = deep.find(h => h.hookName === 'useEffect')
+    expect(effect!.refNames).not.toContain('dispatch')
+  })
+
+  it('filters out useRef results as stable', () => {
+    const code = `function App() {
+  const ref = useRef(null)
+  useEffect(() => { ref.current.focus() }, [])
+}`
+    const result = parseJSX('test.tsx', code)!
+    const comps = findComponentDeclarations(result.program, result.lineStarts)
+    const deep = findHookCallsDeep(
+      result.program, comps[0].bodyRange[0], comps[0].bodyRange[1], result.lineStarts,
+    )
+
+    const effect = deep.find(h => h.hookName === 'useEffect')
+    expect(effect!.refNames).not.toContain('ref')
+  })
+
+  it('filters out module-scope imports', () => {
+    const code = `import { api } from './api'
+import React from 'react'
+
+function App() {
+  const [count, setCount] = useState(0)
+  useEffect(() => { api.fetch(count) }, [])
+}`
+    const result = parseJSX('test.tsx', code)!
+    const comps = findComponentDeclarations(result.program, result.lineStarts)
+    const deep = findHookCallsDeep(
+      result.program, comps[0].bodyRange[0], comps[0].bodyRange[1], result.lineStarts,
+    )
+
+    const effect = deep.find(h => h.hookName === 'useEffect')
+    expect(effect!.refNames).not.toContain('api')
+    expect(effect!.refNames).not.toContain('React')
+    expect(effect!.refNames).toContain('count')
+  })
+
+  it('filters out callback parameters', () => {
+    const code = `function App() {
+  const [count, setCount] = useState(0)
+  const handleClick = (e, val) => { console.log(e, val) }
+  const handler = useCallback((e) => { handleClick(e, count) }, [])
+}`
+    const result = parseJSX('test.tsx', code)!
+    const comps = findComponentDeclarations(result.program, result.lineStarts)
+    const deep = findHookCallsDeep(
+      result.program, comps[0].bodyRange[0], comps[0].bodyRange[1], result.lineStarts,
+    )
+
+    const cb = deep.find(h => h.hookName === 'useCallback')
+    expect(cb!.refNames).not.toContain('e')
+    expect(cb!.refNames).toContain('handleClick')
+    expect(cb!.refNames).toContain('count')
+  })
+
+  it('filters out variables declared inside the callback', () => {
+    const code = `function App() {
+  const [count, setCount] = useState(0)
+  useEffect(() => {
+    const local = count * 2
+    const result = local + 1
+    console.log(result)
+  }, [])
+}`
+    const result = parseJSX('test.tsx', code)!
+    const comps = findComponentDeclarations(result.program, result.lineStarts)
+    const deep = findHookCallsDeep(
+      result.program, comps[0].bodyRange[0], comps[0].bodyRange[1], result.lineStarts,
+    )
+
+    const effect = deep.find(h => h.hookName === 'useEffect')
+    expect(effect!.refNames).toContain('count')
+    expect(effect!.refNames).not.toContain('local')
+    expect(effect!.refNames).not.toContain('result')
+  })
+
+  it('returns undefined refNames for hooks without dep arrays', () => {
+    const code = `function App() {
+  const [count, setCount] = useState(0)
+  useEffect(() => { console.log(count) })
+}`
+    const result = parseJSX('test.tsx', code)!
+    const comps = findComponentDeclarations(result.program, result.lineStarts)
+    const deep = findHookCallsDeep(
+      result.program, comps[0].bodyRange[0], comps[0].bodyRange[1], result.lineStarts,
+    )
+
+    const effect = deep.find(h => h.hookName === 'useEffect')
+    expect(effect!.refNames).toBeUndefined()
+  })
+
+  it('returns undefined refNames for useState (no callback)', () => {
+    const code = `function App() {
+  const [count, setCount] = useState(0)
+}`
+    const result = parseJSX('test.tsx', code)!
+    const comps = findComponentDeclarations(result.program, result.lineStarts)
+    const deep = findHookCallsDeep(
+      result.program, comps[0].bodyRange[0], comps[0].bodyRange[1], result.lineStarts,
+    )
+
+    const state = deep.find(h => h.hookName === 'useState')
+    expect(state!.refNames).toBeUndefined()
+  })
+
+  it('extracts refs from useMemo callback', () => {
+    const code = `function App() {
+  const [a, setA] = useState(1)
+  const [b, setB] = useState(2)
+  const sum = useMemo(() => a + b, [a])
+}`
+    const result = parseJSX('test.tsx', code)!
+    const comps = findComponentDeclarations(result.program, result.lineStarts)
+    const deep = findHookCallsDeep(
+      result.program, comps[0].bodyRange[0], comps[0].bodyRange[1], result.lineStarts,
+    )
+
+    const memo = deep.find(h => h.hookName === 'useMemo')
+    expect(memo!.refNames).toContain('a')
+    expect(memo!.refNames).toContain('b')
+    expect(memo!.refNames).not.toContain('setA')
+    expect(memo!.refNames).not.toContain('setB')
+  })
+
+  it('handles non-inline callback (variable ref) gracefully', () => {
+    const code = `function App() {
+  const handler = () => {}
+  useEffect(handler, [])
+}`
+    const result = parseJSX('test.tsx', code)!
+    const comps = findComponentDeclarations(result.program, result.lineStarts)
+    const deep = findHookCallsDeep(
+      result.program, comps[0].bodyRange[0], comps[0].bodyRange[1], result.lineStarts,
+    )
+
+    const effect = deep.find(h => h.hookName === 'useEffect')
+    // Can't extract refs from a variable reference, so refNames should be undefined
+    expect(effect!.refNames).toBeUndefined()
+  })
+})

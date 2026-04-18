@@ -6,7 +6,7 @@ import type {
   CommitComponentEntry,
   RenderCause,
 } from '../../core/types'
-import { computeRenderCause, isComponentFiber as isCauseComponentFiber } from './render-cause'
+import { computeRenderCause, getDepWarnings, isComponentFiber as isCauseComponentFiber } from './render-cause'
 import { getPersistentId } from './persistent-id'
 import { safeStringify, prettyStringify } from '../../shared/preview-value'
 
@@ -678,6 +678,10 @@ function attachRenderCause(
   const cause: RenderCause = computeRenderCause(fiber, opts.commitIndex)
   node.persistentId = getPersistentId(fiber)
   node.renderCause = cause
+
+  // Attach dep lint warnings (piggybacks on render-cause data)
+  const depWarnings = getDepWarnings(fiber)
+  if (depWarnings.length > 0) node.depWarnings = depWarnings
 
   // Don't push bailouts into the commit record — they didn't re-render.
   if (cause.primary === 'bailout') return

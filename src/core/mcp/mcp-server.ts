@@ -300,5 +300,16 @@ export function createMcpTools(bridge: BridgeServer): McpServer {
     return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
   })
 
+  mcp.registerTool('getDepWarnings', {
+    description: 'Get hook dependency lint warnings for a React component. Detects: unstable deps that change on >=80% of renders (min 5 renders), and missing deps (identifiers used in effect/memo/callback bodies not listed in dep arrays). Requires render-cause tracking to be enabled in settings.',
+    inputSchema: z.object({
+      componentName: z.string().describe('The component name to inspect.'),
+      tab: z.string().optional().describe('Target tab ID. Auto-selects if omitted.'),
+    }),
+  }, async ({ componentName, tab }) => {
+    const result = await bridge.request('getDepWarnings', { componentName }, tab)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  })
+
   return mcp
 }

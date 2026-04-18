@@ -277,6 +277,21 @@ export function TreeNode({
             </Tooltip>
           )
         })()}
+        {node.depWarnings && node.depWarnings.length > 0 && (() => {
+          const active = node.depWarnings!.filter(w => w.kind !== 'was-unstable')
+          const isGhost = active.length === 0
+          const tip = isGhost
+            ? `Was unstable, now stable`
+            : node.depWarnings!.filter(w => w.kind !== 'was-unstable').map(w =>
+                w.kind === 'unstable' ? `Unstable: ${w.unstableDeps?.join(', ')}`
+                : `Missing: ${w.missingDeps?.join(', ')}`
+              ).join('; ')
+          return (
+            <Tooltip text={tip}>
+              <span class={`tree-dep-warning-pip${isGhost ? ' is-ghost' : ''}`} />
+            </Tooltip>
+          )
+        })()}
         {hasHostElementChildren && (
           <Tooltip text={isElementExpanded ? 'Hide HTML elements' : 'Show HTML elements'}>
             <span

@@ -290,6 +290,7 @@ handlers.set('getHookTree', async (params) => {
   return {
     componentName: name,
     hooks: hooksSection.items.map(serializeItem),
+    depWarnings: node.depWarnings ?? [],
   }
 })
 
@@ -319,6 +320,16 @@ handlers.set('getWatchers', async (params) => {
       value: item.value,
       badge: item.badge ?? null,
     })),
+  }
+})
+
+handlers.set('getDepWarnings', async (params) => {
+  const name = params.componentName as string
+  const node = findNodeByName(name)
+  if (!node) return { error: `Component not found: ${name}` }
+  return {
+    componentName: name,
+    warnings: node.depWarnings ?? [],
   }
 })
 

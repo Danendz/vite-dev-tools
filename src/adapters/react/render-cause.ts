@@ -1,4 +1,4 @@
-import type { ChangedHook, RenderCause, RenderCauseKind } from '../../core/types'
+import type { ChangedHook, DepWarning, RenderCause, RenderCauseKind } from '../../core/types'
 import { inferHookType } from './fiber-walker'
 import { isKnownFiber } from './persistent-id'
 
@@ -37,6 +37,42 @@ const fiberSnapshot = new WeakMap<object, { props: any; state: any }>()
  */
 const lastRenderedCommitMap = new WeakMap<object, number>()
 
+// ---- Hook dependency lint state ----
+
+interface HookLintState {
+  totalRenders: number
+  /** Per-dep change counts, parallel to the dep array */
+  depChangeCounts: number[]
+  /** Referenced identifiers from build-time (for missing-dep detection) */
+  refNames?: string[]
+  /** Dep names from build-time metadata */
+  depNames?: string[]
+  /** Hook name for warning output */
+  hookName: string
+  /** Variable name for warning output */
+  varName?: string
+  /** Line number from source metadata (for click-to-source) */
+  line?: number
+  /** Names of variables that are hook results (useState, useMemo, etc.) — excluded from unstable detection */
+  hookResultNames?: Set<string>
+  /** Number of consecutive stable renders (for ghost state) */
+  consecutiveStable: number
+  /** True while the hook is actively flagged as unstable */
+  currentlyUnstable: boolean
+  /** True when the hook was previously unstable and is now in ghost/recovery state */
+  wasUnstable: boolean
+}
+
+/** Per-fiber hook lint state. Tracks instability counters across renders. */
+const hookLintState = new WeakMap<object, HookLintState[]>()
+
+/** Instability threshold: dep must change in >= this fraction of renders */
+const UNSTABLE_THRESHOLD = 0.8
+/** Minimum renders before flagging instability */
+const MIN_RENDERS = 5
+/** Consecutive stable renders before ghost state auto-clears */
+const GHOST_CLEAR_COUNT = 10
+
 /**
  * Given a current-commit fiber, decide WHY it re-rendered.
  * Assumes the fiber is a component fiber (not host). Callers should filter.
@@ -73,7 +109,7 @@ export function computeRenderCause(fiber: any, commitIndex: number): RenderCause
   const changedProps = diffProps(alternate.memoizedProps, fiber.memoizedProps)
   // For memo() components, __devtools_meta is on elementType (the memo wrapper), not type (the inner fn)
   const fiberTypeWithMeta = fiber.type?.__devtools_meta ? fiber.type : (fiber.elementType ?? fiber.type)
-  const changedHooks = diffHooks(alternate.memoizedState, fiber.memoizedState, fiberTypeWithMeta)
+  const changedHooks = diffHooks(alternate.memoizedState, fiber.memoizedState, fiberTypeWithMeta, fiber)
   const changedContexts = diffContexts(alternate.dependencies, fiber.dependencies)
 
   // Exclude hooks we can positively identify as effects/memos — their memoizedState
@@ -145,13 +181,13 @@ export function diffProps(prev: any, next: any): string[] {
  * Flatten the __devtools_meta.hooks tree into a flat array aligned with React's hook list.
  * Custom hooks with inner hooks are expanded; only leaf hooks appear in the result.
  */
-function flattenMetaHooks(hooks: any[]): Array<{ varName: string | null; hookName: string; depNames?: string[] }> {
-  const flat: Array<{ varName: string | null; hookName: string; depNames?: string[] }> = []
+function flattenMetaHooks(hooks: any[]): Array<{ varName: string | null; hookName: string; depNames?: string[]; refNames?: string[]; line?: number }> {
+  const flat: Array<{ varName: string | null; hookName: string; depNames?: string[]; refNames?: string[]; line?: number }> = []
   for (const h of hooks) {
     if (h.i && h.i.length > 0) {
       flat.push(...flattenMetaHooks(h.i))
     } else {
-      flat.push({ varName: h.n, hookName: h.h, depNames: h.d })
+      flat.push({ varName: h.n, hookName: h.h, depNames: h.d, refNames: h.r, line: h.l })
     }
   }
   return flat
@@ -172,7 +208,7 @@ function extractDepsFromHook(hook: any): unknown[] | null {
 }
 
 /** Walk two hook linked lists in lockstep, report indices whose memoizedState differs. */
-export function diffHooks(prevHead: any, nextHead: any, fiberType: any): ChangedHook[] {
+export function diffHooks(prevHead: any, nextHead: any, fiberType: any, fiber?: any): ChangedHook[] {
   const changed: ChangedHook[] = []
   let a = prevHead
   let b = nextHead
@@ -182,6 +218,15 @@ export function diffHooks(prevHead: any, nextHead: any, fiberType: any): Changed
   const devtoolsMeta = fiberType?.__devtools_meta
   const flatMeta = devtoolsMeta?.hooks ? flattenMetaHooks(devtoolsMeta.hooks) : null
   const legacyHookMeta: unknown[] | undefined = fiberType?.__devtools_hooks
+
+  // Build set of hook-result variable names (for filtering false positives in dep lint)
+  let hookResultNames: Set<string> | undefined
+  if (flatMeta && fiber) {
+    hookResultNames = new Set<string>()
+    for (const m of flatMeta) {
+      if (m.varName) hookResultNames.add(m.varName)
+    }
+  }
 
   while (a && b) {
     if (a.memoizedState !== b.memoizedState) {
@@ -225,6 +270,13 @@ export function diffHooks(prevHead: any, nextHead: any, fiberType: any): Changed
 
       changed.push(entry)
     }
+
+    // Update hook dependency lint state (for all hooks, not just changed)
+    if (fiber) {
+      const metaEntry = flatMeta?.[index]
+      updateHookLintState(fiber, index, a, b, metaEntry ?? undefined, hookResultNames)
+    }
+
     a = a.next
     b = b.next
     index++
@@ -264,4 +316,173 @@ function collectContexts(head: any): Array<{ name?: string; value: unknown }> {
 
 export function isComponentFiber(fiber: any): boolean {
   return COMPONENT_TAGS.has(fiber?.tag)
+}
+
+// ---- Hook dependency lint tracking ----
+
+/**
+ * Update lint state for a single hook position during a render.
+ * Called for every hook in the linked list (not just changed ones).
+ */
+function updateHookLintState(
+  fiber: any,
+  hookIndex: number,
+  prevHook: any,
+  nextHook: any,
+  meta?: { varName: string | null; hookName: string; depNames?: string[]; refNames?: string[]; line?: number },
+  hookResultNames?: Set<string>,
+): void {
+  // Only track hooks that have dependency arrays
+  const nextDeps = extractDepsFromHook(nextHook)
+  if (!nextDeps) return
+
+  // Check current fiber first, then alternate (state was mirrored there on previous render)
+  let states = hookLintState.get(fiber) ?? (fiber.alternate ? hookLintState.get(fiber.alternate) : undefined)
+  if (!states) {
+    states = []
+  }
+  hookLintState.set(fiber, states)
+
+  // Ensure array is large enough for this hook index
+  while (states.length <= hookIndex) {
+    states.push({
+      totalRenders: 0,
+      depChangeCounts: [],
+      consecutiveStable: 0,
+      currentlyUnstable: false,
+      wasUnstable: false,
+      hookName: '',
+    })
+  }
+
+  const entry = states[hookIndex]
+  entry.totalRenders++
+  entry.hookName = meta?.hookName ?? entry.hookName
+  if (meta?.varName) entry.varName = meta.varName
+
+  // Cache metadata on first encounter
+  if (meta?.refNames && !entry.refNames) entry.refNames = meta.refNames
+  if (meta?.depNames && !entry.depNames) entry.depNames = meta.depNames
+  if (meta?.line && !entry.line) entry.line = meta.line
+  if (hookResultNames && !entry.hookResultNames) entry.hookResultNames = hookResultNames
+
+  // Compare deps between prev and next
+  const prevDeps = extractDepsFromHook(prevHook)
+  if (prevDeps) {
+    // Ensure depChangeCounts is the right size
+    const maxLen = Math.max(prevDeps.length, nextDeps.length)
+    while (entry.depChangeCounts.length < maxLen) {
+      entry.depChangeCounts.push(0)
+    }
+
+    for (let i = 0; i < maxLen; i++) {
+      if (!Object.is(prevDeps[i], nextDeps[i])) {
+        entry.depChangeCounts[i]++
+      }
+    }
+  }
+
+  // Determine if any dep is currently unstable
+  let hasUnstable = false
+  if (entry.totalRenders >= MIN_RENDERS) {
+    for (let i = 0; i < entry.depChangeCounts.length; i++) {
+      if (entry.depChangeCounts[i] / entry.totalRenders >= UNSTABLE_THRESHOLD) {
+        hasUnstable = true
+        break
+      }
+    }
+  }
+
+  // Ghost state tracking
+  if (hasUnstable) {
+    entry.currentlyUnstable = true
+    entry.wasUnstable = false
+    entry.consecutiveStable = 0
+  } else if (entry.currentlyUnstable) {
+    // Was unstable on previous render, now dropping below threshold
+    entry.currentlyUnstable = false
+    entry.wasUnstable = true
+    entry.consecutiveStable = 1
+  } else if (entry.wasUnstable) {
+    // In ghost state — count consecutive stable renders
+    entry.consecutiveStable++
+    if (entry.consecutiveStable >= GHOST_CLEAR_COUNT) {
+      entry.wasUnstable = false
+      entry.consecutiveStable = 0
+    }
+  }
+
+  // Mirror state to fiber.alternate (same pattern as persistent-id.ts)
+  if (fiber.alternate) {
+    hookLintState.set(fiber.alternate, states)
+  }
+}
+
+/**
+ * Get hook dependency lint warnings for a fiber.
+ * Returns warnings for unstable deps, missing deps, and ghost (was-unstable) states.
+ */
+export function getDepWarnings(fiber: any): DepWarning[] {
+  const states = hookLintState.get(fiber) ?? (fiber.alternate ? hookLintState.get(fiber.alternate) : null)
+  if (!states) return []
+
+  const warnings: DepWarning[] = []
+
+  for (let i = 0; i < states.length; i++) {
+    const entry = states[i]
+
+    // Unstable deps detection
+    if (entry.totalRenders >= MIN_RENDERS) {
+      const unstableDeps: string[] = []
+      for (let di = 0; di < entry.depChangeCounts.length; di++) {
+        if (entry.depChangeCounts[di] / entry.totalRenders >= UNSTABLE_THRESHOLD) {
+          const depName = entry.depNames?.[di] ?? `dep[${di}]`
+          // Skip hook-derived values (useState, useMemo, etc.) — they change because
+          // data changed, not because of referential instability
+          if (entry.hookResultNames?.has(depName)) continue
+          unstableDeps.push(depName)
+        }
+      }
+      if (unstableDeps.length > 0) {
+        warnings.push({
+          hookIndex: i,
+          hookName: entry.hookName,
+          varName: entry.varName,
+          kind: 'unstable',
+          unstableDeps,
+          lineNumber: entry.line,
+        })
+      }
+    }
+
+    // Missing deps detection (from build-time refNames vs depNames)
+    if (entry.refNames && entry.depNames) {
+      const depSet = new Set(entry.depNames)
+      const missing = entry.refNames.filter(r => !depSet.has(r))
+      if (missing.length > 0) {
+        warnings.push({
+          hookIndex: i,
+          hookName: entry.hookName,
+          varName: entry.varName,
+          kind: 'missing',
+          missingDeps: missing,
+          lineNumber: entry.line,
+        })
+      }
+    }
+
+    // Ghost state: was unstable but now stable
+    if (entry.wasUnstable && entry.consecutiveStable > 0) {
+      warnings.push({
+        hookIndex: i,
+        hookName: entry.hookName,
+        varName: entry.varName,
+        kind: 'was-unstable',
+        stableSince: entry.consecutiveStable,
+        lineNumber: entry.line,
+      })
+    }
+  }
+
+  return warnings
 }
