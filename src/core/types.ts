@@ -42,6 +42,8 @@ export interface NormalizedNode {
   persistentId?: number
   /** Why this node re-rendered on the current commit (React-only for now) */
   renderCause?: RenderCause
+  /** Hook dependency lint warnings (unstable deps, missing deps) */
+  depWarnings?: DepWarning[]
   /** Usage-site source location (where component is rendered in parent JSX) */
   usageSource?: SourceLocation
   /** Prop names that use dynamic bindings (:prop="expr") — persist-to-source is disabled for these */
@@ -183,6 +185,21 @@ export interface RenderCause {
   }>
   /** True when the component is wrapped in React.memo (MemoComponent or SimpleMemoComponent) */
   isMemo?: boolean
+}
+
+export interface DepWarning {
+  hookIndex: number
+  hookName: string
+  varName?: string
+  kind: 'unstable' | 'missing' | 'was-unstable'
+  /** For 'unstable': the dep names that are unstable */
+  unstableDeps?: string[]
+  /** For 'missing': identifiers referenced in callback but not in dep array */
+  missingDeps?: string[]
+  /** For 'was-unstable': how many consecutive stable renders */
+  stableSince?: number
+  /** Source line number of the hook (for click-to-source) */
+  lineNumber?: number
 }
 
 export interface CommitComponentEntry {

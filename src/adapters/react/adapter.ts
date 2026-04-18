@@ -233,6 +233,7 @@ function serializeHookMeta(hooks: HookMeta[]): any[] {
   return hooks.map(h => {
     const entry: any = { n: h.varName, h: h.hookName, l: h.line }
     if (h.depNames) entry.d = h.depNames
+    if (h.refNames && h.refNames.length > 0) entry.r = h.refNames
     if (h.innerHooks && h.innerHooks.length > 0) {
       entry.i = serializeHookMeta(h.innerHooks)
     }

@@ -48,6 +48,8 @@ export interface HookCall {
   depNames?: string[]
   /** All destructured variable names when result is destructured (ObjectPattern/ArrayPattern) */
   destructuredNames?: string[]
+  /** Identifiers referenced in callback body (for missing-dep detection) */
+  refNames?: string[]
 }
 
 export interface JSXElementInfo {
@@ -423,6 +425,147 @@ function memberExprToString(node: BaseNode): string {
   return '?'
 }
 
+// ---- Callback reference extraction (for missing-dep detection) ----
+
+/** Collect all module-scope import names from the program */
+function collectImportNames(program: BaseNode): Set<string> {
+  const names = new Set<string>()
+  for (const stmt of program.body || []) {
+    if (stmt.type !== 'ImportDeclaration') continue
+    for (const spec of stmt.specifiers || []) {
+      if (spec.local?.name) names.add(spec.local.name)
+    }
+  }
+  return names
+}
+
+/** Collect all identifiers declared inside a function body (params, const/let/var, for-vars, catch) */
+function collectLocalDeclarations(node: BaseNode): Set<string> {
+  const locals = new Set<string>()
+
+  // Collect function params
+  if (node.params) {
+    for (const p of node.params) {
+      collectBindingNames(p, locals)
+    }
+  }
+
+  // Walk the body for local declarations
+  const body = node.body
+  if (body) {
+    walkAST(body, (n) => {
+      if (n.type === 'VariableDeclaration') {
+        for (const d of n.declarations || []) {
+          if (d.id) collectBindingNames(d.id, locals)
+        }
+      } else if (n.type === 'FunctionDeclaration' && n.id?.name) {
+        locals.add(n.id.name)
+      } else if (n.type === 'CatchClause' && n.param) {
+        collectBindingNames(n.param, locals)
+      }
+    })
+  }
+
+  return locals
+}
+
+/** Extract binding names from destructuring patterns and identifiers */
+function collectBindingNames(node: BaseNode, names: Set<string>): void {
+  if (!node) return
+  if (node.type === 'Identifier') {
+    names.add(node.name)
+  } else if (node.type === 'ArrayPattern') {
+    for (const el of node.elements || []) {
+      if (el) collectBindingNames(el, names)
+    }
+  } else if (node.type === 'ObjectPattern') {
+    for (const prop of node.properties || []) {
+      if (prop.type === 'RestElement') {
+        collectBindingNames(prop.argument, names)
+      } else if (prop.value) {
+        collectBindingNames(prop.value, names)
+      }
+    }
+  } else if (node.type === 'RestElement') {
+    collectBindingNames(node.argument, names)
+  } else if (node.type === 'AssignmentPattern') {
+    collectBindingNames(node.left, names)
+  }
+}
+
+/**
+ * Extract identifiers referenced in a hook callback body that are component-scope variables.
+ * Filters out: callback params, locals declared inside callback, stable React idents,
+ * module imports, globals, and anything not declared in the component scope.
+ */
+export function extractCallbackRefNames(
+  callbackNode: BaseNode,
+  stableIdents: Set<string>,
+  importNames: Set<string>,
+  componentScopeNames: Set<string>,
+): string[] {
+  const refs = new Set<string>()
+  const localDecls = collectLocalDeclarations(callbackNode)
+
+  const body = callbackNode.body
+  if (!body) return []
+
+  walkAST(body, (node, parent) => {
+    if (node.type !== 'Identifier') return
+    // Skip property access names (x.foo — skip foo, keep x)
+    if (parent?.type === 'MemberExpression' && parent.property === node && !parent.computed) return
+    // Skip object literal keys
+    if (parent?.type === 'Property' && parent.key === node && !parent.computed) return
+    // Skip function declaration names
+    if (parent?.type === 'FunctionDeclaration' && parent.id === node) return
+    // Skip variable declarator names (left side of const x = ...)
+    if (parent?.type === 'VariableDeclarator' && parent.id === node) return
+
+    refs.add(node.name)
+  })
+
+  // Filter: only keep identifiers that are in component scope, not locals/stable/imports
+  const result: string[] = []
+  for (const name of refs) {
+    if (localDecls.has(name)) continue
+    if (stableIdents.has(name)) continue
+    if (importNames.has(name)) continue
+    if (!componentScopeNames.has(name)) continue
+    result.push(name)
+  }
+  return result.sort()
+}
+
+/** Collect function parameter names from the component function that contains the given offset */
+function collectComponentParams(program: BaseNode, bodyStartOffset: number, out: Set<string>): void {
+  walkAST(program, (node) => {
+    if (
+      (node.type === 'FunctionDeclaration' || node.type === 'ArrowFunctionExpression' || node.type === 'FunctionExpression') &&
+      node.body?.range?.[0] === bodyStartOffset &&
+      node.params
+    ) {
+      for (const p of node.params) {
+        collectBindingNames(p, out)
+      }
+    }
+  })
+}
+
+/** Find the callback function node at a given range (first argument of a hook call) */
+function findCallbackNode(program: BaseNode, range: [number, number]): BaseNode | null {
+  let result: BaseNode | null = null
+  walkAST(program, (node) => {
+    if (result) return
+    if (
+      (node.type === 'ArrowFunctionExpression' || node.type === 'FunctionExpression') &&
+      node.range[0] === range[0] && node.range[1] === range[1]
+    ) {
+      result = node
+    }
+  })
+  return result
+}
+
 // ---- Deep hook/composable introspection ----
 
 export interface HookMeta {
@@ -435,6 +578,8 @@ export interface HookMeta {
   destructuredNames?: string[]
   /** Nested hooks inside a custom hook (recursive) */
   innerHooks?: HookMeta[]
+  /** Identifiers referenced in callback body (for missing-dep detection) */
+  refNames?: string[]
   /** Non-hook local variable declarations inside this composable's body */
   locals?: LocalVarMeta[]
   /** Source file path if the hook is defined in a different file */
@@ -472,6 +617,39 @@ export function findHookCallsDeep(
 
   const calls = findHookCalls(program, startOffset, endOffset, ls, callFilter ? { callFilter } : undefined)
 
+  // Build stable-idents set: useState setters, useReducer dispatches, useRef results
+  const stableIdents = new Set<string>()
+  for (const c of calls) {
+    if (c.hookName === 'useState' || c.hookName === 'useReducer') {
+      // Second destructured name is the setter/dispatch (stable by React guarantee)
+      if (c.destructuredNames && c.destructuredNames.length >= 2) {
+        stableIdents.add(c.destructuredNames[1])
+      }
+    } else if (c.hookName === 'useRef') {
+      // useRef result is stable
+      if (c.varName) stableIdents.add(c.varName)
+    }
+  }
+
+  // Collect module-scope import names (for filtering out imports in callback refs)
+  const importNames = collectImportNames(program)
+
+  // Collect all names declared in the component body scope (variables, function params, etc.)
+  // Used to whitelist refs — only identifiers declared in the component scope are valid refs.
+  // This automatically filters out globals like console, window, document, etc.
+  const componentScopeNames = new Set<string>()
+  for (const c of calls) {
+    if (c.varName) componentScopeNames.add(c.varName)
+    if (c.destructuredNames) {
+      for (const n of c.destructuredNames) componentScopeNames.add(n)
+    }
+  }
+  // Also collect non-hook variable declarations in the component scope
+  const localVars = findLocalVarDeclarations(program, startOffset, endOffset, ls)
+  for (const lv of localVars) componentScopeNames.add(lv.name)
+  // Also collect function parameters (props, etc.)
+  collectComponentParams(program, startOffset, componentScopeNames)
+
   return calls.map(call => {
     const meta: HookMeta = {
       varName: call.varName,
@@ -480,6 +658,17 @@ export function findHookCallsDeep(
       firstArgRange: call.firstArgRange,
       depNames: call.depNames,
       destructuredNames: call.destructuredNames,
+    }
+
+    // Extract referenced identifiers from callback body (for missing-dep detection)
+    // Only extract when the hook has a dep array (depNames exists) — hooks without
+    // dep arrays run on every render, so missing-dep detection doesn't apply.
+    if (HOOKS_WITH_DEPS.has(call.hookName) && call.depNames && call.firstArgRange) {
+      // Find the callback AST node (first argument of the hook call)
+      const callbackNode = findCallbackNode(program, call.firstArgRange)
+      if (callbackNode) {
+        meta.refNames = extractCallbackRefNames(callbackNode, stableIdents, importNames, componentScopeNames)
+      }
     }
 
     // If this is a custom hook (not built-in), try to introspect it

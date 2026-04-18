@@ -1077,6 +1077,38 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
         </div>
       )}
 
+      {node.depWarnings && node.depWarnings.length > 0 && (
+        <div class="detail-section">
+          <div class="detail-section-title">Dep Lint</div>
+          <div class="dep-lint-section">
+            {node.depWarnings.map((w, i) => (
+              <div class={`dep-lint-warning${w.kind === 'was-unstable' ? ' is-ghost' : ''}`} key={i}>
+                <span class="dep-lint-warning-icon">{w.kind === 'was-unstable' ? '\u25B3' : '\u26A0'}</span>
+                <span class="dep-lint-warning-text">
+                  <span
+                    class={`dep-lint-warning-hook${node.source && w.lineNumber ? ' detail-key-clickable' : ''}`}
+                    onClick={node.source && w.lineNumber ? () => openInEditor({
+                      fileName: node.source!.fileName,
+                      lineNumber: w.lineNumber!,
+                      columnNumber: 1,
+                    }) : undefined}
+                  >{w.varName ?? w.hookName}</span>
+                  {w.kind === 'unstable' && (
+                    <>{' '}deps <span class="dep-lint-warning-deps">[{w.unstableDeps?.join(', ')}]</span> change on most renders</>
+                  )}
+                  {w.kind === 'missing' && (
+                    <>{' '}<span class="dep-lint-warning-deps">[{w.missingDeps?.join(', ')}]</span> used in body but not in deps</>
+                  )}
+                  {w.kind === 'was-unstable' && (
+                    <>{' '}was unstable, now stable for {w.stableSince} renders</>
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {hasProps && (
         <div class="detail-section">
           <div class="detail-section-title">{node.isHostElement ? 'Attributes' : 'Props'}</div>
@@ -1163,21 +1195,6 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
         </div>
       )}
 
-      {node.textFragments && node.textFragments.length > 0 && (
-        <div class="detail-section">
-          <div class="detail-section-title">Text</div>
-          {node.textFragments.map((text, i) => (
-            <TextFragmentRow
-              key={i}
-              text={text}
-              nodeId={node.id}
-              fragmentIndex={i}
-              source={node.isHostElement ? (node.source ?? node._parentSource ?? null) : (node.usageSource ?? node.source)}
-            />
-          ))}
-        </div>
-      )}
-
       {node.sections.map((section) => {
         if (section.items.length === 0) return null
         return (
@@ -1211,6 +1228,21 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
               </div>
             )
           })}
+        </div>
+      )}
+
+      {node.textFragments && node.textFragments.length > 0 && (
+        <div class="detail-section">
+          <div class="detail-section-title">Text</div>
+          {node.textFragments.map((text, i) => (
+            <TextFragmentRow
+              key={i}
+              text={text}
+              nodeId={node.id}
+              fragmentIndex={i}
+              source={node.isHostElement ? (node.source ?? node._parentSource ?? null) : (node.usageSource ?? node.source)}
+            />
+          ))}
         </div>
       )}
 

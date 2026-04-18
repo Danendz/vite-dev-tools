@@ -52,6 +52,7 @@ describe('createMcpTools', () => {
       'getHookTree',
       'getLocalVars',
       'getWatchers',
+      'getDepWarnings',
     ]
 
     for (const name of expectedTools) {
