@@ -886,6 +886,10 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
     x: number; y: number; items: ContextMenuItem[]
   } | null>(null)
 
+  // Memo wrap preview state
+  const [memoPreviewDiff, setMemoPreviewDiff] = useState<DiffData | null>(null)
+  const memoPreviewConfirmRef = useRef<(() => Promise<void>) | null>(null)
+
   // Reset expanded state when selected component changes
   if (node?.persistentId !== prevNodeId.current) {
     prevNodeId.current = node?.persistentId
@@ -1077,11 +1081,57 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
         </div>
       )}
 
-      {node.depWarnings && node.depWarnings.length > 0 && (
+      {node.memoSuggested && node.memoStats && (
+        <div class="detail-section">
+          <div class="detail-section-title">Memoization</div>
+          <div class="memo-suggestion-banner">
+            <div class="memo-suggestion-stats">
+              <span class="memo-suggestion-pct">{Math.round(node.memoStats.wastedPercentage * 100)}%</span>
+              <span class="memo-suggestion-text">
+                of renders wasted ({node.memoStats.wastedRenders}/{node.memoStats.totalRenders})
+              </span>
+            </div>
+            <div class="memo-suggestion-hint">
+              This component re-renders when its parent does, but props don't change.
+              Wrapping in <code>React.memo()</code> would skip these renders.
+            </div>
+            {node.source?.fileName && (
+              <button
+                class="memo-suggestion-btn"
+                onClick={async () => {
+                  const result = await persistEdit({
+                    editHint: { kind: 'react-memo-wrap' },
+                    value: null,
+                    fileName: node.source!.fileName,
+                    lineNumber: node.source!.lineNumber,
+                    componentName: node.name,
+                  }, true) as PreviewResult
+                  if (result.ok && 'preview' in result) {
+                    setMemoPreviewDiff(result.diff)
+                    memoPreviewConfirmRef.current = async () => {
+                      await persistEdit({
+                        editHint: { kind: 'react-memo-wrap' },
+                        value: null,
+                        fileName: node.source!.fileName,
+                        lineNumber: node.source!.lineNumber,
+                        componentName: node.name,
+                      })
+                    }
+                  }
+                }}
+              >
+                Wrap in memo()
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {node.depWarnings && node.depWarnings.filter(w => w.kind !== 'memo-suggested').length > 0 && (
         <div class="detail-section">
           <div class="detail-section-title">Dep Lint</div>
           <div class="dep-lint-section">
-            {node.depWarnings.map((w, i) => (
+            {node.depWarnings.filter(w => w.kind !== 'memo-suggested').map((w, i) => (
               <div class={`dep-lint-warning${w.kind === 'was-unstable' ? ' is-ghost' : ''}`} key={i}>
                 <span class="dep-lint-warning-icon">{w.kind === 'was-unstable' ? '\u25B3' : '\u26A0'}</span>
                 <span class="dep-lint-warning-text">
@@ -1252,6 +1302,19 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
           y={detailContextMenu.y}
           items={detailContextMenu.items}
           onClose={() => setDetailContextMenu(null)}
+        />
+      )}
+
+      {memoPreviewDiff && (
+        <PreviewModal
+          diff={memoPreviewDiff}
+          onConfirm={async () => {
+            setMemoPreviewDiff(null)
+            const action = memoPreviewConfirmRef.current
+            memoPreviewConfirmRef.current = null
+            if (action) await action()
+          }}
+          onCancel={() => setMemoPreviewDiff(null)}
         />
       )}
     </div>

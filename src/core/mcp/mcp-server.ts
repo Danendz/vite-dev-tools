@@ -233,7 +233,7 @@ export function createMcpTools(bridge: BridgeServer): McpServer {
   })
 
   mcp.registerTool('getHotComponents', {
-    description: 'Get the top N most-frequently re-rendering components within a recent time window. The key tool to find perf suspects.',
+    description: 'Get the top N most-frequently re-rendering components within a recent time window. Returns wastedRenders, wastedPercentage, and memoSuggested for each component to identify candidates for React.memo().',
     inputSchema: z.object({
       windowMs: z.number().optional().describe('Look-back window in milliseconds (default 5000).'),
       limit: z.number().optional().describe('Top N (default 10).'),

@@ -2135,6 +2135,55 @@ export const STYLES = /* css */ `
     color: #78716c;
   }
 
+  /* Memo suggestion banner */
+  .memo-suggestion-banner {
+    padding: 6px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .memo-suggestion-stats {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .memo-suggestion-pct {
+    font-size: 18px;
+    font-weight: 700;
+    color: #f59e0b;
+  }
+  .memo-suggestion-text {
+    font-size: 11px;
+    color: #a1a1aa;
+  }
+  .memo-suggestion-hint {
+    font-size: 11px;
+    color: #71717a;
+    line-height: 1.4;
+  }
+  .memo-suggestion-hint code {
+    background: rgba(255,255,255,0.06);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 10px;
+    color: #d4d4d8;
+  }
+  .memo-suggestion-btn {
+    align-self: flex-start;
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: monospace;
+  }
+  .memo-suggestion-btn:hover {
+    background: rgba(245, 158, 11, 0.25);
+  }
+
   .detail-why {
     display: flex;
     flex-direction: column;
@@ -2435,6 +2484,16 @@ export const STYLES = /* css */ `
     color: #888;
     font-size: 10px;
     text-transform: capitalize;
+  }
+  .renders-entry-wasted {
+    font-size: 9px;
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.15);
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
   .renders-entry-keys {
     color: #ccc;

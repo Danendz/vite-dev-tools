@@ -66,6 +66,16 @@ interface HookLintState {
 /** Per-fiber hook lint state. Tracks instability counters across renders. */
 const hookLintState = new WeakMap<object, HookLintState[]>()
 
+// ---- Memo lint state ----
+
+interface MemoLintState {
+  totalRenders: number
+  wastedRenders: number
+}
+
+/** Per-fiber memo lint state. Tracks wasted renders for memo() suggestions. */
+const memoLintState = new WeakMap<object, MemoLintState>()
+
 /** Instability threshold: dep must change in >= this fraction of renders */
 const UNSTABLE_THRESHOLD = 0.8
 /** Minimum renders before flagging instability */
@@ -146,6 +156,12 @@ export function computeRenderCause(fiber: any, commitIndex: number): RenderCause
     // Re-rendered but no local cause ⇒ parent cascade
     lastRenderedCommitMap.set(fiber, commitIndex)
     if (fiber.alternate) lastRenderedCommitMap.set(fiber.alternate, commitIndex)
+
+    // Track wasted render for memo suggestion (parent-caused, not memo-wrapped)
+    if (!isMemo) {
+      updateMemoLintState(fiber, true)
+    }
+
     return { primary: 'parent', contributors: ['parent'], commitIndex, isMemo: isMemo || undefined, effectChanges }
   }
 
@@ -154,6 +170,12 @@ export function computeRenderCause(fiber: any, commitIndex: number): RenderCause
 
   lastRenderedCommitMap.set(fiber, commitIndex)
   if (fiber.alternate) lastRenderedCommitMap.set(fiber.alternate, commitIndex)
+
+  // Track non-wasted render for memo suggestion stats
+  if (!isMemo) {
+    updateMemoLintState(fiber, false)
+  }
+
   const cause: RenderCause = { primary, contributors, commitIndex, isMemo: isMemo || undefined }
   if (changedProps.length > 0) cause.changedProps = changedProps
   if (stateHooks.length > 0) cause.changedHooks = stateHooks
@@ -161,6 +183,38 @@ export function computeRenderCause(fiber: any, commitIndex: number): RenderCause
   if (effectChanges) cause.effectChanges = effectChanges
 
   return cause
+}
+
+// ---- Memo lint helpers ----
+
+/** Update per-fiber memo lint state. Called for every non-mount, non-bailout, non-memo render. */
+function updateMemoLintState(fiber: any, wasted: boolean): void {
+  const state = memoLintState.get(fiber) ?? (fiber.alternate ? memoLintState.get(fiber.alternate) : null) ?? { totalRenders: 0, wastedRenders: 0 }
+  state.totalRenders++
+  if (wasted) state.wastedRenders++
+  memoLintState.set(fiber, state)
+  if (fiber.alternate) memoLintState.set(fiber.alternate, state)
+}
+
+export interface MemoWarningResult {
+  totalRenders: number
+  wastedRenders: number
+  wastedPercentage: number
+  memoSuggested: boolean
+}
+
+/** Check if a fiber's memo lint state suggests wrapping in memo(). */
+export function getMemoWarning(fiber: any): MemoWarningResult | null {
+  const state = memoLintState.get(fiber) ?? (fiber.alternate ? memoLintState.get(fiber.alternate) : null)
+  if (!state || state.totalRenders < MIN_RENDERS) return null
+
+  const wastedPercentage = state.wastedRenders / state.totalRenders
+  return {
+    totalRenders: state.totalRenders,
+    wastedRenders: state.wastedRenders,
+    wastedPercentage,
+    memoSuggested: wastedPercentage >= UNSTABLE_THRESHOLD,
+  }
 }
 
 /** Shallow ref-diff keys. React.memo semantics. */

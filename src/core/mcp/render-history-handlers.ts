@@ -60,6 +60,7 @@ export async function getHotComponentsHandler(
     name: string
     source: CommitComponentEntry['source']
     renderCount: number
+    wastedRenders: number
     lastCause: string
     lastCommit: number
   }
@@ -71,6 +72,7 @@ export async function getHotComponentsHandler(
       const existing = agg.get(entry.persistentId)
       if (existing) {
         existing.renderCount++
+        if (entry.wastedRender) existing.wastedRenders++
         if (commit.commitIndex >= existing.lastCommit) {
           existing.lastCause = entry.cause
           existing.lastCommit = commit.commitIndex
@@ -81,6 +83,7 @@ export async function getHotComponentsHandler(
           name: entry.name,
           source: entry.source,
           renderCount: 1,
+          wastedRenders: entry.wastedRender ? 1 : 0,
           lastCause: entry.cause,
           lastCommit: commit.commitIndex,
         })
@@ -88,8 +91,29 @@ export async function getHotComponentsHandler(
     }
   }
 
-  const sorted = Array.from(agg.values()).sort((a, b) => b.renderCount - a.renderCount)
-  return { components: sorted.slice(0, limit) }
+  const MIN_RENDERS = 5
+  const MEMO_THRESHOLD = 0.8
+
+  const sorted = Array.from(agg.values())
+    .sort((a, b) => b.renderCount - a.renderCount)
+    .slice(0, limit)
+
+  const components: HotComponent[] = sorted.map(a => {
+    const wastedPercentage = a.renderCount > 0 ? a.wastedRenders / a.renderCount : 0
+    return {
+      persistentId: a.persistentId,
+      name: a.name,
+      source: a.source,
+      renderCount: a.renderCount,
+      wastedRenders: a.wastedRenders,
+      wastedPercentage: Math.round(wastedPercentage * 100) / 100,
+      memoSuggested: a.renderCount >= MIN_RENDERS && wastedPercentage >= MEMO_THRESHOLD,
+      lastCause: a.lastCause,
+      lastCommit: a.lastCommit,
+    }
+  })
+
+  return { components }
 }
 
 interface HotComponent {
@@ -97,6 +121,9 @@ interface HotComponent {
   name: string
   source: CommitComponentEntry['source']
   renderCount: number
+  wastedRenders: number
+  wastedPercentage: number
+  memoSuggested: boolean
   lastCause: string
   lastCommit: number
 }

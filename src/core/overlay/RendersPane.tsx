@@ -242,6 +242,9 @@ export function RendersPane({
                             {entry.name}
                           </button>
                           <span class="renders-entry-cause">{entry.cause}</span>
+                          {entry.wastedRender && (
+                            <span class="renders-entry-wasted">wasted</span>
+                          )}
                           {entry.changedProps && entry.changedProps.length > 0 && (
                             <span class="renders-entry-keys">
                               props: {entry.changedProps.join(', ')}

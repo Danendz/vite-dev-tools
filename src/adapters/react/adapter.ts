@@ -562,6 +562,127 @@ function rewriteImportedVariable(source: string, edit: RewriteEdit): string | nu
   }])
 }
 
+/**
+ * Wrap a component declaration in React.memo().
+ * Handles: function Foo(), const Foo = () =>, export function Foo(),
+ * export default function Foo().
+ * Also adds `import { memo } from 'react'` if needed.
+ */
+function rewriteMemoWrap(source: string, edit: RewriteEdit): string | null {
+  const parsed = parseJSX('file.tsx', source)
+  if (!parsed) return null
+
+  const { program, lineStarts } = parsed
+  const targetName = edit.componentName
+
+  // Find the matching component declaration in the AST
+  for (const stmt of program.body || []) {
+    let isExportDefault = false
+    let isExportNamed = false
+    let decl: any = stmt
+
+    if (stmt.type === 'ExportDefaultDeclaration') {
+      isExportDefault = true
+      decl = stmt.declaration
+    } else if (stmt.type === 'ExportNamedDeclaration' && stmt.declaration) {
+      isExportNamed = true
+      decl = stmt.declaration
+    }
+    if (!decl) continue
+
+    // Case 1: function Foo(props) { ... }
+    if (decl.type === 'FunctionDeclaration' && decl.id?.name === targetName) {
+      const funcSource = source.slice(decl.range[0], decl.range[1])
+      const edits: Array<{ start: number; end: number; replacement: string }> = []
+
+      if (isExportDefault) {
+        // export default function Foo() {} → const Foo = memo(function Foo() {})\nexport default Foo
+        edits.push({
+          start: stmt.range[0],
+          end: stmt.range[1],
+          replacement: `const ${targetName} = memo(${funcSource})\nexport default ${targetName}`,
+        })
+      } else if (isExportNamed) {
+        // export function Foo() {} → export const Foo = memo(function Foo() {})
+        edits.push({
+          start: stmt.range[0],
+          end: stmt.range[1],
+          replacement: `export const ${targetName} = memo(${funcSource})`,
+        })
+      } else {
+        // function Foo() {} → const Foo = memo(function Foo() {})
+        edits.push({
+          start: decl.range[0],
+          end: decl.range[1],
+          replacement: `const ${targetName} = memo(${funcSource})`,
+        })
+      }
+
+      return addMemoImport(spliceSource(source, edits), program, lineStarts)
+    }
+
+    // Case 2: const Foo = (...) => { ... } or const Foo = function(...) { ... }
+    if (decl.type === 'VariableDeclaration') {
+      for (const declarator of decl.declarations || []) {
+        if (declarator.id?.name !== targetName || !declarator.init) continue
+
+        const init = declarator.init
+        // Skip if already wrapped in memo()
+        if (init.type === 'CallExpression') {
+          const callee = init.callee
+          if (
+            (callee.type === 'Identifier' && callee.name === 'memo') ||
+            (callee.type === 'MemberExpression' && callee.property?.name === 'memo')
+          ) {
+            return null // Already memo-wrapped
+          }
+        }
+
+        if (init.type === 'ArrowFunctionExpression' || init.type === 'FunctionExpression') {
+          const initSource = source.slice(init.range[0], init.range[1])
+          const patched = spliceSource(source, [{
+            start: init.range[0],
+            end: init.range[1],
+            replacement: `memo(${initSource})`,
+          }])
+          return addMemoImport(patched, program, lineStarts)
+        }
+      }
+    }
+  }
+
+  return null
+}
+
+/** Add `memo` to the existing react import, or add a new import line */
+function addMemoImport(source: string, program: any, lineStarts: any): string {
+  // Check if memo is already imported
+  const existing = findImportSource(program, 'memo', lineStarts)
+  if (existing) return source
+
+  // Find existing `import { ... } from 'react'` to extend
+  for (const stmt of program.body || []) {
+    if (stmt.type !== 'ImportDeclaration' || !stmt.source?.value) continue
+    if (stmt.source.value !== 'react') continue
+
+    // Has named specifiers — add memo to them
+    const namedSpecs = (stmt.specifiers || []).filter((s: any) => s.type === 'ImportSpecifier')
+    if (namedSpecs.length > 0) {
+      const lastSpec = namedSpecs[namedSpecs.length - 1]
+      return source.slice(0, lastSpec.range[1]) + ', memo' + source.slice(lastSpec.range[1])
+    }
+
+    // Only has default specifier — add named import
+    const defaultSpec = (stmt.specifiers || []).find((s: any) => s.type === 'ImportDefaultSpecifier')
+    if (defaultSpec) {
+      return source.slice(0, defaultSpec.range[1]) + ', { memo }' + source.slice(defaultSpec.range[1])
+    }
+  }
+
+  // No react import at all — add one at the top
+  return `import { memo } from 'react'\n` + source
+}
+
 export const reactAdapter: FrameworkAdapter = {
   name: 'react',
   accent: '#58c4dc',
@@ -687,6 +808,9 @@ export const reactAdapter: FrameworkAdapter = {
     }
     if (edit.editHint.kind === 'react-prop-import') {
       return rewriteImportedVariable(source, edit)
+    }
+    if (edit.editHint.kind === 'react-memo-wrap') {
+      return rewriteMemoWrap(source, edit)
     }
     return null
   },
