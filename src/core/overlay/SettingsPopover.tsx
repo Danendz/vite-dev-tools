@@ -1,5 +1,8 @@
 import { h } from 'preact'
 import { useState, useEffect, useRef } from 'preact/hooks'
+import { useT } from './i18n'
+import type { Locale } from './i18n'
+import { SUPPORTED_LOCALES } from './i18n'
 
 interface SettingsPopoverProps {
   hideLibrary: boolean
@@ -9,6 +12,8 @@ interface SettingsPopoverProps {
   editor: string
   fontSize: number
   supportedSettings?: string[]
+  locale: Locale
+  onLocaleChange: (locale: Locale) => void
   onHideLibraryToggle: () => void
   onHideProvidersToggle: () => void
   onShowElementsToggle: () => void
@@ -40,6 +45,8 @@ export function SettingsPopover({
   editor,
   fontSize,
   supportedSettings,
+  locale,
+  onLocaleChange,
   onHideLibraryToggle,
   onHideProvidersToggle,
   onShowElementsToggle,
@@ -48,6 +55,7 @@ export function SettingsPopover({
   onFontSizeChange,
   onClose,
 }: SettingsPopoverProps) {
+  const { t } = useT()
   const showHideProviders = !supportedSettings || supportedSettings.includes('hideProviders')
   const isKnown = EDITOR_OPTIONS.some((o) => o.value === editor)
   const [customMode, setCustomMode] = useState(!isKnown)
@@ -76,30 +84,42 @@ export function SettingsPopover({
         <span class={`settings-checkbox${hideLibrary ? ' checked' : ''}`}>
           {hideLibrary ? '\u2713' : ''}
         </span>
-        <span>Hide library components</span>
+        <span>{t('settings.general.hideLibrary.label')}</span>
       </label>
       {showHideProviders && (
         <label class="settings-item" onClick={onHideProvidersToggle}>
           <span class={`settings-checkbox${hideProviders ? ' checked' : ''}`}>
             {hideProviders ? '\u2713' : ''}
           </span>
-          <span>Hide providers</span>
+          <span>{t('settings.general.hideProviders.label')}</span>
         </label>
       )}
       <label class="settings-item" onClick={onShowElementsToggle}>
         <span class={`settings-checkbox${showElements ? ' checked' : ''}`}>
           {showElements ? '\u2713' : ''}
         </span>
-        <span>Show HTML elements</span>
+        <span>{t('settings.general.showElements.label')}</span>
       </label>
       <label class="settings-item" onClick={onShowPreviewToggle}>
         <span class={`settings-checkbox${showPreview ? ' checked' : ''}`}>
           {showPreview ? '\u2713' : ''}
         </span>
-        <span>Preview before saving</span>
+        <span>{t('settings.general.previewBeforeSave.label')}</span>
       </label>
+      <div class="settings-item settings-editor">
+        <span>{t('settings.language')}</span>
+        <select
+          class="settings-select"
+          value={locale}
+          onChange={(e) => onLocaleChange((e.target as HTMLSelectElement).value as Locale)}
+        >
+          {SUPPORTED_LOCALES.map((l) => (
+            <option key={l.id} value={l.id}>{l.label}</option>
+          ))}
+        </select>
+      </div>
       <div class="settings-item settings-font-size">
-        <span>Font size</span>
+        <span>{t('settings.appearance.fontSize.label')}</span>
         <div class="settings-font-btns">
           {FONT_SIZES.map((size) => (
             <button
@@ -114,7 +134,7 @@ export function SettingsPopover({
       </div>
       <div class="settings-divider" />
       <div class="settings-item settings-editor">
-        <span>Editor</span>
+        <span>{t('settings.general.editor.label')}</span>
         <select
           class="settings-select"
           value={customMode ? '__custom__' : editor}
@@ -131,9 +151,11 @@ export function SettingsPopover({
           }}
         >
           {EDITOR_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
+            <option key={opt.value} value={opt.value}>
+              {opt.value === '' ? t('settings.general.editor.autoDetect') : opt.label}
+            </option>
           ))}
-          <option value="__custom__">Custom...</option>
+          <option value="__custom__">{t('settings.general.editor.custom')}</option>
         </select>
       </div>
       {customMode && (
@@ -141,7 +163,7 @@ export function SettingsPopover({
           <input
             class="settings-custom-input"
             type="text"
-            placeholder="Editor command..."
+            placeholder={t('settings.general.editor.placeholder')}
             value={customValue}
             onInput={(e) => {
               const val = (e.target as HTMLInputElement).value
@@ -153,7 +175,7 @@ export function SettingsPopover({
       )}
       <div class="settings-editor-hint">
         <a href="https://github.com/yyx990803/launch-editor#supported-editors" target="_blank" rel="noopener">
-          Supported editors &#8594;
+          {t('settings.general.editor.supportedEditors')} &#8594;
         </a>
       </div>
     </div>

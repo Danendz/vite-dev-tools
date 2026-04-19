@@ -9,19 +9,20 @@ import { PreviewModal } from './PreviewModal'
 import { Tooltip } from './Tooltip'
 import { ContextMenu } from './ContextMenu'
 import type { ContextMenuItem } from './ContextMenu'
+import { useT } from './i18n'
 
 function formatPath(source: SourceLocation): string {
   return `${source.fileName.replace(/^.*\/src\//, 'src/')}:${source.lineNumber}`
 }
 
-function causeLabel(kind: string): string {
+function causeLabel(kind: string, t: (key: string) => string): string {
   switch (kind) {
-    case 'mount': return 'Mounted'
-    case 'props': return 'Props changed'
-    case 'state': return 'State changed'
-    case 'context': return 'Context changed'
-    case 'parent': return 'Parent re-rendered'
-    case 'bailout': return 'Skipped (memoized)'
+    case 'mount': return t('detail.renderCauses.mount')
+    case 'props': return t('detail.renderCauses.props')
+    case 'state': return t('detail.renderCauses.state')
+    case 'context': return t('detail.renderCauses.context')
+    case 'parent': return t('detail.renderCauses.parent')
+    case 'bailout': return t('detail.renderCauses.bailout')
     default: return kind
   }
 }
@@ -126,6 +127,7 @@ function EditableValue({ item, nodeId, source }: { item: InspectorItem; nodeId: 
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const previewConfirmRef = useRef<(() => Promise<void>) | null>(null)
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
+  const { t } = useT()
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -144,7 +146,7 @@ function EditableValue({ item, nodeId, source }: { item: InspectorItem; nodeId: 
   // Boolean: single click toggles immediately
   if (valueType === 'boolean' && item.editHint) {
     return (
-      <Tooltip text="Click to toggle">
+      <Tooltip text={t('detail.clickToToggle')}>
         <span
           class="editable-value-wrapper editable edit-boolean-toggle"
           onClick={() => dispatchSectionEdit(nodeId, item.editHint!, !value)}
@@ -186,14 +188,14 @@ function EditableValue({ item, nodeId, source }: { item: InspectorItem; nodeId: 
       } else if (valueType === 'number') {
         parsed = Number(editValue)
         if (Number.isNaN(parsed)) {
-          setEditError('Invalid number')
+          setEditError(t('detail.invalidNumber'))
           return
         }
       } else {
         parsed = JSON.parse(editValue)
       }
     } catch {
-      setEditError('Invalid JSON')
+      setEditError(t('detail.invalidJson'))
       return
     }
 
@@ -312,11 +314,11 @@ function EditableValue({ item, nodeId, source }: { item: InspectorItem; nodeId: 
               <span class="saved-text">{'\u2713'}</span>
             ) : (
               <button class="persist-btn" onClick={handlePersist} disabled={persistStatus === 'saving'}>
-                {persistStatus === 'saving' ? '...' : persistStatus === 'error' ? '\u2715 failed' : 'Persist'}
+                {persistStatus === 'saving' ? '...' : persistStatus === 'error' ? '\u2715 ' + t('detail.failed') : t('detail.persist')}
               </button>
             )}
             {undoFile && persistStatus === 'saved' && (
-              <button class="undo-btn" onClick={handleUndo}>Undo</button>
+              <button class="undo-btn" onClick={handleUndo}>{t('detail.undo')}</button>
             )}
           </>
         )}
@@ -354,8 +356,8 @@ function EditableValue({ item, nodeId, source }: { item: InspectorItem; nodeId: 
         />
       )}
       <span class="edit-controls">
-        <Tooltip text="Confirm" shortcut="Enter"><button class="edit-btn confirm" onClick={confirmEdit}>✓</button></Tooltip>
-        <Tooltip text="Cancel" shortcut="Esc"><button class="edit-btn" onClick={cancelEdit}>✕</button></Tooltip>
+        <Tooltip text={t('detail.confirm')} shortcut="Enter"><button class="edit-btn confirm" onClick={confirmEdit}>✓</button></Tooltip>
+        <Tooltip text={t('detail.cancel')} shortcut="Esc"><button class="edit-btn" onClick={cancelEdit}>✕</button></Tooltip>
       </span>
       {editError && <span class="edit-error">{editError}</span>}
     </span>
@@ -397,6 +399,7 @@ function EditablePropValue({
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const previewConfirmRef = useRef<(() => Promise<void>) | null>(null)
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
+  const { t } = useT()
 
   // Reset all local state when the selected node changes
   useEffect(() => {
@@ -527,14 +530,14 @@ function EditablePropValue({
   const persistButton = shouldShowPersist && (
     <div class="persist-row">
       {persistStatus === 'saved' ? (
-        <span class="saved-text">{'\u2713'} Saved</span>
+        <span class="saved-text">{'\u2713'} {t('detail.saved')}</span>
       ) : (
         <button class="persist-btn-lg" onClick={handlePersist} disabled={persistStatus === 'saving'}>
-          {persistStatus === 'saving' ? 'Saving...' : persistStatus === 'error' ? '\u2715 Failed' : 'Save to source'}
+          {persistStatus === 'saving' ? t('detail.saving') : persistStatus === 'error' ? '\u2715 ' + t('detail.failed') : t('detail.saveToSource')}
         </button>
       )}
       {undoFile && persistStatus === 'saved' && (
-        <button class="undo-btn" onClick={handleUndo}>Undo</button>
+        <button class="undo-btn" onClick={handleUndo}>{t('detail.undo')}</button>
       )}
     </div>
   )
@@ -551,7 +554,7 @@ function EditablePropValue({
   if (valueType === 'boolean') {
     return (
       <>
-        <Tooltip text="Click to toggle">
+        <Tooltip text={t('detail.clickToToggle')}>
           <span
             class={`editable-value-wrapper editable edit-boolean-toggle${isEdited ? ' prop-edited' : ''}`}
             onClick={() => {
@@ -600,14 +603,14 @@ function EditablePropValue({
       } else if (valueType === 'number') {
         parsed = Number(editValue)
         if (Number.isNaN(parsed)) {
-          setEditError('Invalid number')
+          setEditError(t('detail.invalidNumber'))
           return
         }
       } else {
         parsed = JSON.parse(editValue)
       }
     } catch {
-      setEditError('Invalid JSON')
+      setEditError(t('detail.invalidJson'))
       return
     }
 
@@ -677,8 +680,8 @@ function EditablePropValue({
         />
       )}
       <span class="edit-controls">
-        <Tooltip text="Confirm" shortcut="Enter"><button class="edit-btn confirm" onClick={confirmEdit}>✓</button></Tooltip>
-        <Tooltip text="Cancel" shortcut="Esc"><button class="edit-btn" onClick={cancelEdit}>✕</button></Tooltip>
+        <Tooltip text={t('detail.confirm')} shortcut="Enter"><button class="edit-btn confirm" onClick={confirmEdit}>✓</button></Tooltip>
+        <Tooltip text={t('detail.cancel')} shortcut="Esc"><button class="edit-btn" onClick={cancelEdit}>✕</button></Tooltip>
       </span>
       {editError && <span class="edit-error">{editError}</span>}
     </span>
@@ -701,6 +704,7 @@ function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const previewConfirmRef = useRef<(() => Promise<void>) | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const { t } = useT()
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -830,8 +834,8 @@ function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
           onClick={(e) => e.stopPropagation()}
         />
         <span class="edit-controls">
-          <Tooltip text="Confirm" shortcut="Ctrl+Enter"><button class="edit-btn confirm" onMouseDown={(e) => { e.preventDefault(); confirmEdit() }}>&#10003;</button></Tooltip>
-          <Tooltip text="Cancel" shortcut="Esc"><button class="edit-btn" onMouseDown={(e) => { e.preventDefault(); cancelEdit() }}>&#10005;</button></Tooltip>
+          <Tooltip text={t('detail.confirm')} shortcut="Ctrl+Enter"><button class="edit-btn confirm" onMouseDown={(e) => { e.preventDefault(); confirmEdit() }}>&#10003;</button></Tooltip>
+          <Tooltip text={t('detail.cancel')} shortcut="Esc"><button class="edit-btn" onMouseDown={(e) => { e.preventDefault(); cancelEdit() }}>&#10005;</button></Tooltip>
         </span>
       </div>
     )
@@ -839,20 +843,20 @@ function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
 
   return (
     <div class="detail-row">
-      <Tooltip text="Double-click to edit"><span class="detail-text-fragment editable" onDblClick={enterEditMode}>
+      <Tooltip text={t('detail.doubleClickToEdit')}><span class="detail-text-fragment editable" onDblClick={enterEditMode}>
         "{text}"
       </span></Tooltip>
       {showPersist && source?.fileName && (
         <div class="persist-row">
           {persistStatus === 'saved' ? (
-            <span class="saved-text">{'\u2713'} Saved</span>
+            <span class="saved-text">{'\u2713'} {t('detail.saved')}</span>
           ) : (
             <button class="persist-btn-lg" onClick={handlePersist} disabled={persistStatus === 'saving'}>
-              {persistStatus === 'saving' ? 'Saving...' : persistStatus === 'error' ? '\u2715 Failed' : 'Save to source'}
+              {persistStatus === 'saving' ? t('detail.saving') : persistStatus === 'error' ? '\u2715 ' + t('detail.failed') : t('detail.saveToSource')}
             </button>
           )}
           {undoFile && persistStatus === 'saved' && (
-            <button class="undo-btn" onClick={handleUndo}>Undo</button>
+            <button class="undo-btn" onClick={handleUndo}>{t('detail.undo')}</button>
           )}
         </div>
       )}
@@ -867,19 +871,26 @@ function TextFragmentRow({ text, nodeId, fragmentIndex, source }: {
   )
 }
 
-function summarizeEntry(entry: CommitComponentEntry): string {
-  if (entry.cause === 'mount') return 'Mounted'
+function summarizeEntry(entry: CommitComponentEntry, t: (key: string) => string): string {
+  if (entry.cause === 'mount') return t('detail.renderCauses.mount')
   const parts: string[] = []
   if (entry.changedProps?.length) parts.push(`props: ${entry.changedProps.join(', ')}`)
   if (entry.changedHooks?.length) {
     parts.push(`state: ${entry.changedHooks.map(h => h.varName ?? h.hookName).join(', ')}`)
   }
   if (entry.changedContexts?.length) parts.push(`ctx: ${entry.changedContexts.join(', ')}`)
-  if (parts.length === 0) return causeLabel(entry.cause)
+  if (parts.length === 0) return causeLabel(entry.cause, t)
   return parts.join(' · ')
 }
 
+function renderWithCode(text: string, code: string) {
+  const idx = text.indexOf('{code}')
+  if (idx === -1) return <>{text}</>
+  return <>{text.slice(0, idx)}<code>{code}</code>{text.slice(idx + 6)}</>
+}
+
 export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, renderHistory, onNavigateToCommit, attributedErrors, tree }: DetailPanelProps) {
+  const { t } = useT()
   // 0 = collapsed, 5 = preview (first 5), Infinity = show all
   const [historyLimit, setHistoryLimit] = useState<number>(0)
   const prevNodeId = useRef<number | undefined>(undefined)
@@ -912,7 +923,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
   }, [renderHistory, node?.persistentId])
 
   if (!node) {
-    return <div class="detail-pane-empty">Select a component to inspect</div>
+    return <div class="detail-pane-empty">{t('detail.selectPrompt')}</div>
   }
 
   const propEntries = Object.entries(node.props)
@@ -928,12 +939,12 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
         <div class="detail-component-name">{node.isHostElement ? `<${node.name}>` : node.name}</div>
         {effectiveSource && (
           <>
-            {showUsageSource && <div class="source-label">Source</div>}
+            {showUsageSource && <div class="source-label">{t('detail.source')}</div>}
             <div class="source-link-row">
               <div class="source-link" onClick={() => openInEditor(effectiveSource)}>
                 {formatPath(effectiveSource)}
               </div>
-              <Tooltip text="Copy path">
+              <Tooltip text={t('detail.copyPath')}>
                 <button class="source-copy-btn" onClick={(e) => copyPath(effectiveSource, e)}>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
@@ -950,18 +961,18 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
               class="slot-indicator"
               onClick={() => openInEditor(node.slotOwner!.source)}
             >
-              slot in {node.slotOwner.componentName}
+              {t('detail.slotIn', { name: node.slotOwner.componentName })}
             </div>
           </Tooltip>
         )}
         {showUsageSource && (
           <>
-            <div class="source-label">Used in</div>
+            <div class="source-label">{t('detail.usedIn')}</div>
             <div class="source-link-row">
               <div class="source-link" onClick={() => openInEditor(node.usageSource!)}>
                 {formatPath(node.usageSource!)}
               </div>
-              <Tooltip text="Copy path">
+              <Tooltip text={t('detail.copyPath')}>
                 <button class="source-copy-btn" onClick={(e) => copyPath(node.usageSource!, e)}>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
@@ -978,7 +989,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
         const hasErrors = attributedErrors.some(e => e.type === 'error')
         const hasWarnings = attributedErrors.some(e => e.type === 'warning')
         const variant = hasErrors ? 'error' : 'warning'
-        const label = hasErrors && hasWarnings ? 'Errors & Warnings' : hasErrors ? 'Errors' : 'Warnings'
+        const label = hasErrors && hasWarnings ? t('detail.errorsAndWarnings') : hasErrors ? t('detail.errors') : t('detail.warnings')
         return (
         <div class={`detail-errors-section ${variant}`}>
           <div class="detail-section-title">
@@ -987,12 +998,12 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
           {attributedErrors.map(err => (
             <div class="detail-error-entry" key={err.id}>
               <div class="detail-error-message">
-                <span class={`detail-error-type ${err.type}`}>{err.type === 'error' ? 'ERR' : 'WARN'}</span>
+                <span class={`detail-error-type ${err.type}`}>{err.type === 'error' ? t('detail.err') : t('detail.warn')}</span>
                 {err.message}
               </div>
               {err.frames && err.frames.length > 0 && (
                 <details class="detail-error-stack-details">
-                  <summary>Stack trace</summary>
+                  <summary>{t('detail.stackTrace')}</summary>
                   <div class="detail-error-stack">
                     {err.frames.filter(f => !f.isLibrary).map((f, i) => (
                       <div key={i} class="console-stack-line" onClick={() => openInEditor({ fileName: f.file, lineNumber: f.line, columnNumber: f.col })}>
@@ -1003,7 +1014,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
                 </details>
               )}
               <div class="detail-error-actions">
-                <Tooltip text="Copy for AI">
+                <Tooltip text={t('detail.copyForAi')}>
                   <button
                     class="console-entry-copy"
                     onClick={() => navigator.clipboard.writeText(formatEntryForCopy(err, tree, renderHistory))}
@@ -1022,22 +1033,22 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
 
       {node.renderCause && (
         <div class="detail-section">
-          <div class="detail-section-title">Why did this render?</div>
+          <div class="detail-section-title">{t('detail.whyRender')}</div>
           <div class="detail-why">
             <div class={`detail-why-primary cause-${node.renderCause.primary}`}>
               <span class={`tree-cause-pip cause-${node.renderCause.primary}`} />
-              <span class="detail-why-primary-label">{causeLabel(node.renderCause.primary)}</span>
+              <span class="detail-why-primary-label">{causeLabel(node.renderCause.primary, t)}</span>
               <span class="detail-why-commit detail-why-history-link" onClick={() => onNavigateToCommit?.(node.renderCause!.commitIndex)}>commit #{node.renderCause.commitIndex}</span>
             </div>
             {node.renderCause.changedProps && node.renderCause.changedProps.length > 0 && (
               <div class="detail-why-row">
-                <span class="detail-why-row-label">Props changed:</span>
+                <span class="detail-why-row-label">{t('detail.propsChanged')}</span>
                 <span class="detail-why-row-keys">{node.renderCause.changedProps.join(', ')}</span>
               </div>
             )}
             {node.renderCause.changedHooks && node.renderCause.changedHooks.length > 0 && (
               <div class="detail-why-row">
-                <span class="detail-why-row-label">State changed:</span>
+                <span class="detail-why-row-label">{t('detail.stateChanged')}</span>
                 <span class="detail-why-row-keys">
                   {node.renderCause.changedHooks
                     .map((h) => h.varName ? `${h.varName} (${h.hookName})` : `${h.hookName} #${h.index}`)
@@ -1063,7 +1074,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
             )}
             {node.renderCause.effectChanges && node.renderCause.effectChanges.length > 0 && (
               <div class="detail-why-row">
-                <span class="detail-why-row-label">Effects re-ran:</span>
+                <span class="detail-why-row-label">{t('detail.effectsReRan')}</span>
                 <div class="detail-why-deps">
                   {node.renderCause.effectChanges.map((ec, i) => (
                     <div class="detail-why-dep-row" key={i}>
@@ -1080,15 +1091,15 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
             )}
             {node.renderCause.changedContexts && node.renderCause.changedContexts.length > 0 && (
               <div class="detail-why-row">
-                <span class="detail-why-row-label">Context changed:</span>
+                <span class="detail-why-row-label">{t('detail.contextChanged')}</span>
                 <span class="detail-why-row-keys">{node.renderCause.changedContexts.join(', ')}</span>
               </div>
             )}
             {node.renderCause.primary === 'parent' && (
               <div class="detail-why-hint">
                 {node.renderCause.isMemo
-                  ? <>Already wrapped in <code>React.memo</code>, but received new prop references. Check if the parent passes inline objects or functions.</>
-                  : <>No local changes detected — this component re-rendered because its parent did. Consider wrapping it in <code>React.memo</code>.</>
+                  ? renderWithCode(t('detail.memoHintAlready'), 'React.memo')
+                  : renderWithCode(t('detail.memoHintParent'), 'React.memo')
                 }
               </div>
             )}
@@ -1097,8 +1108,8 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
                 <div class="detail-why-history-toggle" onClick={() => setHistoryLimit(historyLimit === 0 ? 5 : 0)}>
                   <span class={`detail-why-history-toggle-arrow${historyLimit > 0 ? ' is-open' : ''}`}>&#9654;</span>
                   {node.renderCause.primary === 'bailout' && node.renderCause.lastRenderedCommit != null
-                    ? <>Last rendered on <span class="detail-why-history-link" onClick={(e) => { e.stopPropagation(); onNavigateToCommit?.(node.renderCause!.lastRenderedCommit!) }}>commit #{node.renderCause.lastRenderedCommit}</span> — show history</>
-                    : <>Recent renders ({componentHistory.length})</>
+                    ? <>{t('detail.lastRenderedOn')} <span class="detail-why-history-link" onClick={(e) => { e.stopPropagation(); onNavigateToCommit?.(node.renderCause!.lastRenderedCommit!) }}>commit #{node.renderCause.lastRenderedCommit}</span> — {t('detail.showHistory')}</>
+                    : <>{t('detail.recentRenders', { count: componentHistory.length })}</>
                   }
                 </div>
                 {historyLimit > 0 && (
@@ -1109,12 +1120,12 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
                         <span class="detail-why-history-link" onClick={() => onNavigateToCommit?.(h.commitIndex)}>
                           commit #{h.commitIndex}
                         </span>
-                        <span class="detail-why-history-summary">{summarizeEntry(h.entry)}</span>
+                        <span class="detail-why-history-summary">{summarizeEntry(h.entry, t)}</span>
                       </div>
                     ))}
                     {componentHistory.length > 5 && historyLimit !== Infinity && (
                       <div class="detail-why-history-more" onClick={() => setHistoryLimit(Infinity)}>
-                        Show all ({componentHistory.length})
+                        {t('detail.showAll', { count: componentHistory.length })}
                       </div>
                     )}
                   </div>
@@ -1123,7 +1134,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
             )}
             {node.renderCause.primary === 'bailout' && node.renderCause.lastRenderedCommit != null && componentHistory.length === 0 && (
               <div class="detail-why-hint">
-                Last actually rendered on commit #{node.renderCause.lastRenderedCommit}.
+                {t('detail.lastRenderedOnCommit', { index: node.renderCause.lastRenderedCommit })}
               </div>
             )}
           </div>
@@ -1132,17 +1143,16 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
 
       {node.memoSuggested && node.memoStats && (
         <div class="detail-section">
-          <div class="detail-section-title">Memoization</div>
+          <div class="detail-section-title">{t('detail.memoization')}</div>
           <div class="memo-suggestion-banner">
             <div class="memo-suggestion-stats">
               <span class="memo-suggestion-pct">{Math.round(node.memoStats.wastedPercentage * 100)}%</span>
               <span class="memo-suggestion-text">
-                of renders wasted ({node.memoStats.wastedRenders}/{node.memoStats.totalRenders})
+                {t('detail.rendersWasted', { wasted: node.memoStats.wastedRenders, total: node.memoStats.totalRenders })}
               </span>
             </div>
             <div class="memo-suggestion-hint">
-              This component re-renders when its parent does, but props don't change.
-              Wrapping in <code>React.memo()</code> would skip these renders.
+              {renderWithCode(t('detail.memoSuggestion'), 'React.memo()')}
             </div>
             {node.source?.fileName && (
               <button
@@ -1169,7 +1179,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
                   }
                 }}
               >
-                Wrap in memo()
+                {t('detail.wrapInMemo')}
               </button>
             )}
           </div>
@@ -1178,7 +1188,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
 
       {node.depWarnings && node.depWarnings.filter(w => w.kind !== 'memo-suggested').length > 0 && (
         <div class="detail-section">
-          <div class="detail-section-title">Dep Lint</div>
+          <div class="detail-section-title">{t('detail.depLint')}</div>
           <div class="dep-lint-section">
             {node.depWarnings.filter(w => w.kind !== 'memo-suggested').map((w, i) => (
               <div class={`dep-lint-warning${w.kind === 'was-unstable' ? ' is-ghost' : ''}`} key={i}>
@@ -1193,13 +1203,13 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
                     }) : undefined}
                   >{w.varName ?? w.hookName}</span>
                   {w.kind === 'unstable' && (
-                    <>{' '}deps <span class="dep-lint-warning-deps">[{w.unstableDeps?.join(', ')}]</span> change on most renders</>
+                    <>{' '}{t('detail.depsUnstable', { deps: `[${w.unstableDeps?.join(', ')}]` })}</>
                   )}
                   {w.kind === 'missing' && (
-                    <>{' '}<span class="dep-lint-warning-deps">[{w.missingDeps?.join(', ')}]</span> used in body but not in deps</>
+                    <>{' '}{t('detail.depsMissing', { deps: `[${w.missingDeps?.join(', ')}]` })}</>
                   )}
                   {w.kind === 'was-unstable' && (
-                    <>{' '}was unstable, now stable for {w.stableSince} renders</>
+                    <>{' '}{t('detail.depsWasUnstable', { count: w.stableSince ?? 0 })}</>
                   )}
                 </span>
               </div>
@@ -1210,7 +1220,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
 
       {hasProps && (
         <div class="detail-section">
-          <div class="detail-section-title">{node.isHostElement ? 'Attributes' : 'Props'}</div>
+          <div class="detail-section-title">{node.isHostElement ? t('detail.attributes') : t('detail.props')}</div>
           {propEntries.map(([key, value]) => {
             const valueType = typeof value
             const isPrimitive = value === null || valueType === 'string' || valueType === 'number' || valueType === 'boolean'
@@ -1222,13 +1232,13 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
               const menuItems: ContextMenuItem[] = []
               if (node.source?.fileName) {
                 menuItems.push({
-                  label: `Open source — ${formatPath(node.source)}`,
+                  label: `${t('detail.openSource')} — ${formatPath(node.source)}`,
                   onClick: () => openInEditor(node.source!),
                 })
               }
               if (node.usageSource) {
                 menuItems.push({
-                  label: `Open usage — ${formatPath(node.usageSource)}`,
+                  label: `${t('detail.openUsage')} — ${formatPath(node.usageSource)}`,
                   onClick: () => openInEditor(node.usageSource!),
                 })
               }
@@ -1284,8 +1294,8 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
                     }}
                   >
                     {propOrigin.source === 'import'
-                      ? `from ${propOrigin.file?.split('/').pop() ?? '?'}`
-                      : `var ${propOrigin.varName}`}
+                      ? t('detail.fromFile', { file: propOrigin.file?.split('/').pop() ?? '?' })
+                      : t('detail.varName', { name: propOrigin.varName })}
                   </span>
                 )}
               </div>
@@ -1302,6 +1312,8 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
             {section.items.map((item, i) => renderInspectorItem(
               item, i, section.id, node, 0, undefined,
               (e, items) => setDetailContextMenu({ x: e.clientX, y: e.clientY, items }),
+              undefined,
+              t,
             ))}
           </div>
         )
@@ -1309,7 +1321,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
 
       {node.locals && node.locals.length > 0 && (
         <div class="detail-section">
-          <div class="detail-section-title">Locals</div>
+          <div class="detail-section-title">{t('detail.locals')}</div>
           {node.locals.map((local, i) => {
             const canNavigate = node.source != null
             return (
@@ -1332,7 +1344,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
 
       {node.textFragments && node.textFragments.length > 0 && (
         <div class="detail-section">
-          <div class="detail-section-title">Text</div>
+          <div class="detail-section-title">{t('detail.text')}</div>
           {node.textFragments.map((text, i) => (
             <TextFragmentRow
               key={i}
@@ -1379,6 +1391,7 @@ function renderInspectorItem(
   parentSourceFile?: string,
   onItemContextMenu?: (e: MouseEvent, items: ContextMenuItem[]) => void,
   parentCallLine?: number,
+  t?: (key: string, params?: Record<string, string | number>) => string,
 ): any {
   const canNavigate = item.lineNumber != null && (item.sourceFile || parentSourceFile || node.source)
   const sourceFile = item.sourceFile ?? parentSourceFile ?? node.source?.fileName
@@ -1392,14 +1405,14 @@ function renderInspectorItem(
     // "Open source" — where the item is defined (composable file for inner items, component file otherwise)
     if (item.lineNumber != null && sourceFile) {
       menuItems.push({
-        label: `Open source — ${sourceFile.replace(/^.*\/src\//, 'src/')}:${item.lineNumber}`,
+        label: `${t ? t('detail.openSource') : 'Open source'} — ${sourceFile.replace(/^.*\/src\//, 'src/')}:${item.lineNumber}`,
         onClick: () => openInEditor({ fileName: sourceFile!, lineNumber: item.lineNumber!, columnNumber: 1 }),
       })
     }
     // "Open usage" — for composable inner items, navigate to the call site in the component
     if ((item.sourceFile || parentSourceFile) && node.source?.fileName && parentCallLine != null) {
       menuItems.push({
-        label: `Open usage — ${node.source.fileName.replace(/^.*\/src\//, 'src/')}:${parentCallLine}`,
+        label: `${t ? t('detail.openUsage') : 'Open usage'} — ${node.source.fileName.replace(/^.*\/src\//, 'src/')}:${parentCallLine}`,
         onClick: () => openInEditor({ fileName: node.source!.fileName, lineNumber: parentCallLine, columnNumber: 1 }),
       })
     }
@@ -1423,13 +1436,13 @@ function renderInspectorItem(
       const menuItems: ContextMenuItem[] = []
       if (item.sourceFile) {
         menuItems.push({
-          label: `Open source — ${item.sourceFile.replace(/^.*\/src\//, 'src/')}`,
+          label: `${t ? t('detail.openSource') : 'Open source'} — ${item.sourceFile.replace(/^.*\/src\//, 'src/')}`,
           onClick: () => openInEditor({ fileName: item.sourceFile!, lineNumber: 1, columnNumber: 1 }),
         })
       }
       if (item.lineNumber != null && node.source?.fileName) {
         menuItems.push({
-          label: `Open usage — ${node.source.fileName.replace(/^.*\/src\//, 'src/')}:${item.lineNumber}`,
+          label: `${t ? t('detail.openUsage') : 'Open usage'} — ${node.source.fileName.replace(/^.*\/src\//, 'src/')}:${item.lineNumber}`,
           onClick: () => openInEditor({ fileName: node.source!.fileName, lineNumber: item.lineNumber!, columnNumber: 1 }),
         })
       }
@@ -1449,12 +1462,12 @@ function renderInspectorItem(
           {item.badge && <span class="hook-type-tag">[{item.badge}]</span>}
           {item.sourceFile && (
             <span class="detail-origin-tag" title={item.sourceFile}>
-              from {item.sourceFile.split('/').pop()}
+              {t ? t('detail.fromFile', { file: item.sourceFile.split('/').pop() ?? '' }) : `from ${item.sourceFile.split('/').pop()}`}
             </span>
           )}
         </div>
         <div class="detail-hook-group-children">
-          {item.innerHooks.map((inner, j) => renderInspectorItem(inner, j, sectionId, node, depth + 1, sourceFile, onItemContextMenu, item.lineNumber))}
+          {item.innerHooks.map((inner, j) => renderInspectorItem(inner, j, sectionId, node, depth + 1, sourceFile, onItemContextMenu, item.lineNumber, t))}
         </div>
       </div>
     )

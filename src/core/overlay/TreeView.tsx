@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'preact/hooks'
 import type { NormalizedNode } from '../types'
 import { TreeNode } from './TreeNode'
 import { Tooltip } from './Tooltip'
+import { useT } from './i18n'
 
 /** Flatten past host elements to extract component children when not element-expanded */
 function flattenPastHostElements(children: NormalizedNode[]): NormalizedNode[] {
@@ -121,6 +122,7 @@ export function TreeView({
   onContextMenu,
 }: TreeViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const { t } = useT()
 
   // Element expand state: which component nodes have their host elements expanded
   const [elementExpandedSet, setElementExpandedSet] = useState<Set<string>>(new Set())
@@ -335,18 +337,18 @@ export function TreeView({
         <input
           class="search-input"
           type="text"
-          placeholder="Search..."
+          placeholder={t('tree.searchPlaceholder')}
           value={searchQuery}
           onInput={(e) => onSearchChange((e.target as HTMLInputElement).value)}
         />
-        <Tooltip text="Expand all">
+        <Tooltip text={t('tree.expandAll')}>
           <button class="search-bar-btn" onClick={handleExpandAll}>
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
               <path d="M4 6l4 4 4-4" />
             </svg>
           </button>
         </Tooltip>
-        <Tooltip text="Collapse all">
+        <Tooltip text={t('tree.collapseAll')}>
           <button class="search-bar-btn" onClick={handleCollapseAll}>
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
               <path d="M6 4l4 4-4 4" />
@@ -354,7 +356,7 @@ export function TreeView({
           </button>
         </Tooltip>
         {errorCountMap && errorCountMap.size > 0 && (
-          <Tooltip text="Filter errors">
+          <Tooltip text={t('tree.filterErrors')}>
             <button
               class={`error-filter-btn${errorFilterActive ? ' active' : ''}`}
               onClick={onErrorFilterToggle}
@@ -375,7 +377,7 @@ export function TreeView({
       >
         {tree.length === 0 ? (
           <div style={{ padding: '20px', color: '#666', fontStyle: 'italic', textAlign: 'center' }}>
-            {searchQuery ? 'No matching components' : 'No components detected'}
+            {searchQuery ? t('tree.noMatching') : t('tree.noComponents')}
           </div>
         ) : (
           tree.map((node) => (

@@ -8,6 +8,8 @@ import { RendersPane } from './RendersPane'
 import { SettingsModal } from './SettingsModal'
 import { Tooltip } from './Tooltip'
 import { STORAGE_KEYS } from '../../shared/constants'
+import { useT } from './i18n'
+import type { Locale } from './i18n'
 
 const MIN_HEIGHT = 150
 const MAX_HEIGHT_RATIO = 0.8
@@ -99,6 +101,8 @@ interface PanelProps {
   mode?: 'docked' | 'popup'
   onDetach?: () => void
   onDockBack?: () => void
+  locale: Locale
+  onLocaleChange: (locale: Locale) => void
 }
 
 export function Panel({
@@ -184,7 +188,11 @@ export function Panel({
   mode = 'docked',
   onDetach,
   onDockBack,
+  locale,
+  onLocaleChange,
 }: PanelProps) {
+  const { t } = useT()
+
   const [detailSize, setDetailSize] = useState(() => {
     const stored = localStorage.getItem(STORAGE_KEYS.DETAIL_SIZE)
     if (stored) {
@@ -306,7 +314,7 @@ export function Panel({
           <span class="panel-title">vite-devtools</span>
           <div class="panel-header-controls">
             {/* Element picker — both modes */}
-            <Tooltip text="Select element">
+            <Tooltip text={t('toolbar.selectElement')}>
               <button
                 class={`dock-btn${isPickerActive ? ' active' : ''}`}
                 onClick={onPickerToggle}
@@ -319,7 +327,7 @@ export function Panel({
             </Tooltip>
             {/* Clear AI highlight — both modes */}
             {aiHighlightActive && (
-              <Tooltip text="Clear AI highlight">
+              <Tooltip text={t('toolbar.clearAiHighlight')}>
                 <button
                   class="ai-highlight-clear-btn"
                   onClick={onClearAiHighlight}
@@ -329,7 +337,7 @@ export function Panel({
               </Tooltip>
             )}
             {/* Settings — both modes */}
-            <Tooltip text="Settings">
+            <Tooltip text={t('toolbar.settings')}>
               <button
                 class={`dock-btn${settingsOpen ? ' active' : ''}`}
                 onClick={onSettingsToggle}
@@ -344,7 +352,7 @@ export function Panel({
             {mode === 'docked' && (
               <>
                 {/* Dock left */}
-                <Tooltip text="Dock left">
+                <Tooltip text={t('toolbar.dockLeft')}>
                   <button
                     class={`dock-btn${dockPosition === 'left' ? ' active' : ''}`}
                     onClick={() => onDockChange('left')}
@@ -356,7 +364,7 @@ export function Panel({
                   </button>
                 </Tooltip>
                 {/* Dock bottom */}
-                <Tooltip text="Dock bottom">
+                <Tooltip text={t('toolbar.dockBottom')}>
                   <button
                     class={`dock-btn${dockPosition === 'bottom' ? ' active' : ''}`}
                     onClick={() => onDockChange('bottom')}
@@ -368,7 +376,7 @@ export function Panel({
                   </button>
                 </Tooltip>
                 {/* Dock right */}
-                <Tooltip text="Dock right">
+                <Tooltip text={t('toolbar.dockRight')}>
                   <button
                     class={`dock-btn${dockPosition === 'right' ? ' active' : ''}`}
                     onClick={() => onDockChange('right')}
@@ -381,7 +389,7 @@ export function Panel({
                 </Tooltip>
                 {/* Open in popup window */}
                 {onDetach && (
-                  <Tooltip text="Open in popup window">
+                  <Tooltip text={t('toolbar.openPopup')}>
                     <button class="dock-btn" onClick={onDetach}>
                       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
                         <rect x="1" y="4" width="10" height="10" rx="1" />
@@ -391,7 +399,7 @@ export function Panel({
                     </button>
                   </Tooltip>
                 )}
-                <Tooltip text="Close" shortcut="Ctrl+Shift+D">
+                <Tooltip text={t('toolbar.close')} shortcut="Ctrl+Shift+D">
                   <button class="panel-close" onClick={onClose}>
                     ×
                   </button>
@@ -400,7 +408,7 @@ export function Panel({
             )}
             {/* Popup-mode controls */}
             {mode === 'popup' && (
-              <Tooltip text="Dock back to page">
+              <Tooltip text={t('toolbar.dockBack')}>
                 <button class="dock-btn" onClick={onDockBack}>
                   <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
                     <rect x="2" y="2" width="12" height="12" rx="1" />
@@ -441,6 +449,8 @@ export function Panel({
               onConsoleStripLibraryToggle={onConsoleStripLibraryToggle}
               clearConsoleOnReload={clearConsoleOnReload}
               onClearConsoleOnReloadToggle={onClearConsoleOnReloadToggle}
+              locale={locale}
+              onLocaleChange={onLocaleChange}
               onClose={onSettingsToggle}
             />
           )}
@@ -450,13 +460,13 @@ export function Panel({
             class={`tab-btn${activeTab === 'inspect' ? ' tab-active' : ''}`}
             onClick={() => onTabChange('inspect')}
           >
-            Inspect
+            {t('tabs.inspect')}
           </button>
           <button
             class={`tab-btn${activeTab === 'console' ? ' tab-active' : ''}`}
             onClick={() => onTabChange('console')}
           >
-            Console
+            {t('tabs.console')}
             {activeTab !== 'console' && errorCount > 0 && (
               <span class="tab-badge">{errorCount}</span>
             )}
@@ -466,7 +476,7 @@ export function Panel({
               class={`tab-btn${activeTab === 'renders' ? ' tab-active' : ''}`}
               onClick={() => onTabChange('renders')}
             >
-              Renders
+              {t('tabs.renders')}
             </button>
           )}
         </div>

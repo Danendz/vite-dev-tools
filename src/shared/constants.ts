@@ -41,6 +41,7 @@ export const STORAGE_KEYS = {
   DETACHED: 'danendz-devtools:detached',
   POPUP_WIDTH: 'danendz-devtools:popup-width',
   POPUP_HEIGHT: 'danendz-devtools:popup-height',
+  LOCALE: 'danendz-devtools:locale',
 } as const
 
 export const RENDER_HISTORY_DEFAULTS = {
