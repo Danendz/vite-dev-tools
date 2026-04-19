@@ -1,6 +1,7 @@
 import { h } from 'preact'
 import { useEffect, useRef } from 'preact/hooks'
 import type { DiffData } from '../communication'
+import { useT } from './i18n'
 
 interface PreviewModalProps {
   diff: DiffData
@@ -9,6 +10,7 @@ interface PreviewModalProps {
 }
 
 export function PreviewModal({ diff, onConfirm, onCancel }: PreviewModalProps) {
+  const { t } = useT()
   const modalRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -25,7 +27,7 @@ export function PreviewModal({ diff, onConfirm, onCancel }: PreviewModalProps) {
       <div class="preview-modal" ref={modalRef} onClick={(e) => e.stopPropagation()}>
         <div class="preview-modal-header">
           <span class="preview-modal-filename">{diff.fileName}</span>
-          <span class="preview-modal-line">line {diff.lineNumber}</span>
+          <span class="preview-modal-line">{t('detail.previewLine', { line: diff.lineNumber })}</span>
         </div>
         <div class="preview-diff">
           {diff.contextBefore.map((line, i) => (
@@ -42,8 +44,8 @@ export function PreviewModal({ diff, onConfirm, onCancel }: PreviewModalProps) {
           ))}
         </div>
         <div class="preview-modal-actions">
-          <button class="preview-modal-btn confirm" onClick={onConfirm}>Apply</button>
-          <button class="preview-modal-btn cancel" onClick={onCancel}>Cancel</button>
+          <button class="preview-modal-btn confirm" onClick={onConfirm}>{t('detail.apply')}</button>
+          <button class="preview-modal-btn cancel" onClick={onCancel}>{t('detail.cancel')}</button>
         </div>
       </div>
     </div>

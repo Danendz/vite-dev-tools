@@ -1,5 +1,6 @@
 import { h } from 'preact'
 import { useMemo, useState, useCallback, useRef, useEffect } from 'preact/hooks'
+import { useT } from './i18n'
 import type {
   NormalizedNode,
   CommitRecord,
@@ -81,6 +82,7 @@ export function RendersPane({
   const [selectedCommitIndex, setSelectedCommitIndex] = useState<number | null>(null)
   const [expandedEntries, setExpandedEntries] = useState<Set<string>>(new Set())
   const [inspectModal, setInspectModal] = useState<{ label: string; prev: string; next: string } | null>(null)
+  const { t, plural: pluralFn } = useT()
 
   useEffect(() => {
     if (focusCommitIndex != null) {
@@ -155,13 +157,13 @@ export function RendersPane({
         <button
           class={`renders-btn${recording ? ' is-recording' : ''}`}
           onClick={onToggleRecording}
-          title={recording ? 'Pause recording' : 'Resume recording'}
+          title={recording ? t('renders.pauseRecording') : t('renders.resumeRecording')}
         >
           <span class="renders-btn-dot" />
-          {recording ? 'Recording' : 'Paused'}
+          {recording ? t('renders.recording') : t('renders.paused')}
         </button>
-        <button class="renders-btn" onClick={onClear} title="Clear render history">
-          Clear
+        <button class="renders-btn" onClick={onClear} title={t('renders.clearHistory')}>
+          {t('renders.clear')}
         </button>
         <div class="renders-filters">
           {CAUSE_KINDS.map((cause) => (
@@ -176,13 +178,13 @@ export function RendersPane({
         </div>
         <input
           class="renders-search"
-          placeholder="Search component, prop, hook, context…"
+          placeholder={t('renders.searchPlaceholder')}
           value={search}
           onInput={(e) => setSearch((e.currentTarget as HTMLInputElement).value)}
         />
         {pinnedName && (
           <button class="renders-pin" onClick={() => onPin(null)}>
-            Pinned: {pinnedName} ×
+            {t('renders.pinned', { name: pinnedName! })} ×
           </button>
         )}
       </div>
@@ -191,9 +193,9 @@ export function RendersPane({
         <div class="renders-empty">
           {history.length === 0
             ? recording
-              ? 'Waiting for commits…'
-              : 'Recording paused.'
-            : 'No commits match the current filters.'}
+              ? t('renders.emptyWaiting')
+              : t('renders.emptyPaused')
+            : t('renders.emptyNoMatch')}
         </div>
       ) : (
         <>
@@ -208,7 +210,7 @@ export function RendersPane({
                   data-commit={commit.commitIndex}
                   class={`renders-bar cause-${primary}${isSelected ? ' is-selected' : ''}`}
                   style={{ height: `${height}px` }}
-                  title={`Commit ${commit.commitIndex}: ${commit.components.length} rerenders`}
+                  title={t('renders.commitTooltip', { index: commit.commitIndex, count: commit.components.length })}
                   onClick={() => setSelectedCommitIndex(commit.commitIndex)}
                 />
               )
@@ -218,8 +220,8 @@ export function RendersPane({
             {selectedCommit ? (
               <>
                 <div class="renders-detail-header">
-                  Commit #{selectedCommit.commitIndex} · {selectedCommit.components.length}{' '}
-                  rerender{selectedCommit.components.length === 1 ? '' : 's'}
+                  {t('renders.commitHeader', { index: selectedCommit.commitIndex })} · {selectedCommit.components.length}{' '}
+                  {pluralFn(selectedCommit.components.length, [t('renders.rerender'), t('renders.rerenders')])}
                   <span class="renders-detail-time">
                     {new Date(selectedCommit.timestampMs).toLocaleTimeString()}
                   </span>
@@ -243,7 +245,7 @@ export function RendersPane({
                           </button>
                           <span class="renders-entry-cause">{entry.cause}</span>
                           {entry.wastedRender && (
-                            <span class="renders-entry-wasted">wasted</span>
+                            <span class="renders-entry-wasted">{t('renders.wasted')}</span>
                           )}
                           {entry.changedProps && entry.changedProps.length > 0 && (
                             <span class="renders-entry-keys">
@@ -263,7 +265,7 @@ export function RendersPane({
                           <button
                             class="renders-entry-pin"
                             onClick={() => onPin(entry.persistentId)}
-                            title="Pin to this component"
+                            title={t('renders.pinComponent')}
                           >
                             📌
                           </button>
@@ -301,7 +303,7 @@ export function RendersPane({
                             })}
                             {entry.effectChanges && entry.effectChanges.length > 0 && (
                               <div class="renders-entry-effects">
-                                <div class="renders-entry-effects-title">Effect deps changed:</div>
+                                <div class="renders-entry-effects-title">{t('renders.effectDepsChanged')}</div>
                                 {entry.effectChanges.map((ec, ecIdx) => (
                                   <div key={ecIdx} class="renders-entry-effect">
                                     <span class="renders-entry-effect-name">
@@ -333,7 +335,7 @@ export function RendersPane({
                 </ul>
               </>
             ) : (
-              <div class="renders-empty">Select a commit in the timeline.</div>
+              <div class="renders-empty">{t('renders.selectCommit')}</div>
             )}
           </div>
         </>

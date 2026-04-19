@@ -1,13 +1,15 @@
 import { h } from 'preact'
 import { Tooltip } from './Tooltip'
+import { useT } from './i18n'
 
 interface DetachedButtonProps {
   onRefocus: () => void
 }
 
 export function DetachedButton({ onRefocus }: DetachedButtonProps) {
+  const { t } = useT()
   return (
-    <Tooltip text="Focus DevTools popup">
+    <Tooltip text={t('toolbar.focusPopup')}>
       <div class="floating-icon detached-icon" onClick={onRefocus}>
         {/* Wrench icon (same as FloatingIcon) */}
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">

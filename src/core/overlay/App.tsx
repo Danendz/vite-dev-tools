@@ -15,6 +15,8 @@ import { devtoolsState } from './state-store'
 import { openInEditor } from '../communication'
 import { attributeError, flattenTree } from '../error-attribution'
 import type { PopupManager } from './popup-manager'
+import type { Locale } from './i18n'
+import { I18nContext, createI18nValue, SUPPORTED_LOCALES } from './i18n'
 
 function findNodeById(nodes: NormalizedNode[], id: string): NormalizedNode | null {
   for (const node of nodes) {
@@ -66,6 +68,15 @@ function computeUnionRect(elements: HTMLElement[]): DOMRect | null {
   }
   if (top === Infinity) return null
   return new DOMRect(left, top, right - left, bottom - top)
+}
+
+function detectLocale(): Locale {
+  const stored = localStorage.getItem(STORAGE_KEYS.LOCALE)
+  if (stored && SUPPORTED_LOCALES.some(l => l.id === stored)) return stored as Locale
+  const nav = navigator.language.toLowerCase()
+  if (nav.startsWith('zh')) return 'zh'
+  if (nav.startsWith('ru')) return 'ru'
+  return 'en'
 }
 
 interface AppProps {
@@ -175,6 +186,13 @@ export function App({ config, popupManager }: AppProps) {
     return localStorage.getItem(STORAGE_KEYS.DETACHED) === '1'
   })
   const [popupMountPoint, setPopupMountPoint] = useState<HTMLElement | null>(null)
+
+  const [locale, setLocale] = useState<Locale>(detectLocale)
+  const handleLocaleChange = useCallback((newLocale: Locale) => {
+    setLocale(newLocale)
+    localStorage.setItem(STORAGE_KEYS.LOCALE, newLocale)
+  }, [])
+  const i18nValue = useMemo(() => createI18nValue(locale), [locale])
 
   // Listen for tree updates from the framework runtime
   useEffect(() => {
@@ -1076,10 +1094,13 @@ export function App({ config, popupManager }: AppProps) {
       onNavigateToCommit={handleNavigateToCommit}
       focusCommitIndex={focusCommitIndex}
       onFocusCommitConsumed={() => setFocusCommitIndex(null)}
+      locale={locale}
+      onLocaleChange={handleLocaleChange}
     />
   )
 
   return (
+    <I18nContext.Provider value={i18nValue}>
     <div>
       <Highlight highlights={Array.from(highlights.values())} showAiActions={showAiActions} />
 
@@ -1117,5 +1138,6 @@ export function App({ config, popupManager }: AppProps) {
         <ToastContainer toasts={toasts} dockPosition={dockPosition} onDismiss={handleToastDismiss} />
       )}
     </div>
+    </I18nContext.Provider>
   )
 }

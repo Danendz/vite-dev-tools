@@ -1,5 +1,6 @@
 import { h } from 'preact'
 import { useMemo, useRef, useEffect } from 'preact/hooks'
+import { useT } from './i18n'
 import type { ConsoleEntry, NormalizedNode, CommitRecord, StackFrame } from '../types'
 import { formatEntryForCopy, formatAllEntriesForCopy } from '../console-format'
 import { openInEditor } from '../communication'
@@ -43,6 +44,7 @@ function handleFrameClick(frame: StackFrame) {
 
 export function ConsolePane({ entries, filters, onFilterChange, onClear, stripLibrary, tree, renderHistory }: ConsolePaneProps) {
   const entriesRef = useRef<HTMLDivElement>(null)
+  const { t } = useT()
 
   const filteredEntries = useMemo(() => {
     return entries.filter((e) => {
@@ -70,35 +72,35 @@ export function ConsolePane({ entries, filters, onFilterChange, onClear, stripLi
           class={`console-filter-btn${filters.errors ? ' filter-active' : ''}`}
           onClick={() => onFilterChange({ ...filters, errors: !filters.errors })}
         >
-          Errors
+          {t('console.errors')}
         </button>
         <button
           class={`console-filter-btn${filters.warnings ? ' filter-active' : ''}`}
           onClick={() => onFilterChange({ ...filters, warnings: !filters.warnings })}
         >
-          Warnings
+          {t('console.warnings')}
         </button>
         <button
           class={`console-filter-btn${filters.logs ? ' filter-active' : ''}`}
           onClick={() => onFilterChange({ ...filters, logs: !filters.logs })}
         >
-          Logs
+          {t('console.logs')}
         </button>
         <div class="console-toolbar-spacer" />
         <button class="console-action-btn" onClick={onClear}>
-          Clear
+          {t('console.clear')}
         </button>
         <button
           class="console-action-btn"
           onClick={() => copyToClipboard(formatAllEntriesForCopy(filteredEntries, tree, renderHistory))}
         >
-          Copy All
+          {t('console.copyAll')}
         </button>
       </div>
 
       <div class="console-entries" ref={entriesRef}>
         {filteredEntries.length === 0 ? (
-          <div class="console-empty">No console entries captured</div>
+          <div class="console-empty">{t('console.emptyState')}</div>
         ) : (
           filteredEntries.map((entry) => {
             const displayFrame = getDisplayFrame(entry, stripLibrary)
@@ -152,7 +154,7 @@ export function ConsolePane({ entries, filters, onFilterChange, onClear, stripLi
                     {formatFrameLabel(displayFrame)}
                   </span>
                 )}
-                <Tooltip text="Copy for AI">
+                <Tooltip text={t('console.copyForAi')}>
                 <button
                   class="console-entry-copy"
                   onClick={() => copyToClipboard(formatEntryForCopy(entry, tree, renderHistory))}

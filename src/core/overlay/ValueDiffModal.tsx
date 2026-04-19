@@ -1,5 +1,6 @@
 import { h } from 'preact'
 import { useEffect } from 'preact/hooks'
+import { useT } from './i18n'
 
 interface ValueDiffModalProps {
   label: string
@@ -9,6 +10,7 @@ interface ValueDiffModalProps {
 }
 
 export function ValueDiffModal({ label, prev, next, onClose }: ValueDiffModalProps) {
+  const { t } = useT()
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose()
@@ -26,11 +28,11 @@ export function ValueDiffModal({ label, prev, next, onClose }: ValueDiffModalPro
         </div>
         <div class="vdm-content">
           <div class="vdm-pane vdm-prev">
-            <div class="vdm-pane-title">Previous</div>
+            <div class="vdm-pane-title">{t('detail.previous')}</div>
             <pre class="vdm-code">{prev}</pre>
           </div>
           <div class="vdm-pane vdm-next">
-            <div class="vdm-pane-title">Next</div>
+            <div class="vdm-pane-title">{t('detail.next')}</div>
             <pre class="vdm-code">{next}</pre>
           </div>
         </div>
