@@ -36,6 +36,12 @@ interface TreeViewProps {
   searchAncestorIds: Set<string> | null
   editedProps: Map<string, Set<string>>
   expandedPropsSet: Set<string>
+  errorCountMap?: Map<string, number>
+  directErrorMap?: Map<string, number>
+  nodeHasError?: Set<string>
+  errorFilterActive?: boolean
+  errorAncestorIds?: Set<string> | null
+  onErrorFilterToggle?: () => void
   aiSelectedNodeIds?: Set<string>
   showAiActions?: boolean
   commitComponentIds?: Set<number> | null
@@ -98,6 +104,12 @@ export function TreeView({
   searchAncestorIds,
   editedProps,
   expandedPropsSet,
+  errorCountMap,
+  directErrorMap,
+  nodeHasError,
+  errorFilterActive,
+  errorAncestorIds,
+  onErrorFilterToggle,
   aiSelectedNodeIds,
   showAiActions,
   commitComponentIds,
@@ -191,6 +203,19 @@ export function TreeView({
       return changed ? next : prev
     })
   }, [searchAncestorIds])
+
+  // Error filter: uncollapse ancestors of error nodes
+  useEffect(() => {
+    if (!errorAncestorIds) return
+    setCollapsedSet((prev) => {
+      const next = new Set(prev)
+      let changed = false
+      for (const id of errorAncestorIds) {
+        if (next.delete(id)) changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [errorAncestorIds])
 
   const handleToggle = useCallback((nodeId: string) => {
     setCollapsedSet((prev) => {
@@ -328,6 +353,18 @@ export function TreeView({
             </svg>
           </button>
         </Tooltip>
+        {errorCountMap && errorCountMap.size > 0 && (
+          <Tooltip text="Filter errors">
+            <button
+              class={`error-filter-btn${errorFilterActive ? ' active' : ''}`}
+              onClick={onErrorFilterToggle}
+            >
+              <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
+                <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm-.75 3.5a.75.75 0 0 1 1.5 0v4a.75.75 0 0 1-1.5 0v-4zm.75 7.25a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5z" />
+              </svg>
+            </button>
+          </Tooltip>
+        )}
       </div>
       <div
         ref={scrollRef}
@@ -356,6 +393,9 @@ export function TreeView({
               aiSelectedNodeIds={aiSelectedNodeIds}
               showAiActions={showAiActions}
               commitComponentIds={commitComponentIds}
+              errorCountMap={errorCountMap}
+              directErrorMap={directErrorMap}
+              nodeHasError={nodeHasError}
               onToggle={handleToggle}
               onElementExpandToggle={handleElementExpandToggle}
               onPropEdit={onPropEdit}

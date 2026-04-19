@@ -87,7 +87,16 @@ function parseUsageSource(instance: any): UsageInfo | null {
 function getDefinitionSource(instance: any): SourceLocation | null {
   const file = instance.type?.__file
   if (!file) return null
-  return { fileName: file, lineNumber: 1, columnNumber: 1 }
+  // Read end line from global map injected by Vue adapter transform (keys are relative paths)
+  const endLineMap = (globalThis as any).__DEVTOOLS_END_LINES__ as Record<string, number> | undefined
+  let endLineNumber: number | undefined
+  if (endLineMap) {
+    // Match relative key against absolute __file via endsWith
+    for (const key of Object.keys(endLineMap)) {
+      if (file.endsWith(key)) { endLineNumber = endLineMap[key]; break }
+    }
+  }
+  return { fileName: file, lineNumber: 1, columnNumber: 1, endLineNumber }
 }
 
 function isFromNodeModules(instance: any): boolean {
@@ -551,6 +560,10 @@ function walkVNodeChildren(vnode: any, hideLibrary: boolean, ctx: WalkContext): 
         isFromNodeModules: isFromNodeModules(instance),
         _domElements: findDOMElements(instance),
         locals: resolveLocals(instance),
+      }
+      // Error boundary detection (errorCaptured option or onErrorCaptured composition hook)
+      if (instance.type?.errorCaptured || instance.ec?.length > 0) {
+        node.isErrorBoundary = true
       }
       attachRenderCause(node, instance, name, source, ctx)
       instanceRefMap.set(node.id, instance)

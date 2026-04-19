@@ -37,6 +37,7 @@ export const STORAGE_KEYS = {
   RENDER_HISTORY_SIZE: 'danendz-devtools:render-history-size',
   RENDER_INCLUDE_VALUES: 'danendz-devtools:render-include-values',
   CONSOLE_STRIP_LIBRARY: 'danendz-devtools:console-strip-library',
+  CLEAR_CONSOLE_ON_RELOAD: 'danendz-devtools:clear-console-on-reload',
   DETACHED: 'danendz-devtools:detached',
   POPUP_WIDTH: 'danendz-devtools:popup-width',
   POPUP_HEIGHT: 'danendz-devtools:popup-height',

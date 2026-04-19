@@ -16,12 +16,24 @@ function isLibraryPath(file: string): boolean {
     file.includes('/@fs/')
 }
 
+/** Strip Vite cache-busting params (t=..., v=...) while preserving module specifiers (e.g. ?vue&type=script...) */
+function stripTimestamp(url: string): string {
+  const qIdx = url.indexOf('?')
+  if (qIdx === -1) return url
+  const base = url.slice(0, qIdx)
+  const params = url.slice(qIdx + 1).split('&').filter(p => !/^[tv]=\d+$/.test(p))
+  return params.length > 0 ? `${base}?${params.join('&')}` : base
+}
+
 async function getSourceMap(server: ViteDevServer, file: string): Promise<any | null> {
   const moduleGraph = server.environments?.client?.moduleGraph ?? (server as any).moduleGraph
   if (!moduleGraph) return null
 
+  // Strip cache-busting timestamps before module lookup
+  const cleanFile = stripTimestamp(file)
+
   // Try cached module first
-  const mod = await moduleGraph.getModuleByUrl(file)
+  const mod = await moduleGraph.getModuleByUrl(cleanFile)
   if (mod?.transformResult?.map) {
     const map = mod.transformResult.map
     // Skip empty mappings
@@ -35,7 +47,7 @@ async function getSourceMap(server: ViteDevServer, file: string): Promise<any | 
       ?? (server as any).transformRequest?.bind(server)
     if (!transformRequest) return null
 
-    const result = await transformRequest(file)
+    const result = await transformRequest(cleanFile)
     if (result?.map && typeof result.map === 'object' && 'mappings' in result.map && result.map.mappings !== '') {
       return result.map
     }

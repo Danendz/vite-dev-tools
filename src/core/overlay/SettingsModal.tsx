@@ -73,6 +73,8 @@ interface SettingsModalProps {
   onRenderIncludeValuesToggle: () => void
   consoleStripLibrary: boolean
   onConsoleStripLibraryToggle: () => void
+  clearConsoleOnReload: boolean
+  onClearConsoleOnReloadToggle: () => void
   onClose: () => void
 }
 
@@ -116,6 +118,8 @@ export function SettingsModal({
   onRenderIncludeValuesToggle,
   consoleStripLibrary,
   onConsoleStripLibraryToggle,
+  clearConsoleOnReload,
+  onClearConsoleOnReloadToggle,
   onClose,
 }: SettingsModalProps) {
   const [category, setCategory] = useState<SettingsCategory>('general')
@@ -302,6 +306,13 @@ export function SettingsModal({
                     <div class="settings-row-desc">Strip node_modules and Vite dependency lines from stack traces</div>
                   </div>
                   <Toggle checked={consoleStripLibrary} onClick={onConsoleStripLibraryToggle} />
+                </div>
+                <div class="settings-row" onClick={onClearConsoleOnReloadToggle}>
+                  <div class="settings-row-info">
+                    <div class="settings-row-label">Clear on hot reload</div>
+                    <div class="settings-row-desc">Automatically clear errors and warnings when files change</div>
+                  </div>
+                  <Toggle checked={clearConsoleOnReload} onClick={onClearConsoleOnReloadToggle} />
                 </div>
               </div>
             )}

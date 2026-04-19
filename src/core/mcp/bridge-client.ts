@@ -2,6 +2,7 @@ import type { NormalizedNode, CompactNode, BridgeRequest, BridgeResponse } from 
 import { BRIDGE_EVENTS, STORAGE_KEYS } from '../../shared/constants'
 import { devtoolsState } from '../overlay/state-store'
 import { findNodeById } from './tree-utils'
+import { buildErrorContext } from '../error-attribution'
 import {
   getRenderHistoryHandler,
   getRenderCausesHandler,
@@ -66,6 +67,13 @@ handlers.set('getSelectedComponent', async () => {
 
 handlers.set('getConsoleErrors', async () => {
   return devtoolsState.consoleEntries
+})
+
+handlers.set('getErrorContext', async (params) => {
+  const errorId = params.errorId as string
+  const entry = devtoolsState.consoleEntries.find(e => e.id === errorId)
+  if (!entry) return { error: `Error not found: ${errorId}` }
+  return buildErrorContext(entry, devtoolsState.tree, devtoolsState.renderHistory)
 })
 
 handlers.set('getPropsOf', async (params) => {

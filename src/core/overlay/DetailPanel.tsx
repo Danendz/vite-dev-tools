@@ -1,6 +1,7 @@
 import { h } from 'preact'
 import { useState, useRef, useEffect, useMemo } from 'preact/hooks'
-import type { NormalizedNode, SourceLocation, InspectorItem, EditHint, CommitRecord, CommitComponentEntry } from '../types'
+import type { NormalizedNode, SourceLocation, InspectorItem, EditHint, CommitRecord, CommitComponentEntry, ConsoleEntry } from '../types'
+import { formatEntryForCopy } from '../console-format'
 import { openInEditor, persistEdit, persistPropValue, persistTextValue, persistHookValue, undoEdit } from '../communication'
 import type { DiffData, PreviewResult } from '../communication'
 import { EVENTS, STORAGE_KEYS } from '../../shared/constants'
@@ -37,6 +38,8 @@ interface DetailPanelProps {
   onPropPersisted?: (nodeId: string, propKey: string) => void
   renderHistory?: CommitRecord[]
   onNavigateToCommit?: (commitIndex: number) => void
+  attributedErrors?: ConsoleEntry[]
+  tree?: NormalizedNode[]
 }
 
 function formatPrimitive(value: unknown): { text: string; className: string } | null {
@@ -876,7 +879,7 @@ function summarizeEntry(entry: CommitComponentEntry): string {
   return parts.join(' · ')
 }
 
-export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, renderHistory, onNavigateToCommit }: DetailPanelProps) {
+export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, renderHistory, onNavigateToCommit, attributedErrors, tree }: DetailPanelProps) {
   // 0 = collapsed, 5 = preview (first 5), Infinity = show all
   const [historyLimit, setHistoryLimit] = useState<number>(0)
   const prevNodeId = useRef<number | undefined>(undefined)
@@ -970,6 +973,52 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
           </>
         )}
       </div>
+
+      {attributedErrors && attributedErrors.length > 0 && (() => {
+        const hasErrors = attributedErrors.some(e => e.type === 'error')
+        const hasWarnings = attributedErrors.some(e => e.type === 'warning')
+        const variant = hasErrors ? 'error' : 'warning'
+        const label = hasErrors && hasWarnings ? 'Errors & Warnings' : hasErrors ? 'Errors' : 'Warnings'
+        return (
+        <div class={`detail-errors-section ${variant}`}>
+          <div class="detail-section-title">
+            {label} ({attributedErrors.length})
+          </div>
+          {attributedErrors.map(err => (
+            <div class="detail-error-entry" key={err.id}>
+              <div class="detail-error-message">
+                <span class={`detail-error-type ${err.type}`}>{err.type === 'error' ? 'ERR' : 'WARN'}</span>
+                {err.message}
+              </div>
+              {err.frames && err.frames.length > 0 && (
+                <details class="detail-error-stack-details">
+                  <summary>Stack trace</summary>
+                  <div class="detail-error-stack">
+                    {err.frames.filter(f => !f.isLibrary).map((f, i) => (
+                      <div key={i} class="console-stack-line" onClick={() => openInEditor({ fileName: f.file, lineNumber: f.line, columnNumber: f.col })}>
+                        {f.fn ? `at ${f.fn} (${f.file}:${f.line}:${f.col})` : `at ${f.file}:${f.line}:${f.col}`}
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+              <div class="detail-error-actions">
+                <Tooltip text="Copy for AI">
+                  <button
+                    class="console-entry-copy"
+                    onClick={() => navigator.clipboard.writeText(formatEntryForCopy(err, tree, renderHistory))}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                    </svg>
+                  </button>
+                </Tooltip>
+              </div>
+            </div>
+          ))}
+        </div>
+        )})()}
 
       {node.renderCause && (
         <div class="detail-section">

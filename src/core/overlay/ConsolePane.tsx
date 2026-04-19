@@ -1,6 +1,6 @@
 import { h } from 'preact'
 import { useMemo, useRef, useEffect } from 'preact/hooks'
-import type { ConsoleEntry, StackFrame } from '../types'
+import type { ConsoleEntry, NormalizedNode, CommitRecord, StackFrame } from '../types'
 import { formatEntryForCopy, formatAllEntriesForCopy } from '../console-format'
 import { openInEditor } from '../communication'
 import { Tooltip } from './Tooltip'
@@ -11,6 +11,8 @@ interface ConsolePaneProps {
   onFilterChange: (filters: { errors: boolean; warnings: boolean; logs: boolean }) => void
   onClear: () => void
   stripLibrary: boolean
+  tree?: NormalizedNode[]
+  renderHistory?: CommitRecord[]
 }
 
 function formatTimestamp(ms: number): string {
@@ -39,7 +41,7 @@ function handleFrameClick(frame: StackFrame) {
   openInEditor({ fileName: frame.file, lineNumber: frame.line, columnNumber: frame.col })
 }
 
-export function ConsolePane({ entries, filters, onFilterChange, onClear, stripLibrary }: ConsolePaneProps) {
+export function ConsolePane({ entries, filters, onFilterChange, onClear, stripLibrary, tree, renderHistory }: ConsolePaneProps) {
   const entriesRef = useRef<HTMLDivElement>(null)
 
   const filteredEntries = useMemo(() => {
@@ -88,7 +90,7 @@ export function ConsolePane({ entries, filters, onFilterChange, onClear, stripLi
         </button>
         <button
           class="console-action-btn"
-          onClick={() => copyToClipboard(formatAllEntriesForCopy(filteredEntries))}
+          onClick={() => copyToClipboard(formatAllEntriesForCopy(filteredEntries, tree, renderHistory))}
         >
           Copy All
         </button>
@@ -120,7 +122,9 @@ export function ConsolePane({ entries, filters, onFilterChange, onClear, stripLi
                 )}
                 <span class="console-entry-time">{formatTimestamp(entry.timestamp)}</span>
                 <div class="console-entry-content">
-                  <div class="console-entry-message">{entry.message}</div>
+                  <div class="console-entry-message">
+                    {entry.message}
+                  </div>
                   {entry.frames && entry.frames.length > 0 ? (
                     <div class="console-entry-stack">
                       {entry.frames
@@ -151,7 +155,7 @@ export function ConsolePane({ entries, filters, onFilterChange, onClear, stripLi
                 <Tooltip text="Copy for AI">
                 <button
                   class="console-entry-copy"
-                  onClick={() => copyToClipboard(formatEntryForCopy(entry))}
+                  onClick={() => copyToClipboard(formatEntryForCopy(entry, tree, renderHistory))}
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />

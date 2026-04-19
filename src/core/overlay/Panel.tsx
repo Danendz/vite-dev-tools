@@ -53,6 +53,8 @@ interface PanelProps {
   onClearConsole: () => void
   consoleStripLibrary: boolean
   onConsoleStripLibraryToggle: () => void
+  clearConsoleOnReload: boolean
+  onClearConsoleOnReloadToggle: () => void
   editedProps: Map<string, Set<string>>
   expandedPropsSet: Set<string>
   onPropEdit: (nodeId: string, propKey: string) => void
@@ -70,6 +72,13 @@ interface PanelProps {
   onHover: (node: NormalizedNode | null) => void
   onContextMenu: (e: MouseEvent, node: NormalizedNode) => void
   onClose: () => void
+  // Error attribution
+  errorCountMap: Map<string, number>
+  directErrorMap: Map<string, number>
+  nodeHasError: Set<string>
+  errorFilterActive: boolean
+  errorAncestorIds: Set<string> | null
+  onErrorFilterToggle: () => void
   // Render-cause attribution
   renderCauseEnabled: boolean
   renderHistorySize: number
@@ -131,6 +140,8 @@ export function Panel({
   onClearConsole,
   consoleStripLibrary,
   onConsoleStripLibraryToggle,
+  clearConsoleOnReload,
+  onClearConsoleOnReloadToggle,
   editedProps,
   expandedPropsSet,
   mcpEnabled,
@@ -148,6 +159,12 @@ export function Panel({
   onHover,
   onContextMenu,
   onClose,
+  errorCountMap,
+  directErrorMap,
+  nodeHasError,
+  errorFilterActive,
+  errorAncestorIds,
+  onErrorFilterToggle,
   renderCauseEnabled,
   renderHistorySize,
   renderIncludeValues,
@@ -266,6 +283,11 @@ export function Panel({
     }
     return { ...base, top: '0', right: '0', bottom: '0', width: `${panelSize}px` }
   }, [mode, dockPosition, panelSize])
+
+  const attributedErrors = useMemo(() => {
+    if (!selectedNode) return []
+    return consoleEntries.filter(e => e.ownedBy?.nodeId === selectedNode.id && e.type !== 'log')
+  }, [consoleEntries, selectedNode])
 
   const isVertical = dockPosition !== 'bottom'
 
@@ -417,6 +439,8 @@ export function Panel({
               onRenderIncludeValuesToggle={onRenderIncludeValuesToggle}
               consoleStripLibrary={consoleStripLibrary}
               onConsoleStripLibraryToggle={onConsoleStripLibraryToggle}
+              clearConsoleOnReload={clearConsoleOnReload}
+              onClearConsoleOnReloadToggle={onClearConsoleOnReloadToggle}
               onClose={onSettingsToggle}
             />
           )}
@@ -463,6 +487,12 @@ export function Panel({
                 aiSelectedNodeIds={aiSelectedNodeIds}
                 showAiActions={showAiActions}
                 commitComponentIds={commitComponentIds}
+                errorCountMap={errorCountMap}
+                directErrorMap={directErrorMap}
+                nodeHasError={nodeHasError}
+                errorFilterActive={errorFilterActive}
+                errorAncestorIds={errorAncestorIds}
+                onErrorFilterToggle={onErrorFilterToggle}
                 onSearchChange={onSearchChange}
                 onPropEdit={onPropEdit}
                 onExpandProps={onExpandProps}
@@ -485,7 +515,7 @@ export function Panel({
                 onPointerMove={handleDetailPointerMove}
                 onPointerUp={handleDetailPointerUp}
               />
-              <DetailPanel node={selectedNode} editedProps={editedProps} onPropEdit={onPropEdit} onPropPersisted={onPropPersisted} renderHistory={renderHistory} onNavigateToCommit={onNavigateToCommit} />
+              <DetailPanel node={selectedNode} editedProps={editedProps} onPropEdit={onPropEdit} onPropPersisted={onPropPersisted} renderHistory={renderHistory} onNavigateToCommit={onNavigateToCommit} attributedErrors={attributedErrors} tree={tree} />
             </div>
           </div>
         ) : activeTab === 'console' ? (
@@ -495,6 +525,8 @@ export function Panel({
             onFilterChange={onFilterChange}
             onClear={onClearConsole}
             stripLibrary={consoleStripLibrary}
+            tree={tree}
+            renderHistory={renderHistory}
           />
         ) : (
           <RendersPane

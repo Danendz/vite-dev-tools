@@ -342,13 +342,16 @@ function injectSourceAttributes(code: string, id: string, projectRoot: string): 
     }
   }
 
-  if (Object.keys(usages).length === 0 && !composableCode) return null
+  // Inject end line count for error attribution (SFC = one component = entire file)
+  const endLineNumber = code.trimEnd().split('\n').length
 
   // Build a script that registers component usage locations in a global map.
   const usageJson = JSON.stringify(usages)
   const regCode = (Object.keys(usages).length > 0
     ? `;(globalThis.__DEVTOOLS_USAGE_MAP__||(globalThis.__DEVTOOLS_USAGE_MAP__={}))["${relativePath}"]=${usageJson};`
-    : '') + composableCode
+    : '')
+    + `;(globalThis.__DEVTOOLS_END_LINES__||(globalThis.__DEVTOOLS_END_LINES__={}))["${relativePath}"]=${endLineNumber};`
+    + composableCode
 
   let result = code
 

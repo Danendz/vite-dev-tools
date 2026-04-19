@@ -107,6 +107,7 @@ function findHookNamesRegex(code: string, componentLine: number): { varName: str
 interface ComponentInfo {
   name: string
   line: number
+  endLine?: number
   bodyRange?: [number, number]
 }
 
@@ -125,7 +126,7 @@ function parseFileComponents(code: string, id: string): ParsedFile {
   if (parsed) {
     const astComponents = findComponentDeclarationsAST(parsed.program, parsed.lineStarts)
     return {
-      components: astComponents.map(c => ({ name: c.name, line: c.line, bodyRange: c.bodyRange })),
+      components: astComponents.map(c => ({ name: c.name, line: c.line, endLine: c.endLine, bodyRange: c.bodyRange })),
       program: parsed.program,
       lineStarts: parsed.lineStarts,
     }
@@ -705,7 +706,7 @@ export const reactAdapter: FrameworkAdapter = {
       // __devtools_source: React 19+ only (React 18 has _debugSource)
       if (!(reactMajor > 0 && reactMajor < 19)) {
         annotations.push(
-          `try { if (${guard}) ${c.name}.__devtools_source = { fileName: "${relativePath}", lineNumber: ${c.line}, columnNumber: 1 }; } catch(e) {}`
+          `try { if (${guard}) ${c.name}.__devtools_source = { fileName: "${relativePath}", lineNumber: ${c.line}, columnNumber: 1${c.endLine ? `, endLineNumber: ${c.endLine}` : ''} }; } catch(e) {}`
         )
       }
 

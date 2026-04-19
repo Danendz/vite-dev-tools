@@ -109,7 +109,10 @@ import MyComp from './MyComp.vue'
 
     const result = vueAdapter.transform(code, '/project/src/App.vue', '/project')
     // template and slot are Vue builtins, should not be tracked
-    expect(result).toBeNull()
+    // but end line injection still happens for error attribution
+    expect(result).not.toBeNull()
+    expect(result!.code).toContain('__DEVTOOLS_END_LINES__')
+    expect(result!.code).not.toContain('__DEVTOOLS_USAGE_MAP__')
   })
 })
 

@@ -13,6 +13,7 @@ import { createFrameResolver } from '../frame-resolver'
 import { EVENTS, STORAGE_KEYS } from '../../shared/constants'
 import { devtoolsState } from './state-store'
 import { openInEditor } from '../communication'
+import { attributeError, flattenTree } from '../error-attribution'
 import type { PopupManager } from './popup-manager'
 
 function findNodeById(nodes: NormalizedNode[], id: string): NormalizedNode | null {
@@ -101,6 +102,11 @@ export function App({ config, popupManager }: AppProps) {
   const [consoleStripLibrary, setConsoleStripLibrary] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.CONSOLE_STRIP_LIBRARY) === 'true'
   })
+  const [clearConsoleOnReload, setClearConsoleOnReload] = useState(() => {
+    return localStorage.getItem(STORAGE_KEYS.CLEAR_CONSOLE_ON_RELOAD) === 'true'
+  })
+  const clearConsoleOnReloadRef = useRef(false)
+  clearConsoleOnReloadRef.current = clearConsoleOnReload
   const [hideLibrary, setHideLibrary] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.HIDE_LIBRARY) !== 'false'
   })
@@ -126,6 +132,7 @@ export function App({ config, popupManager }: AppProps) {
   const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string> | null>(null)
   const [elementExpandedNodeIds, setElementExpandedNodeIds] = useState<Set<string> | null>(null)
   const [tree, setTree] = useState<NormalizedNode[]>([])
+  const treeRef = useRef<NormalizedNode[]>([])
   const [selectedNode, setSelectedNode] = useState<NormalizedNode | null>(null)
   const reverseMapRef = useRef(new Map<HTMLElement, NormalizedNode>())
   const [highlights, setHighlights] = useState<Map<string, HighlightEntry>>(new Map())
@@ -174,6 +181,7 @@ export function App({ config, popupManager }: AppProps) {
     function handleTreeUpdate(e: Event) {
       const { tree: newTree, commit } = (e as CustomEvent<TreeUpdateEvent>).detail
       setTree(newTree)
+      treeRef.current = newTree
       devtoolsState.setTree(newTree)
       if (commit) {
         setCommitComponentIds(new Set(commit.components.map(c => c.persistentId)))
@@ -198,6 +206,22 @@ export function App({ config, popupManager }: AppProps) {
         const found = findNodeById(newTree, prev.id) ?? null
         devtoolsState.setSelectedNode(found)
         return found
+      })
+      // Re-attribute all errors/warnings against the fresh tree.
+      // Vue resets nodeIds on every walk, so always re-attribute to stay in sync.
+      setConsoleEntries((prev) => {
+        if (prev.length === 0) return prev
+        let changed = false
+        const next = prev.map(entry => {
+          if (entry.type === 'log' || !entry.frames?.length) return entry
+          const updated: ConsoleEntry = { ...entry, ownedBy: undefined, caughtBy: undefined, snapshot: undefined }
+          attributeError(updated, newTree)
+          const oldId = entry.ownedBy?.nodeId
+          const newId = updated.ownedBy?.nodeId
+          if (oldId !== newId) changed = true
+          return updated
+        })
+        return changed ? next : prev
       })
     }
     window.addEventListener(EVENTS.TREE_UPDATE, handleTreeUpdate)
@@ -247,11 +271,25 @@ export function App({ config, popupManager }: AppProps) {
             : `${entry.type}:${entry.message}`
           const resolved = { ...entry, groupKey }
 
+          // Attribute errors/warnings to owning component at capture time
+          if (resolved.type !== 'log' && treeRef.current.length > 0) {
+            attributeError(resolved, treeRef.current)
+          }
+
           // Try to find existing group
           const existingIndex = next.findIndex(e => e.groupKey === groupKey)
           if (existingIndex !== -1) {
             const existing = next[existingIndex]
-            next[existingIndex] = { ...resolved, count: existing.count + 1, id: existing.id, timestamp: entry.timestamp }
+            next[existingIndex] = {
+              ...resolved,
+              count: existing.count + 1,
+              id: existing.id,
+              timestamp: entry.timestamp,
+              // Preserve existing attribution if new attribution failed
+              ownedBy: resolved.ownedBy ?? existing.ownedBy,
+              caughtBy: resolved.caughtBy ?? existing.caughtBy,
+              snapshot: resolved.snapshot ?? existing.snapshot,
+            }
           } else {
             next.push(resolved)
           }
@@ -269,6 +307,17 @@ export function App({ config, popupManager }: AppProps) {
       stopCapture()
       resolver.destroy()
     }
+  }, [])
+
+  // Clear console on HMR hot update (if setting enabled)
+  useEffect(() => {
+    if (!(import.meta as any).hot) return
+    const hot = (import.meta as any).hot
+    hot.on('vite:beforeUpdate', () => {
+      if (clearConsoleOnReloadRef.current) {
+        setConsoleEntries([])
+      }
+    })
   }, [])
 
   // Sync selected node to shared state store (for MCP bridge)
@@ -443,6 +492,56 @@ export function App({ config, popupManager }: AppProps) {
     const filtered = filterNodes(tree, [])
     return { filteredTree: filtered, matchingNodeIds: matching, searchAncestorIds: ancestors }
   }, [tree, searchQuery])
+
+  // Error count map: nodeId → bubbled error count (own + descendant errors)
+  const [errorFilterActive, setErrorFilterActive] = useState(false)
+  const { errorCountMap, directErrorMap, nodeHasError, errorAncestorIds } = useMemo(() => {
+    const directCounts = new Map<string, number>()
+    const directHasError = new Set<string>()
+    for (const entry of consoleEntries) {
+      if (entry.type === 'log' || !entry.ownedBy) continue
+      const nodeId = entry.ownedBy.nodeId
+      directCounts.set(nodeId, (directCounts.get(nodeId) ?? 0) + 1)
+      if (entry.type === 'error') directHasError.add(nodeId)
+    }
+
+    // Bubble up: walk tree, accumulate children's counts into parents
+    const bubbled = new Map<string, number>()
+    const hasError = new Set<string>()
+    function walk(nodes: NormalizedNode[]): { sum: number; anyError: boolean } {
+      let sum = 0
+      let anyError = false
+      for (const node of nodes) {
+        const own = directCounts.get(node.id) ?? 0
+        const ownHasErr = directHasError.has(node.id)
+        const child = walk(node.children)
+        const total = own + child.sum
+        if (total > 0) bubbled.set(node.id, total)
+        if (ownHasErr || child.anyError) { hasError.add(node.id); anyError = true }
+        sum += total
+      }
+      return { sum, anyError }
+    }
+    walk(tree)
+
+    // Compute errorAncestorIds for filter mode
+    let ancestors: Set<string> | null = null
+    if (errorFilterActive && bubbled.size > 0) {
+      ancestors = new Set<string>()
+      function collectPaths(nodes: NormalizedNode[], parentPath: string[]) {
+        for (const node of nodes) {
+          if (bubbled.has(node.id)) {
+            for (const id of parentPath) ancestors!.add(id)
+            ancestors!.add(node.id)
+          }
+          collectPaths(node.children, [...parentPath, node.id])
+        }
+      }
+      collectPaths(tree, [])
+    }
+
+    return { errorCountMap: bubbled, directErrorMap: directCounts, nodeHasError: hasError, errorAncestorIds: ancestors }
+  }, [consoleEntries, tree, errorFilterActive])
 
   // Element picker mode
   useEffect(() => {
@@ -625,6 +724,14 @@ export function App({ config, popupManager }: AppProps) {
     setConsoleStripLibrary((prev) => {
       const next = !prev
       localStorage.setItem(STORAGE_KEYS.CONSOLE_STRIP_LIBRARY, String(next))
+      return next
+    })
+  }, [])
+
+  const handleClearConsoleOnReloadToggle = useCallback(() => {
+    setClearConsoleOnReload((prev) => {
+      const next = !prev
+      localStorage.setItem(STORAGE_KEYS.CLEAR_CONSOLE_ON_RELOAD, String(next))
       return next
     })
   }, [])
@@ -925,6 +1032,8 @@ export function App({ config, popupManager }: AppProps) {
       onClearConsole={handleClearConsole}
       consoleStripLibrary={consoleStripLibrary}
       onConsoleStripLibraryToggle={handleConsoleStripLibraryToggle}
+      clearConsoleOnReload={clearConsoleOnReload}
+      onClearConsoleOnReloadToggle={handleClearConsoleOnReloadToggle}
       editedProps={editedProps}
       expandedPropsSet={expandedPropsSet}
       mcpEnabled={config.mcp ?? false}
@@ -952,6 +1061,12 @@ export function App({ config, popupManager }: AppProps) {
       renderHistoryRecording={renderHistoryRecording}
       pinnedRenderComponentId={pinnedRenderComponentId}
       commitComponentIds={commitComponentIds}
+      errorCountMap={errorCountMap}
+      directErrorMap={directErrorMap}
+      nodeHasError={nodeHasError}
+      errorFilterActive={errorFilterActive}
+      errorAncestorIds={errorAncestorIds}
+      onErrorFilterToggle={() => setErrorFilterActive(prev => !prev)}
       onRenderCauseToggle={handleRenderCauseToggle}
       onRenderHistorySizeChange={handleRenderHistorySizeChange}
       onRenderIncludeValuesToggle={handleRenderIncludeValuesToggle}

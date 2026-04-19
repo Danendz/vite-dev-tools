@@ -821,6 +821,11 @@ function walkFiberChildren(
           locals: locals && locals.length > 0 ? locals : undefined,
           propOrigins: getPropOriginsFromMap(child),
         }
+        // Error boundary detection (class components with componentDidCatch / getDerivedStateFromError)
+        const ebType = child.elementType ?? child.type
+        if (ebType?.prototype?.componentDidCatch || ebType?.getDerivedStateFromError) {
+          node.isErrorBoundary = true
+        }
         fiberRefMap.set(node.id, child)
         if (causeOpts) attachRenderCause(node, child, causeOpts)
         nodes.push(node)

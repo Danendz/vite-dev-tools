@@ -57,6 +57,9 @@ interface TreeNodeProps {
   aiSelectedNodeIds?: Set<string>
   showAiActions?: boolean
   commitComponentIds?: Set<number> | null
+  errorCountMap?: Map<string, number>
+  directErrorMap?: Map<string, number>
+  nodeHasError?: Set<string>
   onToggle: (nodeId: string) => void
   onElementExpandToggle: (nodeId: string) => void
   onPropEdit: (nodeId: string, propKey: string) => void
@@ -144,6 +147,9 @@ export function TreeNode({
   aiSelectedNodeIds,
   showAiActions,
   commitComponentIds,
+  errorCountMap,
+  directErrorMap,
+  nodeHasError,
   onToggle,
   onElementExpandToggle,
   onPropEdit,
@@ -391,6 +397,21 @@ export function TreeNode({
           {'>'}
         </span>
         {isAiSelected && <span class="tree-node-ai-badge">AI</span>}
+        {node.isErrorBoundary && (
+          <span class="tree-boundary-badge" title="Error boundary">
+            <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12">
+              <path d="M8 1L1 5v6l7 4 7-4V5L8 1zm0 1.5L13.5 5.5 8 8.5 2.5 5.5 8 2.5zM2 6.5l5.5 3v5L2 11.5v-5zm7 8v-5L14 6.5v5L9 14.5z" />
+            </svg>
+          </span>
+        )}
+        {(() => {
+          const count = collapsed
+            ? (errorCountMap?.get(node.id) ?? 0)
+            : (directErrorMap?.get(node.id) ?? 0)
+          if (count <= 0) return null
+          const isError = nodeHasError?.has(node.id)
+          return <span class={`tree-error-badge${isError ? '' : ' warning-only'}`}>{count}</span>
+        })()}
         {node.textContent && !(isElementExpanded && hasHostElementChildren) && (
           <span class="tree-node-text">
             {' "'}
@@ -423,6 +444,9 @@ export function TreeNode({
               aiSelectedNodeIds={aiSelectedNodeIds}
               showAiActions={showAiActions}
               commitComponentIds={commitComponentIds}
+              errorCountMap={errorCountMap}
+              directErrorMap={directErrorMap}
+              nodeHasError={nodeHasError}
               onToggle={onToggle}
               onElementExpandToggle={onElementExpandToggle}
               onPropEdit={onPropEdit}
