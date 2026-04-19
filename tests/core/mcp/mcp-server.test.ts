@@ -32,6 +32,7 @@ describe('createMcpTools', () => {
       'getComponentTree',
       'getSelectedComponent',
       'getConsoleErrors',
+      'getErrorContext',
       'getPropsOf',
       'getSourceLocation',
       'searchComponents',

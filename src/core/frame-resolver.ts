@@ -24,7 +24,7 @@ function isLibraryFrame(f: StackFrame): boolean {
 function patchFrames(frames: StackFrame[]): StackFrame[] {
   return frames.map((f) => {
     if (f.isLibrary) return f
-    const key = cacheKey(f.file, f.line, f.col)
+    const key = cacheKey(f.rawFile ?? f.file, f.line, f.col)
     const resolved = cache.get(key)
     if (resolved) {
       return { ...f, line: resolved.line, col: resolved.col }
@@ -51,10 +51,11 @@ export function createFrameResolver() {
       if (!entry.frames) continue
       for (const f of entry.frames) {
         if (isLibraryFrame(f)) continue
-        const key = cacheKey(f.file, f.line, f.col)
+        const resolveFile = f.rawFile ?? f.file
+        const key = cacheKey(resolveFile, f.line, f.col)
         if (cache.has(key) || seen.has(key)) continue
         seen.add(key)
-        uncached.push({ file: f.file, line: f.line, col: f.col })
+        uncached.push({ file: resolveFile, line: f.line, col: f.col })
       }
     }
     return uncached

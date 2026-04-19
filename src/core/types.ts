@@ -65,6 +65,8 @@ export interface NormalizedNode {
     componentName: string
     source: SourceLocation
   }
+  /** True when this component is an error boundary (React: componentDidCatch/getDerivedStateFromError, Vue: errorCaptured) */
+  isErrorBoundary?: boolean
   /** True when the wasted-render threshold is met — component should be wrapped in memo() */
   memoSuggested?: boolean
   /** Wasted-render stats for the memo suggestion UI */
@@ -85,6 +87,8 @@ export interface SourceLocation {
   fileName: string
   lineNumber: number
   columnNumber: number
+  /** End line of the component function — used for error attribution line-range matching */
+  endLineNumber?: number
 }
 
 export type DockPosition = 'bottom' | 'left' | 'right'
@@ -115,9 +119,24 @@ export type ConsoleEntryType = 'error' | 'warning' | 'log'
 export interface StackFrame {
   fn: string | null
   file: string
+  /** Original URL with query params (e.g. Vue SFC ?vue&type=script...) for source map lookup */
+  rawFile?: string
   line: number
   col: number
   isLibrary: boolean
+}
+
+export interface NormalizedNodeSnapshot {
+  id: string
+  name: string
+  source: SourceLocation | null
+  props: Record<string, unknown>
+  sections: InspectorSection[]
+  isErrorBoundary?: boolean
+  renderCause?: RenderCause
+  depWarnings?: DepWarning[]
+  memoStats?: { totalRenders: number; wastedRenders: number; wastedPercentage: number }
+  locals?: Array<{ name: string; line: number }>
 }
 
 export interface ConsoleEntry {
@@ -129,6 +148,12 @@ export interface ConsoleEntry {
   frames: StackFrame[] | null
   count: number
   groupKey: string | null
+  /** Attributed owning component — set at capture time via error attribution */
+  ownedBy?: { name: string; nodeId: string; source: SourceLocation | null }
+  /** Nearest error boundary ancestor that caught this error */
+  caughtBy?: { componentName: string; nodeId: string }
+  /** Snapshot of the owning component at capture time (clone minus live refs) */
+  snapshot?: NormalizedNodeSnapshot
 }
 
 export interface RawFrame {

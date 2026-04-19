@@ -50,6 +50,17 @@ export function createMcpTools(bridge: BridgeServer): McpServer {
     return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
   })
 
+  mcp.registerTool('getErrorContext', {
+    description: 'Get enriched error context for a specific console error. Returns the owning component snapshot (props, hooks/state, locals, render cause, dep warnings), error boundary info, ancestor chain, and render history if recording was active. Use getConsoleErrors first to find the error ID.',
+    inputSchema: z.object({
+      errorId: z.string().describe('Console entry ID from getConsoleErrors'),
+      tab: z.string().optional().describe('Target tab ID. Auto-selects if omitted.'),
+    }),
+  }, async ({ errorId, tab }) => {
+    const result = await bridge.request('getErrorContext', { errorId }, tab)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  })
+
   mcp.registerTool('getPropsOf', {
     description: 'Get full props, hooks, and state for a specific component by its node ID. Use getComponentTree or searchComponents first to find the ID.',
     inputSchema: z.object({

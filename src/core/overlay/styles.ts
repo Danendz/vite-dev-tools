@@ -2705,4 +2705,142 @@ export const STYLES = /* css */ `
     outline: none;
     border-color: rgba(var(--accent-rgb), 0.5);
   }
+
+  /* ── Error attribution ── */
+
+  /* ── Detail panel errors section ── */
+
+  .detail-errors-section {
+    border-radius: 4px;
+    margin: 0 8px 8px 8px;
+    padding: 6px 8px;
+  }
+  .detail-errors-section.error {
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+  }
+  .detail-errors-section.error .detail-section-title {
+    color: #ef4444;
+  }
+  .detail-errors-section.warning {
+    background: rgba(234, 179, 8, 0.08);
+    border: 1px solid rgba(234, 179, 8, 0.2);
+  }
+  .detail-errors-section.warning .detail-section-title {
+    color: #eab308;
+  }
+  .detail-errors-section .detail-section-title {
+    margin-bottom: 6px;
+  }
+  .detail-error-entry {
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  .detail-error-entry:last-child {
+    border-bottom: none;
+  }
+  .detail-error-message {
+    font-size: 11px;
+    color: #fca5a5;
+    line-height: 1.4;
+    word-break: break-word;
+  }
+  .detail-errors-section.warning .detail-error-message {
+    color: #fde68a;
+  }
+  .detail-error-type {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 1px 4px;
+    border-radius: 2px;
+    margin-right: 4px;
+    vertical-align: middle;
+  }
+  .detail-error-type.error {
+    background: rgba(239, 68, 68, 0.25);
+    color: #fca5a5;
+  }
+  .detail-error-type.warning {
+    background: rgba(234, 179, 8, 0.25);
+    color: #fde68a;
+  }
+  .detail-error-stack-details {
+    margin-top: 4px;
+    font-size: 10px;
+  }
+  .detail-error-stack-details summary {
+    cursor: pointer;
+    color: #71717a;
+    user-select: none;
+  }
+  .detail-error-stack {
+    margin-top: 4px;
+    padding-left: 8px;
+  }
+  .detail-error-actions {
+    margin-top: 4px;
+    display: flex;
+    gap: 4px;
+  }
+
+  /* ── Tree error badges ── */
+
+  .tree-error-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 14px;
+    padding: 0 4px;
+    font-size: 9px;
+    font-weight: 700;
+    color: #fff;
+    background: #ef4444;
+    border-radius: 7px;
+    margin-left: 4px;
+    flex-shrink: 0;
+  }
+  .tree-error-badge.warning-only {
+    background: #f59e0b;
+  }
+  .tree-boundary-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    font-size: 9px;
+    color: #fbbf24;
+    margin-left: 3px;
+    flex-shrink: 0;
+    opacity: 0.7;
+  }
+
+  /* ── Error filter button in tree toolbar ── */
+
+  .error-filter-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    color: #71717a;
+    cursor: pointer;
+    border-radius: 3px;
+    padding: 0;
+    flex-shrink: 0;
+    transition: color 0.15s, background 0.15s;
+  }
+  .error-filter-btn:hover {
+    color: #a1a1aa;
+    background: rgba(255, 255, 255, 0.06);
+  }
+  .error-filter-btn.active {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.12);
+  }
 `

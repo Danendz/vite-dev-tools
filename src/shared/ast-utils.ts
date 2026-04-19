@@ -34,6 +34,8 @@ export function offsetToLineCol(lineStarts: LineStarts, offset: number): { line:
 export interface ComponentDeclaration {
   name: string
   line: number
+  /** End line of the component function declaration */
+  endLine: number
   /** Byte range of the function body (for scoping hook searches) */
   bodyRange: [number, number]
 }
@@ -150,6 +152,7 @@ export function findComponentDeclarations(program: BaseNode, lineStarts?: LineSt
       components.push({
         name: decl.id.name,
         line: offsetToLineCol(ls, decl.start).line,
+        endLine: offsetToLineCol(ls, decl.end).line,
         bodyRange: decl.body?.range ?? decl.range,
       })
       continue
@@ -170,6 +173,7 @@ export function findComponentDeclarations(program: BaseNode, lineStarts?: LineSt
           components.push({
             name,
             line: offsetToLineCol(ls, decl.start).line,
+            endLine: offsetToLineCol(ls, decl.end).line,
             bodyRange: funcNode.body?.range ?? funcNode.range,
           })
         }

@@ -33,12 +33,14 @@ function formatArgs(args: unknown[]): string {
 }
 
 /**
- * Clean stack trace: strip framework/Vite internals, remove origin URLs, strip query strings.
+ * Clean stack trace: strip framework/Vite internals, remove origin URLs.
+ * Query strings (e.g. Vue SFC ?vue&type=script...) are preserved here
+ * and handled in parseStack() to keep rawFile for source map resolution.
  */
 function cleanStack(stack: string): string {
   return stack
     .split('\n')
-    .map((line) => line.replace(/https?:\/\/[^/]+/g, '').replace(/\?[^:)]*:/g, ':'))
+    .map((line) => line.replace(/https?:\/\/[^/]+/g, ''))
     .join('\n')
 }
 
@@ -72,13 +74,15 @@ export function parseStack(stack: string): StackFrame[] {
     // Try eval frame first (more specific)
     const evalMatch = evalRe.exec(line)
     if (evalMatch) {
-      const file = evalMatch[1]
+      const rawFile = evalMatch[1]
+      const file = rawFile.replace(/\?.*$/, '')
       frames.push({
         fn: null,
         file,
+        rawFile: rawFile !== file ? rawFile : undefined,
         line: parseInt(evalMatch[2], 10),
         col: parseInt(evalMatch[3], 10),
-        isLibrary: isLibraryPath(file),
+        isLibrary: isLibraryPath(rawFile),
       })
       continue
     }
@@ -86,13 +90,15 @@ export function parseStack(stack: string): StackFrame[] {
     // Try named frame: at funcName (file:line:col)
     const namedMatch = namedRe.exec(line)
     if (namedMatch) {
-      const file = namedMatch[2]
+      const rawFile = namedMatch[2]
+      const file = rawFile.replace(/\?.*$/, '')
       frames.push({
         fn: namedMatch[1],
         file,
+        rawFile: rawFile !== file ? rawFile : undefined,
         line: parseInt(namedMatch[3], 10),
         col: parseInt(namedMatch[4], 10),
-        isLibrary: isLibraryPath(file),
+        isLibrary: isLibraryPath(rawFile),
       })
       continue
     }
@@ -100,13 +106,15 @@ export function parseStack(stack: string): StackFrame[] {
     // Try anonymous frame: at file:line:col
     const anonMatch = anonRe.exec(line)
     if (anonMatch) {
-      const file = anonMatch[1]
+      const rawFile = anonMatch[1]
+      const file = rawFile.replace(/\?.*$/, '')
       frames.push({
         fn: null,
         file,
+        rawFile: rawFile !== file ? rawFile : undefined,
         line: parseInt(anonMatch[2], 10),
         col: parseInt(anonMatch[3], 10),
-        isLibrary: isLibraryPath(file),
+        isLibrary: isLibraryPath(rawFile),
       })
       continue
     }

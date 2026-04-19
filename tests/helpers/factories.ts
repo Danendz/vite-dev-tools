@@ -56,6 +56,8 @@ export function createConsoleEntry(overrides: Partial<ConsoleEntry> = {}): Conso
     message: 'Test error',
     stack: null,
     frames: null,
+    count: 1,
+    groupKey: null,
     ...overrides,
   }
 }
