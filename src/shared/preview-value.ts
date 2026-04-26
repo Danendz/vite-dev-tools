@@ -48,15 +48,21 @@ function format(value: unknown, depth: number, maxDepth: number, seen: WeakSet<o
     return `<${name} />`
   }
 
-  if (Array.isArray(obj)) {
-    const parts = obj.slice(0, 10).map((item) => format(item, depth + 1, maxDepth, seen))
-    if (obj.length > 10) parts.push('…')
+  // Vue component proxy — enumerating keys triggers "Avoid enumerating keys" warning
+  if ((obj as any).__v_skip === true) return '[ComponentInstance]'
+
+  // Unwrap Vue reactive/readonly proxies to avoid triggering proxy traps
+  const target = (obj as any).__v_raw ?? obj
+
+  if (Array.isArray(target)) {
+    const parts = target.slice(0, 10).map((item) => format(item, depth + 1, maxDepth, seen))
+    if (target.length > 10) parts.push('…')
     return `[${parts.join(', ')}]`
   }
 
-  const entries = Object.entries(obj).slice(0, 10)
+  const entries = Object.entries(target).slice(0, 10)
   const parts = entries.map(([k, v]) => `${k}: ${format(v, depth + 1, maxDepth, seen)}`)
-  if (Object.keys(obj).length > 10) parts.push('…')
+  if (Object.keys(target).length > 10) parts.push('…')
   return `{${parts.join(', ')}}`
 }
 
@@ -82,6 +88,14 @@ export function prettyStringify(value: unknown): string {
       if (typeof val === 'bigint') return `${val}n`
       if (val !== null && typeof val === 'object') {
         if (seen.has(val)) return '[Circular]'
+        // Vue component proxy — enumerating keys triggers warning
+        if ((val as any).__v_skip === true) return '[ComponentInstance]'
+        // Unwrap Vue reactive/readonly proxies
+        const raw = (val as any).__v_raw
+        if (raw) {
+          seen.add(val)
+          return raw
+        }
         seen.add(val)
         if ((val as any).$$typeof === REACT_ELEMENT) {
           const t = (val as any).type
