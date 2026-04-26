@@ -41,6 +41,7 @@ interface DetailPanelProps {
   onNavigateToCommit?: (commitIndex: number) => void
   attributedErrors?: ConsoleEntry[]
   tree?: NormalizedNode[]
+  highlightedProp?: { nodeId: string; propName: string } | null
 }
 
 function formatPrimitive(value: unknown): { text: string; className: string } | null {
@@ -889,7 +890,7 @@ function renderWithCode(text: string, code: string) {
   return <>{text.slice(0, idx)}<code>{code}</code>{text.slice(idx + 6)}</>
 }
 
-export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, renderHistory, onNavigateToCommit, attributedErrors, tree }: DetailPanelProps) {
+export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, renderHistory, onNavigateToCommit, attributedErrors, tree, highlightedProp }: DetailPanelProps) {
   const { t } = useT()
   // 0 = collapsed, 5 = preview (first 5), Infinity = show all
   const [historyLimit, setHistoryLimit] = useState<number>(0)
@@ -1256,10 +1257,11 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
             ) : (
               <span class="detail-key" onContextMenu={propContextMenu}>{key}:</span>
             )
+            const isHighlighted = highlightedProp?.nodeId === node.id && highlightedProp?.propName === key
             // Host elements: editable only when source exists and value is primitive
             if (node.isHostElement && (!node.source || !isPrimitive)) {
               return (
-                <div class="detail-row" key={`${node.id}-${key}`}>
+                <div class={`detail-row${isHighlighted ? ' prop-highlighted' : ''}`} key={`${node.id}-${key}`}>
                   {propKeyEl}
                   <ValueDisplay value={value} />
                 </div>
@@ -1268,7 +1270,7 @@ export function DetailPanel({ node, editedProps, onPropEdit, onPropPersisted, re
             const isEdited = editedProps?.get(node.id)?.has(key) ?? false
             const propOrigin = node.propOrigins?.[key]
             return (
-              <div class="detail-row" key={`${node.id}-${key}`}>
+              <div class={`detail-row${isHighlighted ? ' prop-highlighted' : ''}`} key={`${node.id}-${key}`}>
                 {propKeyEl}
                 <EditablePropValue
                   propKey={key}

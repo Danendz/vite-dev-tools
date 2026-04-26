@@ -52,6 +52,7 @@ interface TreeViewProps {
   onSelect: (node: NormalizedNode) => void
   onHover: (node: NormalizedNode | null) => void
   onContextMenu: (e: MouseEvent, node: NormalizedNode) => void
+  onPropSourceClick?: (componentId: string, propName: string) => void
 }
 
 /** Collect all node IDs where isFromNodeModules is true (default collapsed) */
@@ -120,6 +121,7 @@ export function TreeView({
   onSelect,
   onHover,
   onContextMenu,
+  onPropSourceClick,
 }: TreeViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const { t } = useT()
@@ -405,6 +407,7 @@ export function TreeView({
               onSelect={onSelect}
               onHover={onHover}
               onContextMenu={onContextMenu}
+              onPropSourceClick={onPropSourceClick}
             />
           ))
         )}

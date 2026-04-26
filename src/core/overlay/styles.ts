@@ -294,6 +294,16 @@ export const STYLES = /* css */ `
     padding: 2px 0;
   }
 
+  .detail-row.prop-highlighted {
+    animation: prop-flash 1.5s ease-out;
+    border-radius: 3px;
+  }
+
+  @keyframes prop-flash {
+    0%, 20% { background: rgba(var(--accent-rgb), 0.3); }
+    100% { background: transparent; }
+  }
+
   .detail-key {
     color: color-mix(in srgb, var(--accent) 70%, white);
     flex-shrink: 0;
@@ -1710,6 +1720,32 @@ export const STYLES = /* css */ `
 
   .tree-node-text {
     color: #6a9955;
+  }
+
+  .tree-prop-source {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: 6px;
+    padding: 0 5px;
+    border-radius: 3px;
+    font-size: 10px;
+    cursor: pointer;
+    background: rgba(var(--accent-rgb), 0.1);
+    transition: background 0.15s, color 0.15s;
+  }
+  .tree-prop-source:hover {
+    background: rgba(var(--accent-rgb), 0.25);
+  }
+  .tree-prop-source-arrow {
+    color: var(--accent);
+    font-weight: bold;
+  }
+  .tree-prop-source-name {
+    color: rgba(var(--accent-rgb), 0.8);
+  }
+  .tree-prop-source:hover .tree-prop-source-name {
+    color: var(--accent);
   }
 
   .detail-text-fragment {

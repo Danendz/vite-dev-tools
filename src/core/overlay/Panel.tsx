@@ -73,6 +73,8 @@ interface PanelProps {
   onSelect: (node: NormalizedNode) => void
   onHover: (node: NormalizedNode | null) => void
   onContextMenu: (e: MouseEvent, node: NormalizedNode) => void
+  onPropSourceClick?: (componentId: string, propName: string) => void
+  highlightedProp?: { nodeId: string; propName: string } | null
   onClose: () => void
   // Error attribution
   errorCountMap: Map<string, number>
@@ -162,6 +164,8 @@ export function Panel({
   onSelect,
   onHover,
   onContextMenu,
+  onPropSourceClick,
+  highlightedProp,
   onClose,
   errorCountMap,
   directErrorMap,
@@ -509,6 +513,7 @@ export function Panel({
                 onSelect={onSelect}
                 onHover={onHover}
                 onContextMenu={onContextMenu}
+                onPropSourceClick={onPropSourceClick}
               />
             </div>
             <div
@@ -525,7 +530,7 @@ export function Panel({
                 onPointerMove={handleDetailPointerMove}
                 onPointerUp={handleDetailPointerUp}
               />
-              <DetailPanel node={selectedNode} editedProps={editedProps} onPropEdit={onPropEdit} onPropPersisted={onPropPersisted} renderHistory={renderHistory} onNavigateToCommit={onNavigateToCommit} attributedErrors={attributedErrors} tree={tree} />
+              <DetailPanel node={selectedNode} editedProps={editedProps} onPropEdit={onPropEdit} onPropPersisted={onPropPersisted} renderHistory={renderHistory} onNavigateToCommit={onNavigateToCommit} attributedErrors={attributedErrors} tree={tree} highlightedProp={highlightedProp} />
             </div>
           </div>
         ) : activeTab === 'console' ? (
