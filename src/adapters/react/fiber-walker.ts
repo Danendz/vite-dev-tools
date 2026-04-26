@@ -775,6 +775,7 @@ function walkFiberChildren(
   hideProviders: boolean,
   parentUsageSource?: import('../../core/types').SourceLocation,
   causeOpts?: RenderCauseOptions,
+  parentComponentInfo?: { name: string; id: string; props: Record<string, unknown> },
 ): NormalizedNode[] {
   const nodes: NormalizedNode[] = []
   let child = fiber.child
@@ -785,13 +786,19 @@ function walkFiberChildren(
       if (name.startsWith('__DevTools')) {
         // skip devtools own components
       } else if (hideLibrary && isFromNodeModules(child)) {
-        nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource, causeOpts))
+        nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource, causeOpts, parentComponentInfo))
       } else if (hideProviders && name.endsWith('Provider')) {
-        nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource, causeOpts))
+        nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource, causeOpts, parentComponentInfo))
       } else {
         const locations = getSourceLocations(child)
         const componentSource = locations.usageSource ?? locations.source
-        const children = walkFiberChildren(child, hideLibrary, hideProviders, componentSource ?? undefined, causeOpts)
+        const componentNodeId = `fiber_${nodeIdCounter++}`
+        const componentProps = getProps(child)
+        const children = walkFiberChildren(child, hideLibrary, hideProviders, componentSource ?? undefined, causeOpts, {
+          name,
+          id: componentNodeId,
+          props: componentProps,
+        })
 
         const { texts, fibers: textFibers } = collectDirectText(child)
 
@@ -806,11 +813,11 @@ function walkFiberChildren(
         const locals = metaLocals?.map((l: { n: string; l: number }) => ({ name: l.n, line: l.l }))
 
         const node: NormalizedNode = {
-          id: `fiber_${nodeIdCounter++}`,
+          id: componentNodeId,
           name,
           source: locations.source,
           usageSource: locations.usageSource ?? undefined,
-          props: getProps(child),
+          props: componentProps,
           sections,
           children,
           isFromNodeModules: isFromNodeModules(child),
@@ -835,6 +842,22 @@ function walkFiberChildren(
       const tagName = child.stateNode?.tagName?.toLowerCase() ?? (typeof child.type === 'string' ? child.type : 'unknown')
       const { texts, fibers: textFibers } = collectImmediateText(child)
       const hostSource = getHostElementSource(child)
+      const textContent = texts.join(' ') || undefined
+
+      // Match text content against parent component's props
+      let propSource: NormalizedNode['propSource'] | undefined
+      if (parentComponentInfo && textContent) {
+        for (const [key, value] of Object.entries(parentComponentInfo.props)) {
+          if (typeof value === 'string' && value === textContent) {
+            propSource = {
+              propName: key,
+              componentName: parentComponentInfo.name,
+              componentId: parentComponentInfo.id,
+            }
+            break
+          }
+        }
+      }
 
       const hostNode: NormalizedNode = {
         id: `fiber_${nodeIdCounter++}`,
@@ -843,18 +866,19 @@ function walkFiberChildren(
         _parentSource: !hostSource && parentUsageSource ? parentUsageSource : undefined,
         props: getHostElementProps(child),
         sections: [],
-        children: walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource, causeOpts),
+        children: walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource, causeOpts, parentComponentInfo),
         isFromNodeModules: false,
         isHostElement: true,
         _domElements: child.stateNode instanceof HTMLElement ? [child.stateNode] : [],
-        textContent: texts.join(' ') || undefined,
+        textContent,
         textFragments: texts.length > 0 ? texts : undefined,
         _textFibers: textFibers.length > 0 ? textFibers : undefined,
+        propSource,
       }
       fiberRefMap.set(hostNode.id, child)
       nodes.push(hostNode)
     } else if (child.tag !== 6) {
-      nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource, causeOpts))
+      nodes.push(...walkFiberChildren(child, hideLibrary, hideProviders, parentUsageSource, causeOpts, parentComponentInfo))
     }
     child = child.sibling
   }

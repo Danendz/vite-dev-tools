@@ -67,6 +67,7 @@ interface TreeNodeProps {
   onSelect: (node: NormalizedNode) => void
   onHover: (node: NormalizedNode | null) => void
   onContextMenu: (e: MouseEvent, node: NormalizedNode) => void
+  onPropSourceClick?: (componentId: string, propName: string) => void
 }
 
 function InlinePropEdit({
@@ -157,6 +158,7 @@ export function TreeNode({
   onSelect,
   onHover,
   onContextMenu,
+  onPropSourceClick,
 }: TreeNodeProps) {
   const visibleChildren = getVisibleChildren(node, elementExpandedSet, showAllElements)
   const hasChildren = visibleChildren.length > 0
@@ -421,6 +423,19 @@ export function TreeNode({
             {'"'}
           </span>
         )}
+        {node.propSource && !(isElementExpanded && hasHostElementChildren) && (
+          <span
+            class="tree-prop-source"
+            title={`Text from ${node.propSource.componentName}.${node.propSource.propName}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              onPropSourceClick?.(node.propSource!.componentId, node.propSource!.propName)
+            }}
+          >
+            <span class="tree-prop-source-arrow">{'\u2190'}</span>
+            <span class="tree-prop-source-name">{node.propSource.propName}</span>
+          </span>
+        )}
         {collapsed && hasChildren && (
           <span class="tree-node-collapsed-count">
             ({countCollapsedChildren(node)})
@@ -454,6 +469,7 @@ export function TreeNode({
               onSelect={onSelect}
               onHover={onHover}
               onContextMenu={onContextMenu}
+              onPropSourceClick={onPropSourceClick}
             />
           ))}
         </div>

@@ -912,6 +912,23 @@ export function App({ config, popupManager }: AppProps) {
     setExpandedPropsSet(new Set());
   }, []);
 
+  const [highlightedProp, setHighlightedProp] = useState<{
+    nodeId: string;
+    propName: string;
+  } | null>(null);
+
+  const handlePropSourceClick = useCallback(
+    (componentId: string, propName: string) => {
+      const node = findNodeById(tree, componentId);
+      if (node) {
+        setSelectedNode(node);
+        setHighlightedProp({ nodeId: componentId, propName });
+        setTimeout(() => setHighlightedProp(null), 1500);
+      }
+    },
+    [tree],
+  );
+
   const handleHover = useCallback((node: NormalizedNode | null) => {
     setHighlights((prev) => {
       const next = new Map(prev);
@@ -1215,6 +1232,8 @@ export function App({ config, popupManager }: AppProps) {
       onSelect={handleSelect}
       onHover={handleHover}
       onContextMenu={handleContextMenu}
+      onPropSourceClick={handlePropSourceClick}
+      highlightedProp={highlightedProp}
       onClose={isDetached ? handleDockBack : togglePanel}
       mode={isDetached ? "popup" : "docked"}
       onDetach={popupManager ? handleDetach : undefined}

@@ -81,6 +81,12 @@ export interface NormalizedNode {
     file?: string
     isStatic: boolean
   }>
+  /** When text content matches a parent component's prop value */
+  propSource?: {
+    propName: string
+    componentName: string
+    componentId: string
+  }
 }
 
 export interface SourceLocation {
