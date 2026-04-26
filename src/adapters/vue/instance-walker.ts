@@ -1,5 +1,5 @@
 import type { NormalizedNode, SourceLocation, CommitComponentEntry, CommitRecord } from '../../core/types'
-import { extractSections } from './state-extractor'
+import { extractSections, vueReplacer } from './state-extractor'
 import { flushTriggers, setLastRenderedCommit, getLastRenderedCommit } from './render-cause'
 
 // Vue 3 ShapeFlags (bitmask)
@@ -270,11 +270,11 @@ function getHostElementProps(vnodeProps: any): Record<string, unknown> {
     if (typeof value === 'function') {
       result[key] = 'fn()'
     } else if (key === 'style' && typeof value === 'object' && value !== null) {
-      try { result[key] = JSON.parse(JSON.stringify(value)) }
+      try { result[key] = JSON.parse(JSON.stringify(value, vueReplacer)) }
       catch { result[key] = '[Style]' }
     } else if (typeof value === 'object' && value !== null) {
       if ((value as any).__v_skip === true) { result[key] = '[ComponentInstance]' }
-      else { try { result[key] = JSON.parse(JSON.stringify(value)) } catch { result[key] = '[Object]' } }
+      else { try { result[key] = JSON.parse(JSON.stringify(value, vueReplacer)) } catch { result[key] = '[Object]' } }
     } else {
       result[key] = value
     }
@@ -296,7 +296,7 @@ function getProps(instance: any): Record<string, unknown> {
         result[key] = '[ComponentInstance]'
       } else {
         try {
-          result[key] = JSON.parse(JSON.stringify(value))
+          result[key] = JSON.parse(JSON.stringify(value, vueReplacer))
         } catch {
           result[key] = '[Object]'
         }

@@ -35,16 +35,31 @@ function isComponentDefinition(value: any): boolean {
 }
 
 /**
+ * JSON.stringify replacer that handles Vue internal proxies.
+ * Prevents "Avoid enumerating keys on a component instance" warnings
+ * by catching component proxies (__v_skip) and unwrapping reactive proxies (__v_raw)
+ * before JSON.stringify enumerates their keys.
+ */
+export function vueReplacer(_key: string, val: unknown): unknown {
+  if (val !== null && typeof val === 'object') {
+    if ((val as any).__v_skip === true) return '[ComponentInstance]'
+    const raw = (val as any).__v_raw
+    if (raw) return raw
+  }
+  if (typeof val === 'function') return undefined
+  return val
+}
+
+/**
  * Serialize a value for safe display.
  */
 function serializeValue(value: unknown): unknown {
   if (typeof value === 'function') return 'fn()'
   if (value === null || value === undefined) return value
   if (typeof value !== 'object') return value
-  // Vue component instances trigger "Avoid enumerating keys" warning when serialized
   if ((value as any).__v_skip === true) return '[ComponentInstance]'
   try {
-    return JSON.parse(JSON.stringify(value))
+    return JSON.parse(JSON.stringify(value, vueReplacer))
   } catch {
     return '[Object]'
   }
