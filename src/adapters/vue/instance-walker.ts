@@ -148,6 +148,10 @@ interface WalkContext {
   slotInfo?: SlotInfo
   /** Render cause tracking options — present when attribution is enabled */
   renderCauseOpts?: RenderCauseOpts
+  /** Parent component name for prop source matching */
+  parentComponentName?: string
+  /** Parent component node ID for prop source matching */
+  parentComponentId?: string
 }
 
 /**
@@ -280,6 +284,25 @@ function getHostElementProps(vnodeProps: any): Record<string, unknown> {
     }
   }
   return result
+}
+
+function findPropSource(
+  textContent: string | undefined,
+  ctx: WalkContext,
+): NormalizedNode['propSource'] | undefined {
+  if (!textContent || !ctx.currentInstance) return undefined
+  const props = ctx.currentInstance.props
+  if (!props || typeof props !== 'object') return undefined
+  for (const key of Object.keys(props)) {
+    if (typeof props[key] === 'string' && props[key] === textContent) {
+      return {
+        propName: key,
+        componentName: ctx.parentComponentName ?? 'Unknown',
+        componentId: ctx.parentComponentId ?? '',
+      }
+    }
+  }
+  return undefined
 }
 
 function getProps(instance: any): Record<string, unknown> {
@@ -532,6 +555,7 @@ function walkVNodeChildren(vnode: any, hideLibrary: boolean, ctx: WalkContext): 
     // Fresh context for each component scope
     const source = getDefinitionSource(instance)
     const usage = parseUsageSource(instance)
+    const componentNodeId = `vue_${nodeIdCounter++}`
     const childCtx: WalkContext = {
       parentFile: instance.type?.__file ?? null,
       elementCounters: new Map(),
@@ -540,6 +564,8 @@ function walkVNodeChildren(vnode: any, hideLibrary: boolean, ctx: WalkContext): 
       parentSlotCounters: new Map(),
       parentComponentFile: ctx.parentFile,
       renderCauseOpts: ctx.renderCauseOpts,
+      parentComponentName: name,
+      parentComponentId: componentNodeId,
     }
 
     if (hideLibrary && isFromNodeModules(instance)) {
@@ -549,7 +575,7 @@ function walkVNodeChildren(vnode: any, hideLibrary: boolean, ctx: WalkContext): 
       const children = walkVNodeChildren(instance.subTree, hideLibrary, childCtx)
 
       const node: NormalizedNode = {
-        id: `vue_${nodeIdCounter++}`,
+        id: componentNodeId,
         name,
         source,
         usageSource: usage?.source ?? undefined,
@@ -620,6 +646,7 @@ function walkVNodeChildren(vnode: any, hideLibrary: boolean, ctx: WalkContext): 
       _domElements: vnode.el instanceof HTMLElement ? [vnode.el] : [],
       textContent,
       textFragments: textContent ? [textContent] : undefined,
+      propSource: findPropSource(textContent, ctx),
     }
     if (vnode.el instanceof HTMLElement) {
       hostElementRefMap.set(hostNode.id, vnode.el)
@@ -727,6 +754,7 @@ export function walkInstanceTree(appInstance: any, options: VueWalkOptions = {})
   const rootName = getComponentName(appInstance)
   const source = getDefinitionSource(appInstance)
   const usage = parseUsageSource(appInstance)
+  const rootNodeId = `vue_${nodeIdCounter++}`
   const rootCtx: WalkContext = {
     parentFile: appInstance.type?.__file ?? null,
     elementCounters: new Map(),
@@ -734,11 +762,13 @@ export function walkInstanceTree(appInstance: any, options: VueWalkOptions = {})
     currentInstance: appInstance,
     parentSlotCounters: new Map(),
     renderCauseOpts,
+    parentComponentName: rootName,
+    parentComponentId: rootNodeId,
   }
   const children = walkVNodeChildren(appInstance.subTree, hideLibrary, rootCtx)
 
   const rootNode: NormalizedNode = {
-    id: `vue_${nodeIdCounter++}`,
+    id: rootNodeId,
     name: rootName,
     source,
     usageSource: usage?.source ?? undefined,
