@@ -19,6 +19,42 @@ export const instanceRefMap = new Map<string, any>()
 /** Maps node IDs to live DOM elements for host element edits — rebuilt on every tree walk */
 export const hostElementRefMap = new Map<string, HTMLElement>()
 
+/**
+ * Vue lookups need suffix matching: map keys are project-relative paths (e.g. "/src/Foo.vue"),
+ * but instance.type.__file from @vitejs/plugin-vue is absolute. The previous implementation
+ * scanned every map entry on every lookup — O(N) per call, with N = total source files.
+ *
+ * This helper builds a basename-keyed bucket index on first access and caches it per map
+ * reference. HMR replaces globalThis.__DEVTOOLS_USAGE_MAP__ wholesale, so the WeakMap entry
+ * for the old object goes away with it and the new map gets a fresh index.
+ */
+type IndexedBucket<T> = Array<{ filePath: string; value: T }>
+const mapIndexCache = new WeakMap<object, Map<string, IndexedBucket<any>>>()
+
+function getMapIndex<T>(map: Record<string, T>): Map<string, IndexedBucket<T>> {
+  let idx = mapIndexCache.get(map) as Map<string, IndexedBucket<T>> | undefined
+  if (idx) return idx
+  idx = new Map()
+  for (const [filePath, value] of Object.entries(map)) {
+    const basename = filePath.split('/').pop() ?? filePath
+    let bucket = idx.get(basename)
+    if (!bucket) idx.set(basename, (bucket = []))
+    bucket.push({ filePath, value })
+  }
+  mapIndexCache.set(map, idx)
+  return idx
+}
+
+function findEntryByFile<T>(file: string, map: Record<string, T>): { filePath: string; value: T } | null {
+  const basename = file.split('/').pop() ?? file
+  const bucket = getMapIndex(map).get(basename)
+  if (!bucket) return null
+  for (const entry of bucket) {
+    if (file.endsWith(entry.filePath)) return entry
+  }
+  return null
+}
+
 function getComponentName(instance: any): string {
   const type = instance.type
   if (!type) return 'Unknown'
@@ -56,23 +92,21 @@ function parseUsageSource(instance: any): UsageInfo | null {
   const map = (globalThis as any).__DEVTOOLS_USAGE_MAP__
   if (!map) return null
 
+  const entry = findEntryByFile<Record<string, Array<{ line: number; col: number; dynamicProps?: string[] }>>>(parentFile, map)
+  if (!entry) return null
+
   const componentName = getComponentName(instance)
   const normalized = componentName.toLowerCase().replace(/-/g, '')
 
-  // Map keys are relative paths; __file is absolute — match via endsWith
-  for (const [filePath, fileUsages] of Object.entries(map)) {
-    if (!parentFile.endsWith(filePath)) continue
-
-    for (const [tagName, locations] of Object.entries(fileUsages as Record<string, Array<{ line: number; col: number; dynamicProps?: string[] }>>)) {
-      if (tagName.toLowerCase().replace(/-/g, '') === normalized && locations.length > 0) {
-        return {
-          source: {
-            fileName: filePath.startsWith('/') ? filePath : `/${filePath}`,
-            lineNumber: locations[0].line,
-            columnNumber: locations[0].col,
-          },
-          dynamicProps: locations[0].dynamicProps,
-        }
+  for (const [tagName, locations] of Object.entries(entry.value)) {
+    if (tagName.toLowerCase().replace(/-/g, '') === normalized && locations.length > 0) {
+      return {
+        source: {
+          fileName: entry.filePath.startsWith('/') ? entry.filePath : `/${entry.filePath}`,
+          lineNumber: locations[0].line,
+          columnNumber: locations[0].col,
+        },
+        dynamicProps: locations[0].dynamicProps,
       }
     }
   }
@@ -89,13 +123,7 @@ function getDefinitionSource(instance: any): SourceLocation | null {
   if (!file) return null
   // Read end line from global map injected by Vue adapter transform (keys are relative paths)
   const endLineMap = (globalThis as any).__DEVTOOLS_END_LINES__ as Record<string, number> | undefined
-  let endLineNumber: number | undefined
-  if (endLineMap) {
-    // Match relative key against absolute __file via endsWith
-    for (const key of Object.keys(endLineMap)) {
-      if (file.endsWith(key)) { endLineNumber = endLineMap[key]; break }
-    }
-  }
+  const endLineNumber = endLineMap ? findEntryByFile<number>(file, endLineMap)?.value : undefined
   return { fileName: file, lineNumber: 1, columnNumber: 1, endLineNumber }
 }
 
@@ -164,27 +192,24 @@ function getElementSource(tagName: string, ctx: WalkContext): SourceLocation | n
   const map = (globalThis as any).__DEVTOOLS_USAGE_MAP__
   if (!map) return null
 
-  for (const [filePath, fileUsages] of Object.entries(map)) {
-    if (!ctx.parentFile.endsWith(filePath)) continue
+  const entry = findEntryByFile<Record<string, Array<{ line: number; col: number }>>>(ctx.parentFile, map)
+  if (!entry) return null
 
-    const locations = (fileUsages as any)[tagName]
-    if (!locations || locations.length === 0) return null
+  const locations = entry.value[tagName]
+  if (!locations || locations.length === 0) return null
 
-    const index = ctx.elementCounters.get(tagName) ?? 0
-    ctx.elementCounters.set(tagName, index + 1)
+  const index = ctx.elementCounters.get(tagName) ?? 0
+  ctx.elementCounters.set(tagName, index + 1)
 
-    // Clamp to array length for v-for duplicates
-    const clampedIndex = Math.min(index, locations.length - 1)
-    const loc = locations[clampedIndex]
+  // Clamp to array length for v-for duplicates
+  const clampedIndex = Math.min(index, locations.length - 1)
+  const loc = locations[clampedIndex]
 
-    return {
-      fileName: filePath.startsWith('/') ? filePath : `/${filePath}`,
-      lineNumber: loc.line,
-      columnNumber: loc.col,
-    }
+  return {
+    fileName: entry.filePath.startsWith('/') ? entry.filePath : `/${entry.filePath}`,
+    lineNumber: loc.line,
+    columnNumber: loc.col,
   }
-
-  return null
 }
 
 /**
@@ -195,45 +220,42 @@ function getSlotElementSource(tagName: string, slotInfo: SlotInfo): SourceLocati
   const map = (globalThis as any).__DEVTOOLS_USAGE_MAP__
   if (!map) return null
 
+  const entry = findEntryByFile<any>(slotInfo.parentFile, map)
+  if (!entry) return null
+
+  const slots = entry.value.__slots__
+  if (!slots) return null
+
   const normalized = slotInfo.componentName.toLowerCase().replace(/-/g, '')
 
-  for (const [filePath, fileUsages] of Object.entries(map)) {
-    if (!slotInfo.parentFile.endsWith(filePath)) continue
-
-    const slots = (fileUsages as any).__slots__
-    if (!slots) return null
-
-    // Find the component entry using normalized name matching
-    let componentSlots: any = null
-    for (const key of Object.keys(slots)) {
-      if (key.toLowerCase().replace(/-/g, '') === normalized) {
-        componentSlots = slots[key]
-        break
-      }
-    }
-    if (!componentSlots) return null
-
-    const slotGroup = componentSlots[slotInfo.slotName]
-    if (!slotGroup) return null
-
-    const locations = slotGroup[tagName]
-    if (!locations || locations.length === 0) return null
-
-    const counterKey = `${normalized}:${slotInfo.slotName}:${tagName}`
-    const index = slotInfo.slotCounters.get(counterKey) ?? 0
-    slotInfo.slotCounters.set(counterKey, index + 1)
-
-    const clampedIndex = Math.min(index, locations.length - 1)
-    const loc = locations[clampedIndex]
-
-    return {
-      fileName: filePath.startsWith('/') ? filePath : `/${filePath}`,
-      lineNumber: loc.line,
-      columnNumber: loc.col,
+  // Find the component entry using normalized name matching
+  let componentSlots: any = null
+  for (const key of Object.keys(slots)) {
+    if (key.toLowerCase().replace(/-/g, '') === normalized) {
+      componentSlots = slots[key]
+      break
     }
   }
+  if (!componentSlots) return null
 
-  return null
+  const slotGroup = componentSlots[slotInfo.slotName]
+  if (!slotGroup) return null
+
+  const locations = slotGroup[tagName]
+  if (!locations || locations.length === 0) return null
+
+  const counterKey = `${normalized}:${slotInfo.slotName}:${tagName}`
+  const index = slotInfo.slotCounters.get(counterKey) ?? 0
+  slotInfo.slotCounters.set(counterKey, index + 1)
+
+  const clampedIndex = Math.min(index, locations.length - 1)
+  const loc = locations[clampedIndex]
+
+  return {
+    fileName: entry.filePath.startsWith('/') ? entry.filePath : `/${entry.filePath}`,
+    lineNumber: loc.line,
+    columnNumber: loc.col,
+  }
 }
 
 /**
@@ -245,21 +267,18 @@ function getSlotDefinitionSource(componentFile: string | null, slotName: string)
   const map = (globalThis as any).__DEVTOOLS_USAGE_MAP__
   if (!map) return null
 
-  for (const [filePath, fileUsages] of Object.entries(map)) {
-    if (!componentFile.endsWith(filePath)) continue
+  const entry = findEntryByFile<any>(componentFile, map)
+  if (!entry) return null
 
-    const slotDefs = (fileUsages as any).__slotDefs__
-    if (!slotDefs || !slotDefs[slotName]) return null
+  const slotDefs = entry.value.__slotDefs__
+  if (!slotDefs || !slotDefs[slotName]) return null
 
-    const loc = slotDefs[slotName]
-    return {
-      fileName: filePath.startsWith('/') ? filePath : `/${filePath}`,
-      lineNumber: loc.line,
-      columnNumber: loc.col,
-    }
+  const loc = slotDefs[slotName]
+  return {
+    fileName: entry.filePath.startsWith('/') ? entry.filePath : `/${entry.filePath}`,
+    lineNumber: loc.line,
+    columnNumber: loc.col,
   }
-
-  return null
 }
 
 const VUE_HOST_SKIP_KEYS = new Set(['children', 'key', 'ref', 'ref_for', 'ref_key'])
