@@ -54,72 +54,116 @@ function getComponentName(fiber: any): string {
   return 'Anonymous'
 }
 
+type UsageEntry = { line: number; col: number; propOrigins?: Record<string, any>; filePath: string }
+
 /**
- * Count how many fibers with the same component name appear before `target`
- * in a DFS walk of `parentFiber`'s subtree. Stops at user component boundaries
- * (those with __devtools_source) since their JSX is in their own file's usage map.
+ * Per-walk caches. Set by walkFiberTree / walkFiberTreeWithCauses, cleared after.
+ * Walks are synchronous and never overlap, so module scope is safe and avoids
+ * threading state through every helper signature.
+ *
+ * Lookup cache: fiber -> resolved UsageEntry (or null for known-no-match).
+ * Parent index cache: parent fiber -> name -> child fiber -> position-among-same-name.
+ * Built once per parent on first access; replaces O(siblings²) per-fiber DFS.
  */
-function countSameNameBefore(target: any, parentFiber: any, componentName: string): number {
-  let count = 0
-  function walk(f: any): boolean {
+let lookupCache: Map<any, UsageEntry | null> | null = null
+let parentIndexCache: Map<any, Map<string, Map<any, number>>> | null = null
+
+/**
+ * Build a Map<componentName, Map<fiber, index>> for `parentFiber`'s subtree,
+ * stopping at user component boundaries (those with __devtools_source) since their
+ * JSX is in their own file's usage map. Each fiber gets its DFS-order index among
+ * same-name siblings under this parent.
+ */
+function buildParentIndex(parentFiber: any): Map<string, Map<any, number>> {
+  const counters = new Map<string, number>()
+  const result = new Map<string, Map<any, number>>()
+
+  function walk(f: any): void {
     let child = f.child
     while (child) {
-      if (child === target) return true
-      if (COMPONENT_TAGS.has(child.tag) && getComponentName(child) === componentName) {
-        count++
-      }
-      // Don't recurse into other user components — their JSX is in their own file
-      const hasSource = child.type?.__devtools_source || child.elementType?.__devtools_source
-      if (COMPONENT_TAGS.has(child.tag) && hasSource) {
-        // skip subtree
+      if (COMPONENT_TAGS.has(child.tag)) {
+        const name = getComponentName(child)
+        const idx = counters.get(name) ?? 0
+        counters.set(name, idx + 1)
+        let bucket = result.get(name)
+        if (!bucket) {
+          bucket = new Map()
+          result.set(name, bucket)
+        }
+        bucket.set(child, idx)
+
+        // Don't recurse into other user components — their JSX is in their own file
+        const hasSource = child.type?.__devtools_source || child.elementType?.__devtools_source
+        if (!hasSource) walk(child)
       } else {
-        if (walk(child)) return true
+        walk(child)
       }
       child = child.sibling
     }
-    return false
   }
   walk(parentFiber)
-  return count
+  return result
+}
+
+function getSameNameIndex(target: any, parentFiber: any, componentName: string): number {
+  if (!parentIndexCache) return 0
+  let perParent = parentIndexCache.get(parentFiber)
+  if (!perParent) {
+    perParent = buildParentIndex(parentFiber)
+    parentIndexCache.set(parentFiber, perParent)
+  }
+  return perParent.get(componentName)?.get(target) ?? 0
 }
 
 /**
  * Look up usage-site source from the compile-time usage map (__DEVTOOLS_USAGE_MAP__).
  * Walks up the fiber tree to find the parent component's file, then looks up
  * the current component name in that file's usage map.
- * For multi-usage components, disambiguates by counting same-name fibers in DFS order.
+ * For multi-usage components, disambiguates by position among same-name fibers.
  * Populated by the Vite transform for React 19+ (where _debugSource is unavailable).
+ *
+ * Map keys and parent.__devtools_source.fileName both come from the same `relativePath`
+ * computation in the React adapter transform, so a direct property lookup is exact.
+ *
+ * Result is memoized per fiber per walk via `lookupCache`.
  */
-function lookupUsageMapEntry(fiber: any): { line: number; col: number; propOrigins?: Record<string, any>; filePath: string } | null {
+function lookupUsageMapEntry(fiber: any): UsageEntry | null {
+  if (lookupCache?.has(fiber)) return lookupCache.get(fiber) ?? null
+
   const map = (globalThis as any).__DEVTOOLS_USAGE_MAP__
-  if (!map) return null
+  let result: UsageEntry | null = null
 
-  const componentName = getComponentName(fiber)
+  if (map) {
+    const componentName = getComponentName(fiber)
 
-  // Walk up fiber tree — skip library components (no __devtools_source) until
-  // we find an ancestor whose file has a matching usage entry
-  let parent = fiber.return
-  while (parent) {
-    if (COMPONENT_TAGS.has(parent.tag)) {
-      const parentFile = parent.type?.__devtools_source?.fileName ?? parent.elementType?.__devtools_source?.fileName
-      if (parentFile) {
-        for (const [filePath, fileUsages] of Object.entries(map)) {
-          if (!parentFile.endsWith(filePath)) continue
-
-          const locations = (fileUsages as any)[componentName]
-          if (locations && locations.length > 0) {
-            if (locations.length === 1) return { ...locations[0], filePath }
-            // Multiple usages — pick by position among same-name descendants
-            const index = countSameNameBefore(fiber, parent, componentName)
-            return { ...locations[Math.min(index, locations.length - 1)], filePath }
+    // Walk up fiber tree — skip library components (no __devtools_source) until
+    // we find an ancestor whose file has a matching usage entry
+    let parent = fiber.return
+    while (parent) {
+      if (COMPONENT_TAGS.has(parent.tag)) {
+        const parentFile = parent.type?.__devtools_source?.fileName ?? parent.elementType?.__devtools_source?.fileName
+        if (parentFile) {
+          const fileUsages = map[parentFile]
+          if (fileUsages) {
+            const locations = fileUsages[componentName]
+            if (locations && locations.length > 0) {
+              if (locations.length === 1) {
+                result = { ...locations[0], filePath: parentFile }
+              } else {
+                const index = getSameNameIndex(fiber, parent, componentName)
+                result = { ...locations[Math.min(index, locations.length - 1)], filePath: parentFile }
+              }
+              break
+            }
           }
         }
       }
+      parent = parent.return
     }
-    parent = parent.return
   }
 
-  return null
+  lookupCache?.set(fiber, result)
+  return result
 }
 
 function parseUsageSourceFromMap(fiber: any): { fileName: string; lineNumber: number; columnNumber: number } | null {
@@ -905,13 +949,22 @@ export interface WalkResult {
 export function walkFiberTree(rootFiber: any, hideLibrary = false, hideProviders = false): NormalizedNode[] {
   nodeIdCounter = 0
   fiberRefMap.clear()
-  return walkFiberChildren(rootFiber, hideLibrary, hideProviders)
+  lookupCache = new Map()
+  parentIndexCache = new Map()
+  try {
+    return walkFiberChildren(rootFiber, hideLibrary, hideProviders)
+  } finally {
+    lookupCache = null
+    parentIndexCache = null
+  }
 }
 
 /** Extended walker that also computes render causes and returns the commit record. */
 export function walkFiberTreeWithCauses(rootFiber: any, options: WalkOptions = {}): WalkResult {
   nodeIdCounter = 0
   fiberRefMap.clear()
+  lookupCache = new Map()
+  parentIndexCache = new Map()
   let causeOpts: RenderCauseOptions | undefined
   let commit: CommitRecord | null = null
   if (options.renderCause) {
@@ -928,12 +981,17 @@ export function walkFiberTreeWithCauses(rootFiber: any, options: WalkOptions = {
       components: entries,
     }
   }
-  const tree = walkFiberChildren(
-    rootFiber,
-    options.hideLibrary ?? false,
-    options.hideProviders ?? false,
-    undefined,
-    causeOpts,
-  )
-  return { tree, commit }
+  try {
+    const tree = walkFiberChildren(
+      rootFiber,
+      options.hideLibrary ?? false,
+      options.hideProviders ?? false,
+      undefined,
+      causeOpts,
+    )
+    return { tree, commit }
+  } finally {
+    lookupCache = null
+    parentIndexCache = null
+  }
 }

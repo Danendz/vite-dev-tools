@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { walkInstanceTree, instanceRefMap } from '@/adapters/vue/instance-walker'
 
 // Vue ShapeFlags
@@ -176,6 +176,96 @@ describe('walkInstanceTree', () => {
         fileName: '/src/Test.vue',
         lineNumber: 1,
         columnNumber: 1,
+      })
+    })
+  })
+
+  describe('usage map suffix index', () => {
+    afterEach(() => {
+      delete (globalThis as any).__DEVTOOLS_USAGE_MAP__
+      delete (globalThis as any).__DEVTOOLS_END_LINES__
+    })
+
+    it('resolves usage source when parent __file is absolute and map keys are relative', () => {
+      ;(globalThis as any).__DEVTOOLS_USAGE_MAP__ = {
+        '/src/Parent.vue': {
+          ChildComp: [{ line: 12, col: 3 }],
+        },
+      }
+
+      const childInstance = createInstance({
+        type: { __name: 'ChildComp', __file: '/abs/proj/src/ChildComp.vue' },
+        uid: 2,
+        subTree: createVNode({ shapeFlag: 0 }),
+      })
+      const childVNode = createVNode({ shapeFlag: STATEFUL_COMPONENT, component: childInstance })
+      const root = createInstance({
+        type: { __name: 'Parent', __file: '/abs/proj/src/Parent.vue' },
+        subTree: createVNode({
+          shapeFlag: ARRAY_CHILDREN,
+          type: Symbol('v-fgt'),
+          children: [childVNode],
+        }),
+      })
+      childInstance.parent = root
+
+      const tree = walkInstanceTree(root).tree
+      // Child's usage source comes from /src/Parent.vue at line 12
+      expect(tree[0].children[0].usageSource).toEqual({
+        fileName: '/src/Parent.vue',
+        lineNumber: 12,
+        columnNumber: 3,
+      })
+    })
+
+    it('disambiguates basename collisions across directories', () => {
+      ;(globalThis as any).__DEVTOOLS_USAGE_MAP__ = {
+        // Both files share the basename Parent.vue but live in different directories.
+        // The wrong one (alpha) has a misleading entry at line 99.
+        'src/alpha/Parent.vue': { ChildComp: [{ line: 99, col: 1 }] },
+        'src/beta/Parent.vue': { ChildComp: [{ line: 7, col: 2 }] },
+      }
+
+      const childInstance = createInstance({
+        type: { __name: 'ChildComp', __file: '/abs/proj/src/ChildComp.vue' },
+        uid: 2,
+        subTree: createVNode({ shapeFlag: 0 }),
+      })
+      const childVNode = createVNode({ shapeFlag: STATEFUL_COMPONENT, component: childInstance })
+      // Parent's __file points to the beta variant — should resolve only beta.
+      const root = createInstance({
+        type: { __name: 'Parent', __file: '/abs/proj/src/beta/Parent.vue' },
+        subTree: createVNode({
+          shapeFlag: ARRAY_CHILDREN,
+          type: Symbol('v-fgt'),
+          children: [childVNode],
+        }),
+      })
+      childInstance.parent = root
+
+      const tree = walkInstanceTree(root).tree
+      expect(tree[0].children[0].usageSource).toEqual({
+        fileName: '/src/beta/Parent.vue',
+        lineNumber: 7,
+        columnNumber: 2,
+      })
+    })
+
+    it('reads endLineNumber from __DEVTOOLS_END_LINES__ via suffix index', () => {
+      ;(globalThis as any).__DEVTOOLS_END_LINES__ = {
+        '/src/Test.vue': 42,
+      }
+
+      const instance = createInstance({
+        type: { __name: 'Test', __file: '/abs/proj/src/Test.vue' },
+        subTree: createVNode({ shapeFlag: 0 }),
+      })
+      const tree = walkInstanceTree(instance).tree
+      expect(tree[0].source).toEqual({
+        fileName: '/abs/proj/src/Test.vue',
+        lineNumber: 1,
+        columnNumber: 1,
+        endLineNumber: 42,
       })
     })
   })

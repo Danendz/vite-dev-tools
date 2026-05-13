@@ -71,41 +71,109 @@ function truncate(s: string, max: number): string {
   return s.slice(0, max - 1) + '…'
 }
 
+const PRETTY_MAX_DEPTH = 6
+const PRETTY_MAX_LENGTH = 20_000
+
 /**
- * Pretty-print a value using JSON.stringify with 2-space indent and a custom
- * replacer that handles non-JSON types. Used for modal value inspection.
+ * Pretty-print a value with JSON-like 2-space indent. Used for modal value
+ * inspection. Bounded in depth, length, and cycles — host React/Vue prop
+ * values can reference huge or self-referential graphs (Redux state, DOM
+ * nodes with Shadow-Root back-pointers), so an unbounded JSON.stringify
+ * would crash the renderer.
  */
-export function prettyStringify(value: unknown): string {
+export function prettyStringify(value: unknown, options: StringifyOptions = {}): string {
+  const maxDepth = options.maxDepth ?? PRETTY_MAX_DEPTH
+  const maxLength = options.maxLength ?? PRETTY_MAX_LENGTH
   const seen = new WeakSet<object>()
+  const out: string[] = []
+  let len = 0
+  let truncated = false
+
+  function write(s: string): boolean {
+    if (truncated) return false
+    if (len + s.length > maxLength) {
+      out.push(s.slice(0, Math.max(0, maxLength - len)))
+      out.push('…')
+      len = maxLength
+      truncated = true
+      return false
+    }
+    out.push(s)
+    len += s.length
+    return true
+  }
+
+  function indent(depth: number): string {
+    return '\n' + '  '.repeat(depth)
+  }
+
+  function format(val: unknown, depth: number): void {
+    if (truncated) return
+    if (val === undefined) return void write('"[undefined]"')
+    if (val === null) return void write('null')
+    const type = typeof val
+    if (type === 'string') return void write(JSON.stringify(val))
+    if (type === 'number') return void write(Number.isFinite(val as number) ? String(val) : `"${String(val)}"`)
+    if (type === 'boolean') return void write(String(val))
+    if (type === 'bigint') return void write(`"${val}n"`)
+    if (type === 'symbol') return void write(JSON.stringify((val as symbol).toString()))
+    if (type === 'function') {
+      const name = (val as Function).name
+      return void write(name ? `"ƒ ${name}()"` : '"ƒ()"')
+    }
+    if (type !== 'object') return void write(JSON.stringify(String(val)))
+
+    const obj = val as object
+    if (seen.has(obj)) return void write('"[Circular]"')
+    if ((obj as any).__v_skip === true) return void write('"[ComponentInstance]"')
+    if ((obj as any).$$typeof === REACT_ELEMENT) {
+      const t = (obj as any).type
+      const name = typeof t === 'string' ? t : t?.displayName || t?.name || 'Component'
+      return void write(`"<${name} />"`)
+    }
+
+    const raw = (obj as any).__v_raw
+    const target = (raw && typeof raw === 'object') ? raw : obj
+    seen.add(obj)
+    if (target !== obj) seen.add(target)
+
+    if (depth >= maxDepth) {
+      return void write(Array.isArray(target) ? '"[Array]"' : '"[Object]"')
+    }
+
+    if (Array.isArray(target)) {
+      if (target.length === 0) return void write('[]')
+      if (!write('[')) return
+      for (let i = 0; i < target.length; i++) {
+        if (!write(indent(depth + 1))) return
+        format(target[i], depth + 1)
+        if (truncated) return
+        if (i < target.length - 1 && !write(',')) return
+      }
+      if (!write(indent(depth))) return
+      write(']')
+      return
+    }
+
+    const keys = Object.keys(target as object)
+    if (keys.length === 0) return void write('{}')
+    if (!write('{')) return
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i]
+      if (!write(indent(depth + 1))) return
+      if (!write(JSON.stringify(k) + ': ')) return
+      format((target as any)[k], depth + 1)
+      if (truncated) return
+      if (i < keys.length - 1 && !write(',')) return
+    }
+    if (!write(indent(depth))) return
+    write('}')
+  }
+
   try {
-    return JSON.stringify(value, function (_key: string, val: unknown) {
-      if (val === undefined) return '[undefined]'
-      if (typeof val === 'function') {
-        const name = (val as Function).name
-        return name ? `ƒ ${name}()` : 'ƒ()'
-      }
-      if (typeof val === 'symbol') return val.toString()
-      if (typeof val === 'bigint') return `${val}n`
-      if (val !== null && typeof val === 'object') {
-        if (seen.has(val)) return '[Circular]'
-        // Vue component proxy — enumerating keys triggers warning
-        if ((val as any).__v_skip === true) return '[ComponentInstance]'
-        // Unwrap Vue reactive/readonly proxies
-        const raw = (val as any).__v_raw
-        if (raw) {
-          seen.add(val)
-          return raw
-        }
-        seen.add(val)
-        if ((val as any).$$typeof === REACT_ELEMENT) {
-          const t = (val as any).type
-          const name = typeof t === 'string' ? t : t?.displayName || t?.name || 'Component'
-          return `<${name} />`
-        }
-      }
-      return val
-    }, 2) ?? 'undefined'
+    format(value, 0)
   } catch {
     return safeStringify(value, { maxDepth: 6, maxLength: 5000 })
   }
+  return out.join('')
 }

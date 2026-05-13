@@ -487,6 +487,95 @@ describe('walkFiberTree', () => {
         expect(tree[0].children[1].source).toEqual({ fileName: '/src/Parent.tsx', lineNumber: 10, columnNumber: 1 })
       })
 
+      it('picks correct entry when many unrelated files share the usage map', () => {
+        // Many other files in the map shouldn't slow down or confuse the lookup —
+        // direct property lookup is O(1) regardless of map size.
+        const map: Record<string, any> = {
+          '/src/Target.tsx': { Widget: [{ line: 42, col: 7 }] },
+        }
+        for (let i = 0; i < 200; i++) {
+          map[`/src/Other${i}.tsx`] = { Widget: [{ line: i, col: i }] }
+        }
+        ;(globalThis as any).__DEVTOOLS_USAGE_MAP__ = map
+
+        const widget = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Widget' },
+        })
+        const parent = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Target', __devtools_source: { fileName: '/src/Target.tsx', lineNumber: 1, columnNumber: 0 } },
+          child: widget,
+        })
+        widget.return = parent
+
+        const tree = walkFiberTree(wrapInRoot(parent))
+        expect(tree[0].children[0].source).toEqual({ fileName: '/src/Target.tsx', lineNumber: 42, columnNumber: 7 })
+      })
+
+      it('disambiguates three same-name siblings in DFS order', () => {
+        ;(globalThis as any).__DEVTOOLS_USAGE_MAP__ = {
+          '/src/Parent.tsx': {
+            Tab: [
+              { line: 1, col: 1 },
+              { line: 2, col: 2 },
+              { line: 3, col: 3 },
+            ],
+          },
+        }
+
+        const tab3 = createFakeFiber({ tag: FunctionComponent, type: { name: 'Tab' } })
+        const tab2 = createFakeFiber({ tag: FunctionComponent, type: { name: 'Tab' }, sibling: tab3 })
+        const tab1 = createFakeFiber({ tag: FunctionComponent, type: { name: 'Tab' }, sibling: tab2 })
+        const parent = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Parent', __devtools_source: { fileName: '/src/Parent.tsx', lineNumber: 1, columnNumber: 0 } },
+          child: tab1,
+        })
+        tab1.return = parent
+        tab2.return = parent
+        tab3.return = parent
+
+        const tree = walkFiberTree(wrapInRoot(parent))
+        expect(tree[0].children[0].source).toEqual({ fileName: '/src/Parent.tsx', lineNumber: 1, columnNumber: 1 })
+        expect(tree[0].children[1].source).toEqual({ fileName: '/src/Parent.tsx', lineNumber: 2, columnNumber: 2 })
+        expect(tree[0].children[2].source).toEqual({ fileName: '/src/Parent.tsx', lineNumber: 3, columnNumber: 3 })
+      })
+
+      it('memoizes lookup per fiber within a walk (no redundant map access)', () => {
+        // getReactSource and getPropOriginsFromMap both need the usage entry for the
+        // same fiber — without per-walk memoization the map is hit twice per fiber.
+        const inner = {
+          '/src/Parent.tsx': { Child: [{ line: 5, col: 1 }] },
+        }
+        let getCount = 0
+        const spyMap = new Proxy(inner, {
+          get(target, key, recv) {
+            getCount++
+            return Reflect.get(target, key, recv)
+          },
+        })
+        ;(globalThis as any).__DEVTOOLS_USAGE_MAP__ = spyMap
+
+        const child = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Child' },
+          memoizedProps: { foo: 'bar' },
+        })
+        const parent = createFakeFiber({
+          tag: FunctionComponent,
+          type: { name: 'Parent', __devtools_source: { fileName: '/src/Parent.tsx', lineNumber: 1, columnNumber: 0 } },
+          child,
+        })
+        child.return = parent
+
+        walkFiberTree(wrapInRoot(parent))
+
+        // One walk over a single fiber that needs lookup → exactly one map access for that fiber.
+        // (If memoization regresses, both getReactSource and getPropOriginsFromMap hit the map → 2.)
+        expect(getCount).toBe(1)
+      })
+
       it('does not count same-name fibers inside user component subtrees', () => {
         ;(globalThis as any).__DEVTOOLS_USAGE_MAP__ = {
           '/src/Parent.tsx': {
