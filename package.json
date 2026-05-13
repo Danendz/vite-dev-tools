@@ -1,6 +1,6 @@
 {
   "name": "@danendz/vite-dev-tools",
-  "version": "2.5.1",
+  "version": "2.5.2",
   "description": "Vite dev tools with smart component tree, auto-collapsing, and IDE integration",
   "license": "MIT",
   "type": "module",
